@@ -230,9 +230,9 @@ app.post('/api/register', asyncHandler(async (req, res) => {
   const db = await connect();
   const passwordHash = await hashPassword(password);
   const insertPlayer = await db.query(
-    `INSERT INTO players (username, password_hash, faction, role, army_name)
-     VALUES ($1, $2, $3, 'member', $4)
-     RETURNING id, username, faction, role`,
+    `INSERT INTO players (username, password_hash, faction, faction_locked, role, army_name)
+     VALUES ($1, $2, $3, TRUE, 'member', $4)
+     RETURNING id, username, faction, role, faction_locked`,
     [username, passwordHash, faction, `${faction.charAt(0).toUpperCase()}${faction.slice(1)} Army`]
   );
 
@@ -243,8 +243,8 @@ app.post('/api/register', asyncHandler(async (req, res) => {
     [player.id]
   );
 
-  const token = issueToken({ userId: player.id, username: player.username, faction: player.faction, role: player.role });
-  res.status(201).json({ token, user: { id: player.id, username: player.username, faction: player.faction, role: player.role } });
+  const token = issueToken({ userId: player.id, username: player.username, faction: player.faction, role: player.role, factionLocked: player.faction_locked });
+  res.status(201).json({ token, user: { id: player.id, username: player.username, faction: player.faction, role: player.role, factionLocked: player.faction_locked } });
 }));
 
 app.post('/api/login', asyncHandler(async (req, res) => {
@@ -263,14 +263,31 @@ app.post('/api/login', asyncHandler(async (req, res) => {
   const db = await connect();
   await db.query('UPDATE players SET last_login_at = NOW(), last_action_at = NOW() WHERE id = $1', [player.id]);
 
-  const token = issueToken({ userId: player.id, username: player.username, faction: player.faction, role: player.role });
-  res.json({ token, user: { id: player.id, username: player.username, faction: player.faction, role: player.role } });
+  const payload = { userId: player.id, username: player.username, faction: player.faction, role: player.role, factionLocked: player.faction_locked }; 
+  const token = issueToken(payload);
+  res.json({ token, user: { id: player.id, username: player.username, faction: player.faction, role: player.role, factionLocked: player.faction_locked } });
 }));
 
 app.get('/api/me', requireAuth, asyncHandler(async (req, res) => {
   const player = await getPlayerById(req.user.userId);
   if (!player) return res.status(404).json({ error: 'Player not found.' });
-  res.json({ id: player.id, username: player.username, faction: player.faction, role: player.role });
+  res.json({ id: player.id, username: player.username, faction: player.faction, role: player.role, factionLocked: player.faction_locked });
+}));
+
+app.post('/api/player/faction', requireAuth, asyncHandler(async (req, res) => {
+  const faction = String(req.body.faction || '').trim().toLowerCase();
+  const player = await getPlayerById(req.user.userId);
+
+  if (!validFactions.includes(faction)) {
+    return res.status(400).json({ error: 'Faction must be blue, red, or green.' });
+  }
+  if (player.faction_locked) {
+    return res.status(409).json({ error: 'Faction is permanent and cannot be changed.' });
+  }
+
+  const db = await connect();
+  await db.query('UPDATE players SET faction = $1, faction_locked = TRUE WHERE id = $2', [faction, player.id]);
+  res.json({ ok: true, faction, factionLocked: true });
 }));
 
 app.get('/api/world', requireAuth, asyncHandler(async (req, res) => {

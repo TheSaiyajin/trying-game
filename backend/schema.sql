@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS players (
   username VARCHAR(32) UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   faction VARCHAR(16) NOT NULL DEFAULT 'blue',
+  faction_locked BOOLEAN NOT NULL DEFAULT TRUE,
   role VARCHAR(16) NOT NULL DEFAULT 'member',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_login_at TIMESTAMPTZ,

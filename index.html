@@ -8,12 +8,40 @@
 </head>
 <body>
 
+  <div class="auth-screen" id="auth-screen">
+    <div class="auth-card">
+      <h2>⚔️ SaiWars</h2>
+      <p class="auth-subtitle">Join the shared world</p>
+
+      <div class="auth-mode-row">
+        <button class="auth-mode-btn active" data-mode="login" type="button">Login</button>
+        <button class="auth-mode-btn" data-mode="register" type="button">Register</button>
+      </div>
+
+      <form id="auth-form" class="auth-form">
+        <input id="auth-username" type="text" placeholder="Username" maxlength="32" required />
+        <input id="auth-password" type="password" placeholder="Password" minlength="6" required />
+
+        <select id="auth-faction" class="dropdown">
+          <option value="blue">Blue</option>
+          <option value="red">Red</option>
+          <option value="green">Green</option>
+        </select>
+
+        <button type="submit" class="btn-primary wide">Enter the war</button>
+      </form>
+
+      <p id="auth-message" class="auth-message"></p>
+    </div>
+  </div>
+
   <!-- ===================== TOP BAR ===================== -->
   <header class="top-bar">
     <span class="game-title">⚔️ Territory Conquest</span>
     <div class="top-actions">
       <button class="btn-small" onclick="resetGame()">🔄 Reset</button>
       <button class="btn-small" onclick="saveGame()">💾 Save</button>
+      <button class="btn-small" id="logout-btn" onclick="logoutPlayer()">🚪 Logout</button>
     </div>
   </header>
 
