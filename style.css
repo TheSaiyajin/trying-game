@@ -1,0 +1,374 @@
+/* ====================================================
+   TERRITORY CONQUEST — style.css
+   Dark mobile-first strategy game interface
+   Designed for 360–450px portrait phone screens
+   ==================================================== */
+
+/* ---------- CSS Variables (easy theming) ---------- */
+:root {
+  --bg-dark:      #0d1117;
+  --bg-card:      #161b22;
+  --bg-card2:     #1c2230;
+  --border:       #30363d;
+  --accent-blue:  #1f6feb;
+  --accent-blue2: #388bfd;
+  --accent-green: #3fb950;
+  --accent-red:   #f85149;
+  --accent-gold:  #e3b341;
+  --text-main:    #e6edf3;
+  --text-dim:     #8b949e;
+  --nav-h:        64px;
+  --top-h:        48px;
+  --res-h:        42px;
+  --radius:       10px;
+  --shadow:       0 2px 8px rgba(0,0,0,0.5);
+}
+
+/* ---------- Reset / Base ---------- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg-dark);
+  color: var(--text-main);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  overflow: hidden;  /* prevent scroll on root; each screen scrolls internally */
+}
+
+/* ---------- Top Bar ---------- */
+.top-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: var(--top-h);
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  z-index: 100;
+}
+.game-title { font-weight: 700; font-size: 16px; color: var(--accent-gold); }
+
+/* ---------- Resource Bar ---------- */
+.resource-bar {
+  position: fixed;
+  top: var(--top-h); left: 0; right: 0;
+  height: var(--res-h);
+  background: var(--bg-card2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  z-index: 99;
+  padding: 0 4px;
+}
+.res-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+.res-icon { font-size: 16px; }
+
+/* ---------- Screen Layout ---------- */
+.screen {
+  display: none;                     /* hidden by default */
+  position: fixed;
+  top: calc(var(--top-h) + var(--res-h));
+  left: 0; right: 0;
+  bottom: var(--nav-h);
+  overflow-y: auto;
+  padding: 12px 12px 8px;
+  -webkit-overflow-scrolling: touch;  /* smooth scroll on iOS */
+}
+.screen.active { display: block; }   /* JS toggles this */
+
+.screen-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--accent-gold);
+}
+
+/* ---------- Cards / Sections ---------- */
+.info-card, .section-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+.info-card { color: var(--text-dim); font-size: 13px; }
+.section-card h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 10px;
+  color: var(--accent-blue2);
+}
+.section-card p { margin-bottom: 6px; font-size: 14px; }
+.info-text { color: var(--text-dim); font-size: 13px; margin-top: 6px; }
+
+/* ---------- Building List ---------- */
+.building-list { margin-bottom: 12px; }
+
+.building-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow);
+}
+.building-info { flex: 1; }
+.building-name {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 2px;
+}
+.building-level { font-size: 12px; color: var(--text-dim); }
+.building-prod  { font-size: 12px; color: var(--accent-green); margin-top: 2px; }
+.building-cost  { font-size: 11px; color: var(--accent-gold); margin-top: 2px; }
+
+/* ---------- Buttons ---------- */
+.btn-primary {
+  background: var(--accent-blue);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 11px 18px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+  min-height: 44px; /* WCAG touch target */
+}
+.btn-primary:hover { background: var(--accent-blue2); }
+.btn-primary.wide  { width: 100%; margin-top: 10px; }
+
+.btn-small {
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-small:hover { background: var(--border); }
+
+/* Round +/- buttons for quantity selectors */
+.btn-circle {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.btn-circle:hover { background: var(--border); }
+
+/* Upgrade button inside building card */
+.btn-upgrade {
+  background: var(--accent-gold);
+  color: #000;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 44px;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+  margin-left: 10px;
+  flex-shrink: 0;
+}
+.btn-upgrade:disabled { opacity: 0.4; cursor: default; }
+
+/* ---------- Row / Layout helpers ---------- */
+.row-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 10px 0;
+  flex-wrap: wrap;
+}
+.train-count {
+  font-size: 22px;
+  font-weight: 700;
+  min-width: 44px;
+  text-align: center;
+}
+
+/* ---------- Map Screen ---------- */
+.map-container {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+#map-svg { width: 100%; display: block; }
+
+/* SVG territory polygons — styled via JS attrs; hover via CSS */
+.territory {
+  cursor: pointer;
+  stroke: #000;
+  stroke-width: 1.5;
+  transition: filter 0.12s;
+}
+.territory:hover { filter: brightness(1.35); }
+.territory.selected { stroke: #fff; stroke-width: 3; filter: brightness(1.4); }
+
+/* Territory labels */
+.ter-label {
+  font-size: 10px;
+  font-weight: 700;
+  fill: #fff;
+  text-shadow: 0 0 4px #000;
+  pointer-events: none;
+  dominant-baseline: middle;
+  text-anchor: middle;
+}
+
+/* Territory detail panel */
+.territory-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+.territory-panel h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; color: var(--accent-gold); }
+.territory-panel p  { font-size: 14px; margin-bottom: 4px; }
+
+/* Battle popup overlay */
+.battle-popup {
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card2);
+  border: 2px solid var(--accent-gold);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  text-align: center;
+  z-index: 200;
+  box-shadow: var(--shadow);
+  min-width: 240px;
+  max-width: 90vw;
+}
+.battle-popup p { font-size: 15px; margin-bottom: 14px; line-height: 1.6; }
+
+/* ---------- Faction Screen ---------- */
+.faction-blue  { color: var(--accent-blue2); font-weight: 700; }
+.faction-red   { color: var(--accent-red);   font-weight: 700; }
+.faction-green { color: var(--accent-green); font-weight: 700; }
+
+.dropdown {
+  width: 100%;
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+  margin-bottom: 6px;
+  appearance: none;
+}
+
+/* Leaderboard table */
+.leaderboard {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.leaderboard th {
+  background: var(--bg-card2);
+  color: var(--text-dim);
+  padding: 8px 6px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.leaderboard td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.leaderboard tr:last-child td { border-bottom: none; }
+.leaderboard tr:first-child td { color: var(--accent-gold); }
+
+/* ---------- Bottom Navigation ---------- */
+.bottom-nav {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: var(--nav-h);
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: stretch;
+  z-index: 100;
+}
+.nav-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  border-top: 2px solid transparent;
+}
+.nav-btn:hover { background: var(--bg-card2); }
+.nav-btn.active {
+  color: var(--accent-blue2);
+  border-top-color: var(--accent-blue2);
+}
+.nav-icon  { font-size: 22px; }
+.nav-label { font-size: 11px; font-weight: 600; }
+
+/* ---------- Toast notification ---------- */
+.toast {
+  position: fixed;
+  bottom: calc(var(--nav-h) + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 20px;
+  font-size: 13px;
+  z-index: 300;
+  opacity: 1;
+  transition: opacity 0.5s;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.toast.fade { opacity: 0; }
+
+/* ---------- Scrollbar (desktop preview) ---------- */
+.screen::-webkit-scrollbar { width: 4px; }
+.screen::-webkit-scrollbar-track { background: transparent; }
+.screen::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
