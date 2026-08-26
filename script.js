@@ -1,761 +1,535 @@
 /* ====================================================
-   TERRITORY CONQUEST — script.js
-   Beginner-friendly, heavily commented game logic
+   TERRITORY CONQUEST — authoritative client wrapper
+   The browser may only render and submit actions.
+   All critical state is calculated and stored on the server.
    ==================================================== */
 
-// ============================================================
-// SECTION 1 — GAME STATE
-// ============================================================
-
-// Territories are laid out in a 3-column × 5-row visual grid:
-//
-//  [t3: Blue ] [t7: Green ] [t12: Green]  (row 0 — north)
-//  [t2: Blue ] [t6: Green ] [t11: Green]  (row 1)
-//  [t1: Blue ] [t5: Red   ] [t10: Red  ]  (row 2)  ← Blue borders Red here
-//  [t4: Red  ] [t9: Red   ] [t15: Green]  (row 3)
-//  [t8: Red  ] [t14: Red  ] [t13: Green]  (row 4 — south)
-//
-// Adjacency matches orthogonal (edge-sharing) grid neighbors.
-
+const AUTH_STORAGE_KEY = 'trying_game_token';
 const DEFAULT_STATE = {
-  food:     500,
-  wood:     400,
-  iron:     300,
-  manpower: 250,
-  soldiers: 100,
-
-  buildings: {
-    farm:       { level: 1, name: "Farm",        icon: "🌾", resource: "food",     baseProd: 5,  upgradeCost: { food:50,  wood:80,  iron:0  } },
-    lumbermill: { level: 1, name: "Lumber Mill",  icon: "🪵", resource: "wood",     baseProd: 4,  upgradeCost: { food:40,  wood:0,   iron:60 } },
-    ironmine:   { level: 1, name: "Iron Mine",    icon: "⚙️", resource: "iron",     baseProd: 3,  upgradeCost: { food:30,  wood:100, iron:0  } },
-    barracks:   { level: 1, name: "Barracks",     icon: "🏟", resource: "manpower", baseProd: 2,  upgradeCost: { food:80,  wood:60,  iron:80 } },
+  player: {
+    id: null,
+    username: 'Guest',
+    faction: 'blue',
+    role: 'member',
+    resources: { food: 0, wood: 0, iron: 0, manpower: 0 },
+    soldiers: 0,
+    buildings: { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
+    production: { food: 0, wood: 0, iron: 0, manpower: 0 },
   },
-
-  territories: {
-    // Blue (col 0) — player controls these 3 at start
-    t1:  { name: "Ironholt",    owner: "blue",  troops: 30, bonus: "+10% Iron",         adj: ["t2","t4","t5"] },
-    t2:  { name: "Greenfields", owner: "blue",  troops: 25, bonus: "+10% Food",         adj: ["t1","t3","t6"] },
-    t3:  { name: "Millwood",    owner: "blue",  troops: 20, bonus: "+10% Wood",         adj: ["t2","t7"] },
-
-    // Red (centre / bottom-left) — t5 and t4 both border Blue
-    t4:  { name: "Steelpass",   owner: "red",   troops: 35, bonus: "+10% Iron",         adj: ["t1","t8","t9"] },
-    t5:  { name: "Dustplain",   owner: "red",   troops: 28, bonus: "None",              adj: ["t1","t6","t9","t10"] },
-    t8:  { name: "Redkeep",     owner: "red",   troops: 50, bonus: "Fortress +20% Def", adj: ["t4","t14"] },
-    t9:  { name: "Cragfort",    owner: "red",   troops: 40, bonus: "None",              adj: ["t4","t5","t14","t15"] },
-    t10: { name: "Stonemarsh",  owner: "red",   troops: 38, bonus: "+10% Iron",         adj: ["t5","t11","t15"] },
-    t14: { name: "Grimhaven",   owner: "red",   troops: 45, bonus: "+10% Manpower",     adj: ["t8","t9","t13"] },
-
-    // Green (right column + bottom-right)
-    t6:  { name: "Ashvale",     owner: "green", troops: 32, bonus: "+10% Food",         adj: ["t2","t5","t7","t11"] },
-    t7:  { name: "Pinegrove",   owner: "green", troops: 30, bonus: "+10% Wood",         adj: ["t3","t6","t12"] },
-    t11: { name: "Fernhaven",   owner: "green", troops: 42, bonus: "+10% Food",         adj: ["t6","t10","t12"] },
-    t12: { name: "Evermoore",   owner: "green", troops: 36, bonus: "+10% Wood",         adj: ["t7","t11"] },
-    t13: { name: "Duskwall",    owner: "green", troops: 55, bonus: "Fortress +20% Def", adj: ["t14","t15"] },
-    t15: { name: "Thornwatch",  owner: "green", troops: 60, bonus: "+5% Train Speed",   adj: ["t9","t10","t13"] },
-  },
-
-  attackTarget: "",
+  territories: {},
+  attackTarget: '',
   attackContributions: {},
-  playerStats: {
-    You: { kills: 0, contributions: {} },
-  },
-  leaderboard: [
-    { name: "You",    kills: 0,  territories: 3 },
-    { name: "Zara",   kills: 47, territories: 3 },
-    { name: "Korvax", kills: 35, territories: 2 },
-    { name: "Lira",   kills: 28, territories: 2 },
-    { name: "Draxis", kills: 19, territories: 2 },
-    { name: "Syndra", kills: 12, territories: 3 },
-  ],
 };
 
-let G = deepClone(DEFAULT_STATE);
-
-// ============================================================
-// SECTION 2 — UTILITY
-// ============================================================
-
-function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+let G = structuredClone(DEFAULT_STATE);
+let selectedTerritoryId = null;
+let attackSendCount = 10;
+let trainAmount = 1;
 
 function showToast(msg) {
-  const old = document.querySelector(".toast");
+  const old = document.querySelector('.toast');
   if (old) old.remove();
-  const toast = document.createElement("div");
-  toast.className = "toast";
+  const toast = document.createElement('div');
+  toast.className = 'toast';
   toast.textContent = msg;
   document.body.appendChild(toast);
-  setTimeout(() => toast.classList.add("fade"), 1800);
+  setTimeout(() => toast.classList.add('fade'), 1800);
   setTimeout(() => toast.remove(), 2400);
 }
 
-function fmt(n) {
-  n = Math.floor(n);
-  if (n >= 10000) return (n / 1000).toFixed(1) + "k";
-  return String(n);
+function fmt(value) {
+  const num = Math.floor(Number(value) || 0);
+  if (num >= 10000) return (num / 1000).toFixed(1) + 'k';
+  return String(num);
 }
 
-function clampSoldierCount(value) {
-  const num = Number(value) || 0;
-  return Math.max(0, Math.floor(num));
-}
-
-function ensureAttackState(id) {
-  if (!G.territories[id]) return null;
-  if (!G.attackContributions[id]) {
-    G.attackContributions[id] = {
-      total: 0,
-      yourContribution: 0,
-      contributions: { You: 0 },
-      status: "open",
+function mapTerritories(rawTerritories) {
+  const entryMap = {};
+  rawTerritories.forEach((territory) => {
+    entryMap[territory.id] = {
+      id: territory.id,
+      name: territory.name,
+      owner: territory.owner || territory.owner_faction || 'neutral',
+      troops: Number(territory.defense || territory.defense_troops || 0),
+      bonus: territory.bonus || territory.bonus_type || 'None',
+      adj: Array.isArray(territory.neighbors) ? territory.neighbors : [],
+      fortress: !!territory.fortress,
+      capital: !!territory.capital,
     };
-  }
-  return G.attackContributions[id];
-}
-
-function getAttackState(id) {
-  return G.attackContributions[id] || { total: 0, yourContribution: 0, contributions: { You: 0 }, status: "open" };
-}
-
-function getTerritoryResourceBonus(resourceKey) {
-  const bonusMap = { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 };
-  Object.values(G.territories).forEach((ter) => {
-    if (ter.owner !== "blue") return;
-    const lower = (ter.bonus || "").toLowerCase();
-    if (lower.includes("food") && lower.includes("10%")) bonusMap.food += 0.1;
-    if (lower.includes("wood") && lower.includes("10%")) bonusMap.wood += 0.1;
-    if (lower.includes("iron") && lower.includes("10%")) bonusMap.iron += 0.1;
-    if (lower.includes("manpower") && lower.includes("10%")) bonusMap.manpower += 0.1;
-    if (lower.includes("train speed") && lower.includes("5%")) bonusMap.training += 0.05;
   });
-  return bonusMap[resourceKey] || 0;
+  return entryMap;
 }
 
-function getTerritoryDefenseBonus(territoryId) {
-  const ter = G.territories[territoryId];
-  if (!ter) return 1;
-  return (String(ter.bonus || "").toLowerCase().includes("fortress")) ? 1.2 : 1;
+function getToken() {
+  return localStorage.getItem(AUTH_STORAGE_KEY) || '';
 }
 
-function getTrainingCostMultiplier() {
-  const bonus = getTerritoryResourceBonus("training");
-  return Math.max(0.4, 1 - bonus);
+function setToken(token) {
+  if (token) localStorage.setItem(AUTH_STORAGE_KEY, token);
 }
 
-// ============================================================
-// SECTION 3 — SAVE / LOAD
-// ============================================================
+async function apiFetch(path, options = {}) {
+  const token = getToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {}),
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
 
-function saveGame() {
-  localStorage.setItem("tc_save", JSON.stringify(G));
-  showToast("✅ Game saved!");
+  const response = await fetch(`/api${path}`, {
+    ...options,
+    headers,
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `Request failed: ${response.status}`);
+  }
+  return payload;
 }
 
-function loadGame() {
-  const raw = localStorage.getItem("tc_save");
-  if (raw) {
+async function ensureSession() {
+  const token = getToken();
+  if (token) {
     try {
-      const saved = JSON.parse(raw);
-      G = Object.assign(deepClone(DEFAULT_STATE), saved);
-      G.buildings   = Object.assign(deepClone(DEFAULT_STATE.buildings),   saved.buildings   || {});
-      G.territories = Object.assign(deepClone(DEFAULT_STATE.territories), saved.territories || {});
-      G.attackContributions = saved.attackContributions || {};
-      G.playerStats = Object.assign(deepClone(DEFAULT_STATE.playerStats), saved.playerStats || {});
-      G.leaderboard = Array.isArray(saved.leaderboard) ? saved.leaderboard : deepClone(DEFAULT_STATE.leaderboard);
-    } catch (e) {
-      console.warn("Save data corrupt, using defaults.", e);
-      G = deepClone(DEFAULT_STATE);
+      const user = await apiFetch('/me');
+      if (user && user.username) return user;
+    } catch (error) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
     }
   }
+
+  const uniqueUsername = `guest_${Date.now()}`;
+  const payload = await apiFetch('/register', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: uniqueUsername,
+      password: 'guestpass123',
+      faction: 'blue',
+    }),
+  });
+
+  setToken(payload.token);
+  return payload.user;
+}
+
+async function loadGame() {
+  try {
+    await ensureSession();
+    const payload = await apiFetch('/game/state');
+    const territories = mapTerritories(payload.world.territories || payload.territories || []);
+
+    G = {
+      player: {
+        ...(payload.player || {}),
+        resources: payload.player?.resources || { food: 0, wood: 0, iron: 0, manpower: 0 },
+        buildings: payload.player?.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
+        production: payload.player?.production || { food: 0, wood: 0, iron: 0, manpower: 0 },
+      },
+      territories,
+      attackTarget: '',
+      attackContributions: {},
+    };
+
+    renderCity();
+    renderMap();
+    renderFaction();
+    updateResourceBar();
+  } catch (error) {
+    console.error('Failed to load authoritative game state:', error);
+    showToast('⚠️ Could not load the server state.');
+  }
+}
+
+function saveGame() {
+  if (getToken()) {
+    showToast('✅ Session saved securely on the server.');
+    return;
+  }
+  showToast('⚠️ No active session.');
 }
 
 function resetGame() {
-  if (!confirm("Reset to default test state? All progress will be lost.")) return;
-  localStorage.removeItem("tc_save");
-  G = deepClone(DEFAULT_STATE);
-  trainAmount = 1;
-  attackSendCount = 10;
-  selectedTerritoryId = null;
-  updateResourceBar();
-  renderCity();
-  if (document.getElementById("screen-map").classList.contains("active"))     renderMap();
-  if (document.getElementById("screen-faction").classList.contains("active")) renderFaction();
-  showToast("🔄 Game reset!");
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+  showToast('🔄 Session reset.');
+  loadGame();
 }
-
-// ============================================================
-// SECTION 4 — SCREEN NAVIGATION
-// ============================================================
 
 function showScreen(name) {
-  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
-  document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
-  document.getElementById("screen-" + name).classList.add("active");
-  document.getElementById("nav-" + name).classList.add("active");
-  if (name === "city")    renderCity();
-  if (name === "map")     renderMap();
-  if (name === "faction") renderFaction();
-}
-
-// ============================================================
-// SECTION 5 — RESOURCE PRODUCTION TICK
-// ============================================================
-
-const TICK_MS = 3000;
-
-function resourceTick() {
-  const b = G.buildings;
-  const foodBonus = 1 + getTerritoryResourceBonus("food");
-  const woodBonus = 1 + getTerritoryResourceBonus("wood");
-  const ironBonus = 1 + getTerritoryResourceBonus("iron");
-  const manpowerBonus = 1 + getTerritoryResourceBonus("manpower");
-
-  G.food     += Math.floor((b.farm.baseProd * b.farm.level) * foodBonus);
-  G.wood     += Math.floor((b.lumbermill.baseProd * b.lumbermill.level) * woodBonus);
-  G.iron     += Math.floor((b.ironmine.baseProd * b.ironmine.level) * ironBonus);
-  G.manpower += Math.floor((b.barracks.baseProd * b.barracks.level) * manpowerBonus);
-
-  G.food     = Math.min(clampSoldierCount(G.food), 9999);
-  G.wood     = Math.min(clampSoldierCount(G.wood), 9999);
-  G.iron     = Math.min(clampSoldierCount(G.iron), 9999);
-  G.manpower = Math.min(clampSoldierCount(G.manpower), 9999);
-  updateResourceBar();
+  document.querySelectorAll('.screen').forEach((screen) => screen.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach((button) => button.classList.remove('active'));
+  document.getElementById('screen-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+  if (name === 'city') renderCity();
+  if (name === 'map') renderMap();
+  if (name === 'faction') renderFaction();
 }
 
 function updateResourceBar() {
-  document.getElementById("res-food").textContent     = fmt(G.food);
-  document.getElementById("res-wood").textContent     = fmt(G.wood);
-  document.getElementById("res-iron").textContent     = fmt(G.iron);
-  document.getElementById("res-manpower").textContent = fmt(G.manpower);
+  const resources = G.player.resources || { food: 0, wood: 0, iron: 0, manpower: 0 };
+  document.getElementById('res-food').textContent = fmt(resources.food);
+  document.getElementById('res-wood').textContent = fmt(resources.wood);
+  document.getElementById('res-iron').textContent = fmt(resources.iron);
+  document.getElementById('res-manpower').textContent = fmt(resources.manpower);
 }
-
-// ============================================================
-// SECTION 6 — CITY SCREEN
-// ============================================================
-
-let trainAmount = 1;
 
 function renderCity() {
-  renderBuildings();
-  document.getElementById("soldiers-count").textContent = G.soldiers;
-  document.getElementById("train-count").textContent    = trainAmount;
-}
+  const buildings = G.player.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 };
+  const container = document.getElementById('building-list');
+  container.innerHTML = '';
 
-function renderBuildings() {
-  const container = document.getElementById("building-list");
-  container.innerHTML = "";
-  Object.entries(G.buildings).forEach(([id, b]) => {
-    const prod = b.baseProd * b.level;
-    const cost = upgradeCostAt(b, b.level + 1);
-    const canAfford = G.food >= cost.food && G.wood >= cost.wood && G.iron >= cost.iron;
-    const card = document.createElement("div");
-    card.className = "building-card";
+  const defs = {
+    farm: { name: 'Farm', icon: '🌾', resource: 'food', production: 5 },
+    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', production: 4 },
+    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', production: 3 },
+    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', production: 2 },
+  };
+
+  Object.entries(defs).forEach(([key, def]) => {
+    const level = Number(buildings[key] || 1);
+    const prod = def.production * level;
+    const card = document.createElement('div');
+    card.className = 'building-card';
     card.innerHTML = `
       <div class="building-info">
-        <div class="building-name">${b.icon} ${b.name}</div>
-        <div class="building-level">Level ${b.level}</div>
-        <div class="building-prod">+${prod} ${b.resource}/tick</div>
-        <div class="building-cost">Upgrade: 🌾${cost.food} 🪵${cost.wood} ⚙️${cost.iron}</div>
+        <div class="building-name">${def.icon} ${def.name}</div>
+        <div class="building-level">Level ${level}</div>
+        <div class="building-prod">+${prod} ${def.resource}/tick</div>
       </div>
-      <button class="btn-upgrade" onclick="upgradeBuilding('${id}')" ${canAfford ? "" : "disabled"}>⬆ Lvl ${b.level + 1}</button>
+      <button class="btn-upgrade" onclick="upgradeBuilding('${key}')">⬆ Lvl ${level + 1}</button>
     `;
     container.appendChild(card);
   });
+
+  document.getElementById('soldiers-count').textContent = G.player.soldiers || 0;
+  document.getElementById('train-count').textContent = trainAmount;
 }
 
-function upgradeCostAt(b, level) {
-  const mult = level;
-  return {
-    food: b.upgradeCost.food * mult,
-    wood: b.upgradeCost.wood * mult,
-    iron: b.upgradeCost.iron * mult,
-  };
-}
-
-function upgradeBuilding(id) {
-  const b    = G.buildings[id];
-  const cost = upgradeCostAt(b, b.level + 1);
-  if (G.food < cost.food || G.wood < cost.wood || G.iron < cost.iron) {
-    showToast("❌ Not enough resources!");
-    return;
+async function upgradeBuilding(key) {
+  try {
+    const response = await apiFetch('/game/upgrade-building', {
+      method: 'POST',
+      body: JSON.stringify({ building: key }),
+    });
+    G = {
+      ...G,
+      player: response.state.player,
+      territories: mapTerritories(response.state.world.territories),
+    };
+    renderCity();
+    renderMap();
+    renderFaction();
+    updateResourceBar();
+    showToast(`✅ ${key} upgraded on the server.`);
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
   }
-  G.food -= cost.food;
-  G.wood -= cost.wood;
-  G.iron -= cost.iron;
-  b.level += 1;
-  showToast(`✅ ${b.name} upgraded to level ${b.level}!`);
-  renderCity();
-  updateResourceBar();
-  autoSave();
 }
 
 function changeTrain(delta) {
   trainAmount = Math.max(1, trainAmount + delta);
-  document.getElementById("train-count").textContent = trainAmount;
+  document.getElementById('train-count').textContent = trainAmount;
 }
 
-function trainSoldiers() {
-  const multiplier = getTrainingCostMultiplier();
-  const costFood     = Math.max(1, Math.floor(50 * trainAmount * multiplier));
-  const costIron     = Math.max(1, Math.floor(20 * trainAmount * multiplier));
-  const costManpower = Math.max(1, Math.floor(1 * trainAmount * multiplier));
-  if (G.food < costFood || G.iron < costIron || G.manpower < costManpower) {
-    showToast("❌ Not enough resources to train soldiers!");
-    return;
+async function trainSoldiers() {
+  try {
+    const response = await apiFetch('/game/train-soldiers', {
+      method: 'POST',
+      body: JSON.stringify({ amount: trainAmount }),
+    });
+    G = {
+      ...G,
+      player: response.state.player,
+      territories: mapTerritories(response.state.world.territories),
+    };
+    renderCity();
+    renderFaction();
+    updateResourceBar();
+    showToast(`✅ Trained ${response.trained} soldier(s) on the server.`);
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
   }
-  G.food     -= costFood;
-  G.iron     -= costIron;
-  G.manpower -= costManpower;
-  G.soldiers = clampSoldierCount(G.soldiers + trainAmount);
-  showToast(`✅ Trained ${trainAmount} soldier(s)!`);
-  renderCity();
-  updateResourceBar();
-  autoSave();
 }
-
-// ============================================================
-// SECTION 7 — WORLD MAP (SVG, properly-tiling polygons)
-// ============================================================
-
-// The map is a 3-column × 5-row tiling grid drawn on a 360×370 viewBox.
-// Junction points (where 4 cells meet) are slightly offset for organic look:
-//
-//   J1=(118,76)  J2=(242,72)
-//   J3=(122,150) J4=(238,146)
-//   J5=(120,224) J6=(244,220)
-//   J7=(116,298) J8=(240,294)
-//
-// Grid cell → territory mapping:
-//   (col0,row0)=t3  (col1,row0)=t7  (col2,row0)=t12
-//   (col0,row1)=t2  (col1,row1)=t6  (col2,row1)=t11
-//   (col0,row2)=t1  (col1,row2)=t5  (col2,row2)=t10
-//   (col0,row3)=t4  (col1,row3)=t9  (col2,row3)=t15
-//   (col0,row4)=t8  (col1,row4)=t14 (col2,row4)=t13
 
 const TERRITORY_SHAPES = {
-  // col0 (left)
-  t3:  "0,0   120,0  118,76  0,74",
-  t2:  "0,74  118,76 122,150 0,148",
-  t1:  "0,148 122,150 120,224 0,222",
-  t4:  "0,222 120,224 116,298 0,296",
-  t8:  "0,296 116,298 120,370 0,370",
-  // col1 (centre)
-  t7:  "120,0  240,0  242,72  118,76",
-  t6:  "118,76 242,72 238,146 122,150",
-  t5:  "122,150 238,146 244,220 120,224",
-  t9:  "120,224 244,220 240,294 116,298",
-  t14: "116,298 240,294 240,370 120,370",
-  // col2 (right)
-  t12: "240,0  360,0  360,74  242,72",
-  t11: "242,72 360,74 360,148 238,146",
-  t10: "238,146 360,148 360,222 244,220",
-  t15: "244,220 360,222 360,296 240,294",
-  t13: "240,294 360,296 360,370 240,370",
+  t3: '0,0 120,0 118,76 0,74',
+  t2: '0,74 118,76 122,150 0,148',
+  t1: '0,148 122,150 120,224 0,222',
+  t4: '0,222 120,224 116,298 0,296',
+  t8: '0,296 116,298 120,370 0,370',
+  t7: '120,0 240,0 242,72 118,76',
+  t6: '118,76 242,72 238,146 122,150',
+  t5: '122,150 238,146 244,220 120,224',
+  t9: '120,224 244,220 240,294 116,298',
+  t14: '116,298 240,294 240,370 120,370',
+  t12: '240,0 360,0 360,74 242,72',
+  t11: '242,72 360,74 360,148 238,146',
+  t10: '238,146 360,148 360,222 244,220',
+  t15: '244,220 360,222 360,296 240,294',
+  t13: '240,294 360,296 360,370 240,370',
 };
 
-// Approximate label centres for each polygon (cx, cy)
 const TERRITORY_LABEL = {
-  t3:  [60,  37 ], t7:  [182, 36 ], t12: [300, 36 ],
-  t2:  [61,  111], t6:  [180, 110], t11: [299, 110],
-  t1:  [61,  185], t5:  [183, 185], t10: [300, 185],
-  t4:  [60,  259], t9:  [183, 258], t15: [302, 258],
-  t8:  [60,  333], t14: [182, 333], t13: [300, 333],
+  t3: [60, 37], t7: [182, 36], t12: [300, 36],
+  t2: [61, 111], t6: [180, 110], t11: [299, 110],
+  t1: [61, 185], t5: [183, 185], t10: [300, 185],
+  t4: [60, 259], t9: [183, 258], t15: [302, 258],
+  t8: [60, 333], t14: [182, 333], t13: [300, 333],
 };
 
-const FACTION_FILL   = { blue: "#1a4d8f", red: "#7a1a1a", green: "#1a5c2a" };
-const FACTION_STROKE = { blue: "#2e78e0", red: "#d93030", green: "#2ea840" };
-
-let selectedTerritoryId = null;
-let attackSendCount = 10;
-
-function isAdjacentToBlue(id) {
-  if (!G.territories[id]) return false;
-  return G.territories[id].adj.some(adjId => G.territories[adjId] && G.territories[adjId].owner === "blue");
-}
+const FACTION_FILL = { blue: '#1a4d8f', red: '#7a1a1a', green: '#1a5c2a' };
+const FACTION_STROKE = { blue: '#2e78e0', red: '#d93030', green: '#2ea840' };
 
 function canAttack(id) {
-  return G.territories[id] && G.territories[id].owner !== "blue" && isAdjacentToBlue(id);
+  const territory = G.territories[id];
+  if (!territory || territory.owner === G.player.faction) return false;
+  return territory.adj.some((neighborId) => G.territories[neighborId] && G.territories[neighborId].owner === G.player.faction);
 }
 
 function renderMap() {
-  const svg = document.getElementById("map-svg");
-  svg.innerHTML = "";
-
-  Object.entries(G.territories).forEach(([id, ter]) => {
+  const svg = document.getElementById('map-svg');
+  svg.innerHTML = '';
+  Object.entries(G.territories).forEach(([id, territory]) => {
     const shape = TERRITORY_SHAPES[id];
     if (!shape) return;
 
-    const fill    = FACTION_FILL[ter.owner]   || "#333";
-    const stroke  = FACTION_STROKE[ter.owner] || "#888";
-    const isSel   = id === selectedTerritoryId;
-    const isTgt   = id === G.attackTarget;
-    const [lx, ly] = TERRITORY_LABEL[id] || [180, 185];
+    const fill = FACTION_FILL[territory.owner] || '#333';
+    const stroke = FACTION_STROKE[territory.owner] || '#888';
+    const [x, y] = TERRITORY_LABEL[id] || [180, 185];
 
-    // Main polygon
-    const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-    poly.setAttribute("points", shape);
-    poly.setAttribute("fill", fill);
-    poly.setAttribute("stroke", isSel ? "#ffffff" : stroke);
-    poly.setAttribute("stroke-width", isSel ? "3" : "1.5");
-    poly.setAttribute("class", "territory" + (isSel ? " selected" : ""));
-    poly.setAttribute("data-id", id);
-    poly.addEventListener("click", () => selectTerritory(id));
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    poly.setAttribute('points', shape);
+    poly.setAttribute('fill', fill);
+    poly.setAttribute('stroke', selectedTerritoryId === id ? '#fff' : stroke);
+    poly.setAttribute('stroke-width', selectedTerritoryId === id ? '3' : '1.5');
+    poly.setAttribute('data-id', id);
+    poly.addEventListener('click', () => selectTerritory(id));
     svg.appendChild(poly);
 
-    // Faction attack-target dashed gold border
-    if (isTgt) {
-      const glow = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-      glow.setAttribute("points", shape);
-      glow.setAttribute("fill", "none");
-      glow.setAttribute("stroke", "#e3b341");
-      glow.setAttribute("stroke-width", "3");
-      glow.setAttribute("stroke-dasharray", "7,4");
-      glow.setAttribute("pointer-events", "none");
-      svg.appendChild(glow);
-    }
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', x);
+    label.setAttribute('y', y - 6);
+    label.setAttribute('fill', '#e6edf3');
+    label.setAttribute('font-size', '8.5');
+    label.textContent = territory.name;
+    svg.appendChild(label);
 
-    // Territory name label
-    const nameEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    nameEl.setAttribute("x", lx);
-    nameEl.setAttribute("y", ly - 6);
-    nameEl.setAttribute("class", "ter-label");
-    nameEl.setAttribute("font-size", "8.5");
-    nameEl.setAttribute("fill", "#e6edf3");
-    nameEl.setAttribute("pointer-events", "none");
-    nameEl.textContent = ter.name;
-    svg.appendChild(nameEl);
-
-    // Troop count label
-    const troopEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    troopEl.setAttribute("x", lx);
-    troopEl.setAttribute("y", ly + 8);
-    troopEl.setAttribute("class", "ter-label");
-    troopEl.setAttribute("font-size", "10");
-    troopEl.setAttribute("fill", "#e3b341");
-    troopEl.setAttribute("pointer-events", "none");
-    troopEl.textContent = "⚔" + ter.troops;
-    svg.appendChild(troopEl);
+    const troops = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    troops.setAttribute('x', x);
+    troops.setAttribute('y', y + 8);
+    troops.setAttribute('fill', '#e3b341');
+    troops.setAttribute('font-size', '10');
+    troops.textContent = '⚔' + territory.troops;
+    svg.appendChild(troops);
   });
 }
 
 function selectTerritory(id) {
   selectedTerritoryId = id;
+  const territory = G.territories[id];
+  if (!territory) return;
+
   renderMap();
+  document.getElementById('territory-panel').style.display = 'block';
+  document.getElementById('tp-name').textContent = territory.name;
+  document.getElementById('tp-owner').textContent = ownerLabel(territory.owner);
+  document.getElementById('tp-troops').textContent = territory.troops;
+  document.getElementById('tp-bonus').textContent = territory.bonus;
+  document.getElementById('tp-neighbors').textContent = (territory.adj || []).map((neighborId) => G.territories[neighborId]?.name || neighborId).join(', ');
 
-  const ter    = G.territories[id];
-  const panel  = document.getElementById("territory-panel");
-  const atkSec = document.getElementById("attack-section");
-
-  panel.style.display = "block";
-
-  document.getElementById("tp-name").textContent    = ter.name;
-  document.getElementById("tp-owner").textContent   = ownerLabel(ter.owner);
-  document.getElementById("tp-troops").textContent  = ter.troops;
-  document.getElementById("tp-bonus").textContent   = ter.bonus;
-
-  const neighNames = ter.adj
-    .map(nid => G.territories[nid] ? G.territories[nid].name : nid)
-    .join(", ");
-  document.getElementById("tp-neighbors").textContent = neighNames;
-
-  const currentAttack = getAttackState(id);
-  document.getElementById("tp-your-contribution").textContent = currentAttack.yourContribution || 0;
-  document.getElementById("tp-total-attack").textContent = currentAttack.total || 0;
-
+  const attackSection = document.getElementById('attack-section');
   if (canAttack(id)) {
-    atkSec.style.display = "block";
-    attackSendCount = Math.max(1, Math.min(10, clampSoldierCount(G.soldiers)));
-    document.getElementById("attack-count").textContent = attackSendCount;
+    attackSection.style.display = 'block';
+    attackSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
+    document.getElementById('attack-count').textContent = attackSendCount;
   } else {
-    atkSec.style.display = "none";
+    attackSection.style.display = 'none';
   }
 }
 
 function ownerLabel(owner) {
-  const map = { blue: "🔵 Blue (You)", red: "🔴 Red Empire", green: "🟢 Green League" };
-  return map[owner] || owner;
+  return { blue: '🔵 Blue', red: '🔴 Red', green: '🟢 Green', neutral: '⚪ Neutral' }[owner] || owner;
 }
 
 function changeAttack(delta) {
-  if (delta === "max") {
-    attackSendCount = clampSoldierCount(G.soldiers);
-    if (attackSendCount < 1) attackSendCount = 1;
+  const maxAmount = Math.max(1, Number(G.player.soldiers) || 1);
+  if (delta === 'max') {
+    attackSendCount = maxAmount;
   } else {
-    attackSendCount = clampSoldierCount(attackSendCount + delta);
-    const maxAmount = clampSoldierCount(G.soldiers);
-    attackSendCount = Math.max(1, Math.min(maxAmount, attackSendCount));
+    attackSendCount = Math.max(1, Math.min(maxAmount, attackSendCount + delta));
   }
-  document.getElementById("attack-count").textContent = attackSendCount;
+  document.getElementById('attack-count').textContent = attackSendCount;
 }
 
-function launchAttack() {
-  if (!selectedTerritoryId) return;
-  const ter = G.territories[selectedTerritoryId];
-  const sending = clampSoldierCount(attackSendCount);
-
+async function launchAttack() {
+  if (!selectedTerritoryId) {
+    showToast('❌ Select a territory first.');
+    return;
+  }
   if (!canAttack(selectedTerritoryId)) {
-    showToast("❌ Cannot attack this territory!");
-    return;
-  }
-  if (G.soldiers < sending || sending < 1) {
-    showToast("❌ Not enough soldiers!");
+    showToast('❌ This target cannot be attacked from your faction.');
     return;
   }
 
-  const attackState = ensureAttackState(selectedTerritoryId);
-  G.soldiers = clampSoldierCount(G.soldiers - sending);
-  attackState.total = clampSoldierCount(attackState.total + sending);
-  attackState.yourContribution = clampSoldierCount((attackState.yourContribution || 0) + sending);
-  attackState.contributions.You = attackState.yourContribution;
-  attackState.status = "open";
-  G.playerStats.You.contributions[selectedTerritoryId] = attackState.yourContribution;
-
-  const terName = ter.name;
-  showToast(`✅ ${sending} soldiers contributed to ${terName}.`);
-
-  document.getElementById("tp-your-contribution").textContent = attackState.yourContribution;
-  document.getElementById("tp-total-attack").textContent = attackState.total;
-  document.getElementById("attack-count").textContent = Math.max(1, Math.min(10, clampSoldierCount(G.soldiers)));
-  renderFaction();
-  renderMap();
-  updateResourceBar();
-  autoSave();
+  try {
+    const response = await apiFetch('/game/attack', {
+      method: 'POST',
+      body: JSON.stringify({ territoryId: selectedTerritoryId, soldiers: attackSendCount }),
+    });
+    G = {
+      ...G,
+      player: response.state.player,
+      territories: mapTerritories(response.state.world.territories),
+    };
+    showToast(`✅ ${attackSendCount} soldiers sent to the server.`);
+    renderCity();
+    renderMap();
+    renderFaction();
+    updateResourceBar();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
 }
 
-function resolveSelectedTargetBattle() {
-  const targetId = G.attackTarget;
-  if (!targetId || !G.territories[targetId]) {
-    showToast("❌ Select a target first.");
+async function resolveSelectedTargetBattle() {
+  if (!selectedTerritoryId) {
+    showToast('❌ Select a target first.');
     return;
   }
-  if (!canAttack(targetId)) {
-    showToast("❌ That target is not a valid blue-border enemy territory.");
-    return;
+  try {
+    const response = await apiFetch('/game/resolve-battle', {
+      method: 'POST',
+      body: JSON.stringify({ territoryId: selectedTerritoryId }),
+    });
+    G = {
+      ...G,
+      player: response.state.player,
+      territories: mapTerritories(response.state.world.territories),
+    };
+
+    const result = response.outcome;
+    document.getElementById('battle-result-text').innerHTML = result.victory
+      ? `<span class="result-victory">⚔️ VICTORY!</span><br>Attack succeeded.<br>Attackers left: ${result.attackersRemaining}`
+      : `<span class="result-defeat">💀 DEFEAT!</span><br>Attack failed.<br>Defenders lost: ${result.defendersLost}`;
+    document.getElementById('battle-popup').style.display = 'block';
+    renderMap();
+    renderFaction();
+    renderCity();
+    updateResourceBar();
+    showToast(result.victory ? '✅ Victory resolved by the server.' : '⚠️ Battle resolved by the server.');
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
   }
-
-  const battle = ensureAttackState(targetId);
-  const totalAttack = clampSoldierCount(battle.total);
-  if (totalAttack < 1) {
-    showToast("❌ No soldiers have been contributed to this attack yet.");
-    return;
-  }
-
-  const target = G.territories[targetId];
-  const fortBonus = getTerritoryDefenseBonus(targetId);
-  const attackPower = totalAttack * (0.75 + Math.random() * 0.5);
-  const defensePower = target.troops * fortBonus * (0.7 + Math.random() * 0.6);
-
-  const terName = target.name;
-  let resultHTML = "";
-  let enemyDeaths = 0;
-  let fewerAttackers = 0;
-
-  if (attackPower >= defensePower) {
-    const survivingAttack = Math.max(1, Math.round(totalAttack * (0.55 + Math.random() * 0.2)));
-    enemyDeaths = Math.max(1, Math.round(target.troops * (0.5 + Math.random() * 0.3)));
-    target.owner = "blue";
-    target.troops = survivingAttack;
-    G.leaderboard[0].kills += enemyDeaths;
-    G.playerStats.You.kills = clampSoldierCount((G.playerStats.You.kills || 0) + enemyDeaths);
-    G.leaderboard[0].territories = countBlue();
-    resultHTML = `<span class="result-victory">⚔️ VICTORY!</span><br>
-      ${totalAttack} attackers vs ${target.troops} defenders<br>
-      <strong>Blue captured ${terName}!</strong><br>
-      Enemy losses: ${enemyDeaths} &nbsp;|&nbsp; Troops left: ${survivingAttack}`;
-  } else {
-    enemyDeaths = Math.max(1, Math.floor(Math.min(target.troops, totalAttack * 0.45)));
-    fewerAttackers = Math.max(1, Math.round(totalAttack * (0.3 + Math.random() * 0.25)));
-    target.troops = Math.max(1, target.troops - enemyDeaths);
-    G.leaderboard[0].kills += enemyDeaths;
-    G.playerStats.You.kills = clampSoldierCount((G.playerStats.You.kills || 0) + enemyDeaths);
-    resultHTML = `<span class="result-defeat">💀 DEFEAT!</span><br>
-      ${totalAttack} attackers vs ${target.troops} defenders<br>
-      <strong>Attack on ${terName} failed!</strong><br>
-      Enemy losses: ${enemyDeaths} &nbsp;|&nbsp; Blue survivors: ${fewerAttackers}.`;
-  }
-
-  if (G.playerStats.You.contributions) {
-    G.playerStats.You.contributions[targetId] = (G.playerStats.You.contributions[targetId] || 0) + battle.yourContribution;
-  }
-
-  delete G.attackContributions[targetId];
-  G.attackTarget = "";
-
-  document.getElementById("battle-result-text").innerHTML = resultHTML;
-  document.getElementById("battle-popup").style.display = "block";
-  document.getElementById("territory-panel").style.display = "none";
-  selectedTerritoryId = null;
-
-  renderMap();
-  renderFaction();
-  updateResourceBar();
-  autoSave();
 }
 
 function closeBattlePopup() {
-  document.getElementById("battle-popup").style.display = "none";
+  document.getElementById('battle-popup').style.display = 'none';
 }
-
-function countBlue() {
-  return Object.values(G.territories).filter(t => t.owner === "blue").length;
-}
-
-// ============================================================
-// SECTION 8 — FACTION SCREEN
-// ============================================================
 
 function renderFaction() {
-  const blueTers = countBlue();
-  const blueSols = G.soldiers + Object.values(G.territories)
-                     .filter(t => t.owner === "blue")
-                     .reduce((s, t) => s + t.troops, 0);
-  const targetName = G.attackTarget && G.territories[G.attackTarget]
-    ? G.territories[G.attackTarget].name : "None";
+  const territories = Object.values(G.territories);
+  const blueTerritories = territories.filter((territory) => territory.owner === 'blue');
+  const enemyTerritories = territories.filter((territory) => territory.owner !== 'blue');
 
-  document.getElementById("fac-territories").textContent = blueTers;
-  document.getElementById("fac-soldiers").textContent    = blueSols;
-  document.getElementById("fac-target").textContent      = targetName;
+  document.getElementById('fac-territories').textContent = blueTerritories.length;
+  document.getElementById('fac-soldiers').textContent = G.player.soldiers || 0;
+  document.getElementById('fac-target').textContent = selectedTerritoryId ? G.territories[selectedTerritoryId]?.name || 'None' : 'None';
 
-  // Dropdown: only valid bordering enemy territories
-  const sel = document.getElementById("target-select");
-  sel.innerHTML = '<option value="">— Pick Territory —</option>';
-  Object.entries(G.territories).forEach(([id, t]) => {
-    if (t.owner !== "blue" && isAdjacentToBlue(id)) {
-      const opt = document.createElement("option");
-      opt.value = id;
-      opt.textContent = `${t.name} (${t.owner}) ★ (bordersBlue)`;
-      if (id === G.attackTarget) opt.selected = true;
-      sel.appendChild(opt);
-    }
+  const select = document.getElementById('target-select');
+  select.innerHTML = '<option value="">— Pick Territory —</option>';
+  enemyTerritories.forEach((territory) => {
+    if (!canAttack(territory.id)) return;
+    const option = document.createElement('option');
+    option.value = territory.id;
+    option.textContent = `${territory.name} (${territory.owner})`;
+    if (selectedTerritoryId === territory.id) option.selected = true;
+    select.appendChild(option);
   });
 
-  // Leaderboard
-  G.leaderboard[0].territories = blueTers;
-  const sorted = [...G.leaderboard].sort((a, b) => b.kills - a.kills);
-  const tbody = document.getElementById("leaderboard-body");
-  tbody.innerHTML = "";
-  sorted.forEach((m, i) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${i + 1}</td><td>${m.name === "You" ? "⭐ You" : m.name}</td><td>${m.kills}</td><td>${m.territories}</td>`;
-    tbody.appendChild(tr);
+  const tbody = document.getElementById('leaderboard-body');
+  tbody.innerHTML = '';
+  const row = document.createElement('tr');
+  row.innerHTML = `<td>1</td><td>⭐ You</td><td>0</td><td>${blueTerritories.length}</td>`;
+  tbody.appendChild(row);
+
+  const blueList = document.getElementById('blue-territory-list');
+  blueList.innerHTML = '';
+  blueTerritories.forEach((territory) => {
+    const item = document.createElement('div');
+    item.style.cssText = 'font-size:13px;padding:3px 0;color:#7ab8ff;border-bottom:1px solid #30363d;';
+    item.textContent = `📍 ${territory.name} — ⚔${territory.troops}`;
+    blueList.appendChild(item);
   });
 
-  // Enemy faction overview
-  const info = document.getElementById("enemy-faction-info");
-  info.innerHTML = "";
-  ["red", "green"].forEach(faction => {
-    const ters   = Object.values(G.territories).filter(t => t.owner === faction);
-    const troops = ters.reduce((s, t) => s + t.troops, 0);
-    const label  = faction === "red" ? "🔴 Red Empire" : "🟢 Green League";
-    const div = document.createElement("div");
-    div.style.cssText = "margin-bottom:8px;font-size:14px;";
-    div.innerHTML = `<span class="faction-${faction}">${label}</span>
-      &nbsp;— <strong>${ters.length}</strong> territories &nbsp;| <strong>${troops}</strong> troops`;
-    info.appendChild(div);
+  const enemyInfo = document.getElementById('enemy-faction-info');
+  enemyInfo.innerHTML = '';
+  ['red', 'green'].forEach((faction) => {
+    const factionTerritories = territories.filter((t) => t.owner === faction);
+    const totalTroops = factionTerritories.reduce((sum, t) => sum + Number(t.troops || 0), 0);
+    const div = document.createElement('div');
+    div.style.cssText = 'margin-bottom:8px;font-size:14px;';
+    div.innerHTML = `<span class="faction-${faction}">${faction === 'red' ? '🔴 Red Empire' : '🟢 Green League'}</span> — <strong>${factionTerritories.length}</strong> territories | <strong>${totalTroops}</strong> troops`;
+    enemyInfo.appendChild(div);
   });
-
-  // Blue territory list
-  const blueList = document.getElementById("blue-territory-list");
-  if (blueList) {
-    blueList.innerHTML = "";
-    Object.values(G.territories)
-      .filter(t => t.owner === "blue")
-      .forEach(t => {
-        const li = document.createElement("div");
-        li.style.cssText = "font-size:13px;padding:3px 0;color:#7ab8ff;border-bottom:1px solid #30363d;";
-        li.textContent = `📍 ${t.name} — ⚔${t.troops} — ${t.bonus}`;
-        blueList.appendChild(li);
-      });
-  }
 }
 
 function setAttackTarget() {
-  const val = document.getElementById("target-select").value;
-  if (!val || !G.territories[val] || !canAttack(val)) {
-    G.attackTarget = "";
-    showToast("❌ Choose a valid blue-border enemy territory.");
+  const value = document.getElementById('target-select').value;
+  if (!value || !G.territories[value] || !canAttack(value)) {
+    G.attackTarget = '';
+    showToast('❌ Choose a valid enemy territory.');
     renderFaction();
     return;
   }
-  G.attackTarget = val;
-  const msg = `🎯 Target: ${G.territories[val].name}`;
-  showToast(msg);
+  G.attackTarget = value;
+  selectedTerritoryId = value;
+  renderMap();
   renderFaction();
-  if (document.getElementById("screen-map").classList.contains("active")) renderMap();
-  autoSave();
+  showToast(`🎯 Target set: ${G.territories[value].name}`);
 }
 
 function cancelAttackTarget() {
-  G.attackTarget = "";
-  document.getElementById("target-select").value = "";
+  G.attackTarget = '';
+  document.getElementById('target-select').value = '';
   renderFaction();
-  if (document.getElementById("screen-map").classList.contains("active")) renderMap();
-  autoSave();
-  showToast("Target cleared.");
+  showToast('Target cleared.');
 }
-
-// ============================================================
-// SECTION 9 — AI TICK
-// ============================================================
 
 function aiTick() {
-  Object.values(G.territories).forEach(ter => {
-    if (ter.owner !== "blue") {
-      ter.troops += Math.floor(Math.random() * 3);
-    }
-  });
-  if (document.getElementById("screen-map").classList.contains("active")) {
-    renderMap();
-  }
+  // purposefully no client-side simulation; the backend owns all gameplay state
 }
-
-// ============================================================
-// SECTION 10 — AUTO SAVE
-// ============================================================
 
 function autoSave() {
-  localStorage.setItem("tc_save", JSON.stringify(G));
+  // no browser-owned game save; only auth token remains client-side
 }
 
-// ============================================================
-// SECTION 11 — EXPORTS / INIT
-// ============================================================
-
-const TERRITORY_LOGIC = {
-  clampSoldierCount,
-  canAttack,
-  isAdjacentToBlue,
-  getAttackState,
-  ensureAttackState,
-  getTerritoryDefenseBonus,
-  getTerritoryResourceBonus,
-  resolveSelectedTargetBattle,
-  launchAttack,
-  countBlue,
-  resetGame,
-  defaultState: () => deepClone(DEFAULT_STATE),
-};
-
-if (typeof module !== "undefined") {
-  module.exports = TERRITORY_LOGIC;
-}
-
-if (typeof document !== "undefined") {
-  function init() {
-    loadGame();
-    updateResourceBar();
-    renderCity();
-
-    setInterval(() => {
-      resourceTick();
-      if (document.getElementById("screen-city").classList.contains("active")) {
-        document.getElementById("soldiers-count").textContent = G.soldiers;
-        renderBuildings();
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', async () => {
+    await loadGame();
+    setInterval(async () => {
+      try {
+        const payload = await apiFetch('/game/state');
+        G = {
+          ...G,
+          player: payload.player,
+          territories: mapTerritories(payload.world.territories),
+        };
+        renderCity();
+        renderMap();
+        renderFaction();
+        updateResourceBar();
+      } catch (error) {
+        console.warn('Background refresh failed:', error.message);
       }
-    }, TICK_MS);
+    }, 5000);
+  });
+}
 
-    setInterval(aiTick, 10000);
-    setInterval(autoSave, 30000);
-  }
-
-  document.addEventListener("DOMContentLoaded", init);
+if (typeof module !== 'undefined') {
+  module.exports = {
+    mapTerritories,
+    canAttack,
+    ownerLabel,
+  };
+}
 }
