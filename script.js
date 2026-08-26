@@ -55,6 +55,10 @@ const DEFAULT_STATE = {
   },
 
   attackTarget: "",
+  attackContributions: {},
+  playerStats: {
+    You: { kills: 0, contributions: {} },
+  },
   leaderboard: [
     { name: "You",    kills: 0,  territories: 3 },
     { name: "Zara",   kills: 47, territories: 3 },
@@ -90,6 +94,53 @@ function fmt(n) {
   return String(n);
 }
 
+function clampSoldierCount(value) {
+  const num = Number(value) || 0;
+  return Math.max(0, Math.floor(num));
+}
+
+function ensureAttackState(id) {
+  if (!G.territories[id]) return null;
+  if (!G.attackContributions[id]) {
+    G.attackContributions[id] = {
+      total: 0,
+      yourContribution: 0,
+      contributions: { You: 0 },
+      status: "open",
+    };
+  }
+  return G.attackContributions[id];
+}
+
+function getAttackState(id) {
+  return G.attackContributions[id] || { total: 0, yourContribution: 0, contributions: { You: 0 }, status: "open" };
+}
+
+function getTerritoryResourceBonus(resourceKey) {
+  const bonusMap = { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 };
+  Object.values(G.territories).forEach((ter) => {
+    if (ter.owner !== "blue") return;
+    const lower = (ter.bonus || "").toLowerCase();
+    if (lower.includes("food") && lower.includes("10%")) bonusMap.food += 0.1;
+    if (lower.includes("wood") && lower.includes("10%")) bonusMap.wood += 0.1;
+    if (lower.includes("iron") && lower.includes("10%")) bonusMap.iron += 0.1;
+    if (lower.includes("manpower") && lower.includes("10%")) bonusMap.manpower += 0.1;
+    if (lower.includes("train speed") && lower.includes("5%")) bonusMap.training += 0.05;
+  });
+  return bonusMap[resourceKey] || 0;
+}
+
+function getTerritoryDefenseBonus(territoryId) {
+  const ter = G.territories[territoryId];
+  if (!ter) return 1;
+  return (String(ter.bonus || "").toLowerCase().includes("fortress")) ? 1.2 : 1;
+}
+
+function getTrainingCostMultiplier() {
+  const bonus = getTerritoryResourceBonus("training");
+  return Math.max(0.4, 1 - bonus);
+}
+
 // ============================================================
 // SECTION 3 — SAVE / LOAD
 // ============================================================
@@ -107,6 +158,9 @@ function loadGame() {
       G = Object.assign(deepClone(DEFAULT_STATE), saved);
       G.buildings   = Object.assign(deepClone(DEFAULT_STATE.buildings),   saved.buildings   || {});
       G.territories = Object.assign(deepClone(DEFAULT_STATE.territories), saved.territories || {});
+      G.attackContributions = saved.attackContributions || {};
+      G.playerStats = Object.assign(deepClone(DEFAULT_STATE.playerStats), saved.playerStats || {});
+      G.leaderboard = Array.isArray(saved.leaderboard) ? saved.leaderboard : deepClone(DEFAULT_STATE.leaderboard);
     } catch (e) {
       console.warn("Save data corrupt, using defaults.", e);
       G = deepClone(DEFAULT_STATE);
@@ -150,14 +204,20 @@ const TICK_MS = 3000;
 
 function resourceTick() {
   const b = G.buildings;
-  G.food     += b.farm.baseProd       * b.farm.level;
-  G.wood     += b.lumbermill.baseProd * b.lumbermill.level;
-  G.iron     += b.ironmine.baseProd   * b.ironmine.level;
-  G.manpower += b.barracks.baseProd   * b.barracks.level;
-  G.food     = Math.min(G.food,     9999);
-  G.wood     = Math.min(G.wood,     9999);
-  G.iron     = Math.min(G.iron,     9999);
-  G.manpower = Math.min(G.manpower, 9999);
+  const foodBonus = 1 + getTerritoryResourceBonus("food");
+  const woodBonus = 1 + getTerritoryResourceBonus("wood");
+  const ironBonus = 1 + getTerritoryResourceBonus("iron");
+  const manpowerBonus = 1 + getTerritoryResourceBonus("manpower");
+
+  G.food     += Math.floor((b.farm.baseProd * b.farm.level) * foodBonus);
+  G.wood     += Math.floor((b.lumbermill.baseProd * b.lumbermill.level) * woodBonus);
+  G.iron     += Math.floor((b.ironmine.baseProd * b.ironmine.level) * ironBonus);
+  G.manpower += Math.floor((b.barracks.baseProd * b.barracks.level) * manpowerBonus);
+
+  G.food     = Math.min(clampSoldierCount(G.food), 9999);
+  G.wood     = Math.min(clampSoldierCount(G.wood), 9999);
+  G.iron     = Math.min(clampSoldierCount(G.iron), 9999);
+  G.manpower = Math.min(clampSoldierCount(G.manpower), 9999);
   updateResourceBar();
 }
 
@@ -234,9 +294,10 @@ function changeTrain(delta) {
 }
 
 function trainSoldiers() {
-  const costFood     = 50 * trainAmount;
-  const costIron     = 20 * trainAmount;
-  const costManpower = 1  * trainAmount;
+  const multiplier = getTrainingCostMultiplier();
+  const costFood     = Math.max(1, Math.floor(50 * trainAmount * multiplier));
+  const costIron     = Math.max(1, Math.floor(20 * trainAmount * multiplier));
+  const costManpower = Math.max(1, Math.floor(1 * trainAmount * multiplier));
   if (G.food < costFood || G.iron < costIron || G.manpower < costManpower) {
     showToast("❌ Not enough resources to train soldiers!");
     return;
@@ -244,7 +305,7 @@ function trainSoldiers() {
   G.food     -= costFood;
   G.iron     -= costIron;
   G.manpower -= costManpower;
-  G.soldiers += trainAmount;
+  G.soldiers = clampSoldierCount(G.soldiers + trainAmount);
   showToast(`✅ Trained ${trainAmount} soldier(s)!`);
   renderCity();
   updateResourceBar();
@@ -396,9 +457,13 @@ function selectTerritory(id) {
     .join(", ");
   document.getElementById("tp-neighbors").textContent = neighNames;
 
+  const currentAttack = getAttackState(id);
+  document.getElementById("tp-your-contribution").textContent = currentAttack.yourContribution || 0;
+  document.getElementById("tp-total-attack").textContent = currentAttack.total || 0;
+
   if (canAttack(id)) {
     atkSec.style.display = "block";
-    attackSendCount = Math.max(1, Math.min(10, G.soldiers));
+    attackSendCount = Math.max(1, Math.min(10, clampSoldierCount(G.soldiers)));
     document.getElementById("attack-count").textContent = attackSendCount;
   } else {
     atkSec.style.display = "none";
@@ -411,53 +476,109 @@ function ownerLabel(owner) {
 }
 
 function changeAttack(delta) {
-  attackSendCount = Math.max(1, Math.min(G.soldiers, attackSendCount + delta));
+  if (delta === "max") {
+    attackSendCount = clampSoldierCount(G.soldiers);
+    if (attackSendCount < 1) attackSendCount = 1;
+  } else {
+    attackSendCount = clampSoldierCount(attackSendCount + delta);
+    const maxAmount = clampSoldierCount(G.soldiers);
+    attackSendCount = Math.max(1, Math.min(maxAmount, attackSendCount));
+  }
   document.getElementById("attack-count").textContent = attackSendCount;
 }
 
 function launchAttack() {
   if (!selectedTerritoryId) return;
-  const ter     = G.territories[selectedTerritoryId];
-  const sending = attackSendCount;
+  const ter = G.territories[selectedTerritoryId];
+  const sending = clampSoldierCount(attackSendCount);
 
-  if (G.soldiers < sending || sending < 1) {
-    showToast("❌ Not enough soldiers!");
-    return;
-  }
   if (!canAttack(selectedTerritoryId)) {
     showToast("❌ Cannot attack this territory!");
     return;
   }
+  if (G.soldiers < sending || sending < 1) {
+    showToast("❌ Not enough soldiers!");
+    return;
+  }
 
-  // Fortress bonus gives defenders extra power
-  const fortBonus    = ter.bonus.toLowerCase().includes("fortress") ? 1.2 : 1.0;
-  const attackPower  = sending    * (0.7 + Math.random() * 0.6);
-  const defensePower = ter.troops * fortBonus * (0.7 + Math.random() * 0.6);
+  const attackState = ensureAttackState(selectedTerritoryId);
+  G.soldiers = clampSoldierCount(G.soldiers - sending);
+  attackState.total = clampSoldierCount(attackState.total + sending);
+  attackState.yourContribution = clampSoldierCount((attackState.yourContribution || 0) + sending);
+  attackState.contributions.You = attackState.yourContribution;
+  attackState.status = "open";
+  G.playerStats.You.contributions[selectedTerritoryId] = attackState.yourContribution;
 
-  G.soldiers -= sending;
-
-  let resultHTML;
   const terName = ter.name;
+  showToast(`✅ ${sending} soldiers contributed to ${terName}.`);
+
+  document.getElementById("tp-your-contribution").textContent = attackState.yourContribution;
+  document.getElementById("tp-total-attack").textContent = attackState.total;
+  document.getElementById("attack-count").textContent = Math.max(1, Math.min(10, clampSoldierCount(G.soldiers)));
+  renderFaction();
+  renderMap();
+  updateResourceBar();
+  autoSave();
+}
+
+function resolveSelectedTargetBattle() {
+  const targetId = G.attackTarget;
+  if (!targetId || !G.territories[targetId]) {
+    showToast("❌ Select a target first.");
+    return;
+  }
+  if (!canAttack(targetId)) {
+    showToast("❌ That target is not a valid blue-border enemy territory.");
+    return;
+  }
+
+  const battle = ensureAttackState(targetId);
+  const totalAttack = clampSoldierCount(battle.total);
+  if (totalAttack < 1) {
+    showToast("❌ No soldiers have been contributed to this attack yet.");
+    return;
+  }
+
+  const target = G.territories[targetId];
+  const fortBonus = getTerritoryDefenseBonus(targetId);
+  const attackPower = totalAttack * (0.75 + Math.random() * 0.5);
+  const defensePower = target.troops * fortBonus * (0.7 + Math.random() * 0.6);
+
+  const terName = target.name;
+  let resultHTML = "";
+  let enemyDeaths = 0;
+  let fewerAttackers = 0;
 
   if (attackPower >= defensePower) {
-    const losses    = Math.ceil(sending * 0.4 * Math.random());
-    const surviving = Math.max(1, sending - losses);
-    ter.owner  = "blue";
-    ter.troops = surviving;
-    G.leaderboard[0].kills += Math.max(0, sending - losses);
+    const survivingAttack = Math.max(1, Math.round(totalAttack * (0.55 + Math.random() * 0.2)));
+    enemyDeaths = Math.max(1, Math.round(target.troops * (0.5 + Math.random() * 0.3)));
+    target.owner = "blue";
+    target.troops = survivingAttack;
+    G.leaderboard[0].kills += enemyDeaths;
+    G.playerStats.You.kills = clampSoldierCount((G.playerStats.You.kills || 0) + enemyDeaths);
     G.leaderboard[0].territories = countBlue();
     resultHTML = `<span class="result-victory">⚔️ VICTORY!</span><br>
-      ${sending} attackers vs ${ter.troops} defenders<br>
+      ${totalAttack} attackers vs ${target.troops} defenders<br>
       <strong>Blue captured ${terName}!</strong><br>
-      Losses: ${losses} &nbsp;|&nbsp; Garrison: ${surviving}`;
+      Enemy losses: ${enemyDeaths} &nbsp;|&nbsp; Troops left: ${survivingAttack}`;
   } else {
-    const enemyLosses = Math.floor(ter.troops * 0.3 * Math.random());
-    ter.troops = Math.max(1, ter.troops - enemyLosses);
+    enemyDeaths = Math.max(1, Math.floor(Math.min(target.troops, totalAttack * 0.45)));
+    fewerAttackers = Math.max(1, Math.round(totalAttack * (0.3 + Math.random() * 0.25)));
+    target.troops = Math.max(1, target.troops - enemyDeaths);
+    G.leaderboard[0].kills += enemyDeaths;
+    G.playerStats.You.kills = clampSoldierCount((G.playerStats.You.kills || 0) + enemyDeaths);
     resultHTML = `<span class="result-defeat">💀 DEFEAT!</span><br>
-      ${sending} attackers vs ${ter.troops} defenders<br>
+      ${totalAttack} attackers vs ${target.troops} defenders<br>
       <strong>Attack on ${terName} failed!</strong><br>
-      All ${sending} soldiers lost. Enemy weakened by ~${enemyLosses}.`;
+      Enemy losses: ${enemyDeaths} &nbsp;|&nbsp; Blue survivors: ${fewerAttackers}.`;
   }
+
+  if (G.playerStats.You.contributions) {
+    G.playerStats.You.contributions[targetId] = (G.playerStats.You.contributions[targetId] || 0) + battle.yourContribution;
+  }
+
+  delete G.attackContributions[targetId];
+  G.attackTarget = "";
 
   document.getElementById("battle-result-text").innerHTML = resultHTML;
   document.getElementById("battle-popup").style.display = "block";
@@ -465,6 +586,7 @@ function launchAttack() {
   selectedTerritoryId = null;
 
   renderMap();
+  renderFaction();
   updateResourceBar();
   autoSave();
 }
@@ -493,15 +615,14 @@ function renderFaction() {
   document.getElementById("fac-soldiers").textContent    = blueSols;
   document.getElementById("fac-target").textContent      = targetName;
 
-  // Dropdown: all enemy territories; ★ marks those adjacent to Blue
+  // Dropdown: only valid bordering enemy territories
   const sel = document.getElementById("target-select");
   sel.innerHTML = '<option value="">— Pick Territory —</option>';
   Object.entries(G.territories).forEach(([id, t]) => {
-    if (t.owner !== "blue") {
+    if (t.owner !== "blue" && isAdjacentToBlue(id)) {
       const opt = document.createElement("option");
       opt.value = id;
-      const adj = isAdjacentToBlue(id) ? " ★ (bordersBlue)" : "";
-      opt.textContent = `${t.name} (${t.owner})${adj}`;
+      opt.textContent = `${t.name} (${t.owner}) ★ (bordersBlue)`;
       if (id === G.attackTarget) opt.selected = true;
       sel.appendChild(opt);
     }
@@ -549,8 +670,14 @@ function renderFaction() {
 
 function setAttackTarget() {
   const val = document.getElementById("target-select").value;
+  if (!val || !G.territories[val] || !canAttack(val)) {
+    G.attackTarget = "";
+    showToast("❌ Choose a valid blue-border enemy territory.");
+    renderFaction();
+    return;
+  }
   G.attackTarget = val;
-  const msg = val && G.territories[val] ? `🎯 Target: ${G.territories[val].name}` : "Target cleared.";
+  const msg = `🎯 Target: ${G.territories[val].name}`;
   showToast(msg);
   renderFaction();
   if (document.getElementById("screen-map").classList.contains("active")) renderMap();
@@ -590,24 +717,45 @@ function autoSave() {
 }
 
 // ============================================================
-// SECTION 11 — INIT
+// SECTION 11 — EXPORTS / INIT
 // ============================================================
 
-function init() {
-  loadGame();
-  updateResourceBar();
-  renderCity();
+const TERRITORY_LOGIC = {
+  clampSoldierCount,
+  canAttack,
+  isAdjacentToBlue,
+  getAttackState,
+  ensureAttackState,
+  getTerritoryDefenseBonus,
+  getTerritoryResourceBonus,
+  resolveSelectedTargetBattle,
+  launchAttack,
+  countBlue,
+  resetGame,
+  defaultState: () => deepClone(DEFAULT_STATE),
+};
 
-  setInterval(() => {
-    resourceTick();
-    if (document.getElementById("screen-city").classList.contains("active")) {
-      document.getElementById("soldiers-count").textContent = G.soldiers;
-      renderBuildings();
-    }
-  }, TICK_MS);
-
-  setInterval(aiTick, 10000);
-  setInterval(autoSave, 30000);
+if (typeof module !== "undefined") {
+  module.exports = TERRITORY_LOGIC;
 }
 
-document.addEventListener("DOMContentLoaded", init);
+if (typeof document !== "undefined") {
+  function init() {
+    loadGame();
+    updateResourceBar();
+    renderCity();
+
+    setInterval(() => {
+      resourceTick();
+      if (document.getElementById("screen-city").classList.contains("active")) {
+        document.getElementById("soldiers-count").textContent = G.soldiers;
+        renderBuildings();
+      }
+    }, TICK_MS);
+
+    setInterval(aiTick, 10000);
+    setInterval(autoSave, 30000);
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+}
