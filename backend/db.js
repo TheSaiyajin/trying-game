@@ -118,18 +118,49 @@ async function initializeDatabase() {
   console.log('Database initialized');
 }
 
+async function seedWorldIfEmpty() {
+  const seedPath = path.join(__dirname, 'world-seed.sql');
+  if (!fs.existsSync(seedPath)) {
+    throw new Error('Missing world-seed.sql');
+  }
+  const result = await pool.query('SELECT COUNT(*) AS cnt FROM territories');
+  const count = Number(result.rows[0]?.cnt || 0);
+  if (count > 0) {
+    console.log(`World seed skipped: ${count} territories already exist.`);
+    return;
+  }
+  const seedSql = fs.readFileSync(seedPath, 'utf8');
+  // Strip DELETE statements so seeding is safe on existing accounts
+  const lines = seedSql.split('\n').filter((line) => {
+    const t = line.trim().toUpperCase();
+    return !(t.startsWith('DELETE FROM PLAYERS') ||
+             t.startsWith('DELETE FROM BUILDINGS') ||
+             t.startsWith('DELETE FROM ATTACK_CONTRIBUTIONS') ||
+             t.startsWith('DELETE FROM ATTACK_TARGETS') ||
+             t.startsWith('DELETE FROM TERRITORY_NEIGHBORS') ||
+             t.startsWith('DELETE FROM TERRITORIES'));
+  });
+  await pool.query(lines.join('\n'));
+  console.log('World seeded from world-seed.sql');
+}
+
 module.exports = {
   pool,
   connect,
   getClient,
   applySchemaMigrations,
   initializeDatabase,
+  seedWorldIfEmpty,
 };
 
 if (require.main === module) {
   const command = process.argv[2];
   if (command === '--init') {
-    initializeDatabase().then(() => process.exit(0)).catch((err) => {
+    (async () => {
+      await initializeDatabase();
+      await seedWorldIfEmpty();
+      process.exit(0);
+    })().catch((err) => {
       console.error('DB init failed:', err.message);
       process.exit(1);
     });

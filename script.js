@@ -260,11 +260,22 @@ async function loadGame() {
         resources: payload.player?.resources || { food: 0, wood: 0, iron: 0, manpower: 0 },
         buildings: payload.player?.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
         production: payload.player?.production || { food: 0, wood: 0, iron: 0, manpower: 0 },
+        factionBonuses: payload.player?.factionBonuses || { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 },
+        stationedTroops: payload.player?.stationedTroops || {},
       },
       territories,
       attackTarget: '',
       attackContributions: {},
     };
+
+    // Show admin nav tab only for admins
+    const adminNav = document.getElementById('nav-admin');
+    const adminScreen = document.getElementById('screen-admin');
+    if (adminNav && adminScreen) {
+      const isAdmin = payload.player?.role === 'admin';
+      adminNav.style.display = isAdmin ? '' : 'none';
+      adminScreen.style.display = '';
+    }
 
     renderCity();
     renderMap();
@@ -302,6 +313,8 @@ function showScreen(name) {
   if (targetNav) targetNav.classList.add('active');
   if (name === 'city') renderCity();
   if (name === 'map') renderMap();
+  if (name === 'activity') renderActivity();
+  if (name === 'admin') renderAdminPanel();
 }
 
 function updateResourceBar() {
@@ -314,20 +327,23 @@ function updateResourceBar() {
 
 function renderCity() {
   const buildings = G.player.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 };
+  const serverProduction = G.player.production || { food: 0, wood: 0, iron: 0, manpower: 0 };
+  const factionBonuses = G.player.factionBonuses || { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 };
   const container = document.getElementById('building-list');
   container.innerHTML = '';
 
-  // Mirrors backend/game-logic.js BUILDING_DEFS cost + getUpgradeCost formula, display-only.
   const defs = {
-    farm: { name: 'Farm', icon: '🌾', resource: 'food', production: 5, cost: { food: 50, wood: 80, iron: 0 } },
-    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', production: 4, cost: { food: 40, wood: 0, iron: 60 } },
-    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', production: 3, cost: { food: 30, wood: 100, iron: 0 } },
-    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', production: 2, cost: { food: 80, wood: 60, iron: 80 } },
+    farm: { name: 'Farm', icon: '🌾', resource: 'food', baseRate: 5, cost: { food: 50, wood: 80, iron: 0 } },
+    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', baseRate: 4, cost: { food: 40, wood: 0, iron: 60 } },
+    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', baseRate: 3, cost: { food: 30, wood: 100, iron: 0 } },
+    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', baseRate: 2, cost: { food: 80, wood: 60, iron: 80 } },
   };
 
   Object.entries(defs).forEach(([key, def]) => {
     const level = Number(buildings[key] || 1);
-    const prod = def.production * level;
+    const baseProd = def.baseRate * level;
+    const totalProd = Number(serverProduction[def.resource] || baseProd);
+    const bonusPct = Math.round((factionBonuses[def.resource] || 0) * 100);
     const nextLevel = level + 1;
     const cost = {
       food: def.cost.food * nextLevel,
@@ -339,13 +355,18 @@ function renderCity() {
     if (cost.wood > 0) costParts.push(`${fmt(cost.wood)}🪵`);
     if (cost.iron > 0) costParts.push(`${fmt(cost.iron)}⚙️`);
 
+    const bonusLine = bonusPct > 0
+      ? `<div class="building-bonus">Territory bonus: +${bonusPct}%</div>`
+      : '';
+
     const card = document.createElement('div');
     card.className = 'building-card';
     card.innerHTML = `
       <div class="building-info">
         <div class="building-name">${def.icon} ${def.name}</div>
         <div class="building-level">Level ${level}</div>
-        <div class="building-prod">+${prod} ${def.resource}/min</div>
+        <div class="building-prod">+${totalProd} ${def.resource}/min</div>
+        ${bonusLine}
         <div class="building-cost">Next: ${costParts.join(' + ')}</div>
       </div>
       <button class="btn-upgrade" onclick="upgradeBuilding('${key}')">⬆ Lvl ${nextLevel}</button>
@@ -365,7 +386,7 @@ async function upgradeBuilding(key) {
     });
     G = {
       ...G,
-      player: response.state.player,
+      player: { ...response.state.player, factionBonuses: response.state.player.factionBonuses || G.player.factionBonuses },
       territories: mapTerritories(response.state.world.territories),
     };
     renderCity();
@@ -390,7 +411,7 @@ async function trainSoldiers() {
     });
     G = {
       ...G,
-      player: response.state.player,
+      player: { ...response.state.player, factionBonuses: response.state.player.factionBonuses || G.player.factionBonuses },
       territories: mapTerritories(response.state.world.territories),
     };
     renderCity();
@@ -540,6 +561,8 @@ function renderMap() {
   });
 }
 
+let recallSendCount = 1;
+
 function selectTerritory(id) {
   selectedTerritoryId = id;
   const territory = G.territories[id];
@@ -551,12 +574,15 @@ function selectTerritory(id) {
   document.getElementById('tp-owner').textContent = ownerLabel(territory.owner);
   document.getElementById('tp-troops').textContent = territory.troops;
   document.getElementById('tp-city-soldiers').textContent = Number(G.player.soldiers || 0);
+  const stationed = Number((G.player.stationedTroops || {})[id] || 0);
+  document.getElementById('tp-stationed').textContent = stationed;
   document.getElementById('tp-battle-rule').textContent = 'Send more troops than defenders to capture';
-  document.getElementById('tp-bonus').textContent = territory.bonus;
+  document.getElementById('tp-bonus').textContent = formatBonusLabel(territory.bonus, territory.bonusValue);
   document.getElementById('tp-neighbors').textContent = (territory.adj || []).map((neighborId) => G.territories[neighborId]?.name || neighborId).join(', ');
 
   const attackSection = document.getElementById('attack-section');
   const defendSection = document.getElementById('defend-section');
+  const recallSection = document.getElementById('recall-section');
   if (canAttack(id)) {
     attackSection.style.display = 'block';
     defendSection.style.display = 'none';
@@ -567,6 +593,15 @@ function selectTerritory(id) {
     defendSection.style.display = 'block';
     defendSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
     document.getElementById('defend-count').textContent = defendSendCount;
+    if (recallSection) {
+      if (stationed > 0) {
+        recallSection.style.display = 'block';
+        recallSendCount = Math.max(1, Math.min(1, stationed));
+        document.getElementById('recall-count').textContent = recallSendCount;
+      } else {
+        recallSection.style.display = 'none';
+      }
+    }
   } else {
     attackSection.style.display = 'none';
     defendSection.style.display = 'none';
@@ -575,6 +610,23 @@ function selectTerritory(id) {
 
 function ownerLabel(owner) {
   return { blue: '🔵 Blue', red: '🔴 Red', green: '🟢 Green', neutral: '⚪ Neutral' }[owner] || owner;
+}
+
+function formatBonusLabel(bonusType, bonusValue) {
+  const type = String(bonusType || '').toLowerCase();
+  const pct = Math.round(Number(bonusValue || 0) * 100);
+  const map = {
+    food: `🌾 +${pct}% Food Production`,
+    wood: `🪵 +${pct}% Wood Production`,
+    iron: `⚙️ +${pct}% Iron Production`,
+    manpower: `👥 +${pct}% Manpower Production`,
+    training: `⚔️ -${pct}% Training Cost`,
+    fortress: '🏰 Fortress',
+    storage: `📦 +${pct}% Storage`,
+    resource: `✨ +${pct}% All Resources`,
+    none: '—',
+  };
+  return map[type] || (type ? type : '—');
 }
 
 function changeAttack(delta) {
@@ -604,7 +656,7 @@ async function launchAttack() {
     });
     G = {
       ...G,
-      player: response.state.player,
+      player: { ...response.state.player, factionBonuses: response.state.player.factionBonuses || G.player.factionBonuses },
       territories: mapTerritories(response.state.world.territories),
     };
     const result = response.outcome;
@@ -653,10 +705,47 @@ async function sendDefenders() {
     });
     G = {
       ...G,
-      player: response.state.player,
+      player: { ...response.state.player, factionBonuses: response.state.player.factionBonuses || G.player.factionBonuses },
       territories: mapTerritories(response.state.world.territories),
     };
     showToast(`🛡️ ${defendSendCount} troops sent to defend ${territory.name}.`);
+    renderCity();
+    renderMap();
+    updateResourceBar();
+    if (selectedTerritoryId) selectTerritory(selectedTerritoryId);
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+function changeRecall(delta) {
+  const stationed = Number((G.player.stationedTroops || {})[selectedTerritoryId] || 0);
+  const maxAmount = Math.max(1, stationed);
+  if (delta === 'max') {
+    recallSendCount = maxAmount;
+  } else {
+    recallSendCount = Math.max(1, Math.min(maxAmount, recallSendCount + delta));
+  }
+  document.getElementById('recall-count').textContent = recallSendCount;
+}
+
+async function recallDefenders() {
+  if (!selectedTerritoryId) {
+    showToast('❌ Select a territory first.');
+    return;
+  }
+
+  try {
+    const response = await apiFetch('/game/recall-defenders', {
+      method: 'POST',
+      body: JSON.stringify({ territoryId: selectedTerritoryId, troops: recallSendCount }),
+    });
+    G = {
+      ...G,
+      player: { ...response.state.player, factionBonuses: response.state.player.factionBonuses || G.player.factionBonuses },
+      territories: mapTerritories(response.state.world.territories),
+    };
+    showToast(`↩️ ${recallSendCount} troops recalled.`);
     renderCity();
     renderMap();
     updateResourceBar();
@@ -700,8 +789,198 @@ function closeBattlePopup() {
   document.getElementById('battle-popup').style.display = 'none';
 }
 
-function aiTick() {
-  // purposefully no client-side simulation; the backend owns all gameplay state
+// ===================== ACTIVITY FEED =====================
+
+function factionIcon(faction) {
+  return { blue: '🔵', red: '🔴', green: '🟢', neutral: '⚪' }[faction] || '❓';
+}
+
+async function renderActivity() {
+  const container = document.getElementById('activity-feed');
+  if (!container) return;
+  try {
+    const data = await apiFetch('/game/battles');
+    const battles = data.battles || [];
+    if (!battles.length) {
+      container.innerHTML = '<p class="info-text">No battles yet.</p>';
+      return;
+    }
+    container.innerHTML = battles.map((b) => {
+      const attacker = b.attacker_username ? b.attacker_username : `${factionIcon(b.attacker_faction)} ${b.attacker_faction}`;
+      const won = b.winner === b.attacker_faction;
+      const territory = b.territory_name || b.territory_id;
+      const winnerIcon = factionIcon(b.winner);
+      const resultLine = won
+        ? `${winnerIcon} ${b.attacker_faction} captured ${territory} from ${b.owner_before}`
+        : `${winnerIcon} ${b.defender_faction} successfully defended ${territory}`;
+      const ts = b.created_at ? new Date(b.created_at).toLocaleString() : '';
+      return `<div class="activity-entry">
+        <div class="activity-headline">⚔️ ${attacker} attacked ${territory} with ${b.troops_sent} troops</div>
+        <div class="activity-result">${resultLine}</div>
+        <div class="activity-losses">Attackers lost: ${b.attackers_lost} · Defenders lost: ${b.defenders_lost}</div>
+        <div class="activity-time">${ts}</div>
+      </div>`;
+    }).join('');
+  } catch (error) {
+    const msg = document.createElement('p');
+    msg.className = 'info-text';
+    msg.textContent = `Could not load activity: ${error.message}`;
+    container.innerHTML = '';
+    container.appendChild(msg);
+  }
+}
+
+// ===================== ADMIN PANEL =====================
+
+async function renderAdminPanel() {
+  if (G.player?.role !== 'admin') return;
+  renderAdminPlayers();
+  renderAdminTerritories();
+}
+
+async function renderAdminPlayers() {
+  const container = document.getElementById('admin-player-list');
+  if (!container) return;
+  try {
+    const data = await apiFetch('/admin/players');
+    container.innerHTML = (data.players || []).map((p) => `
+      <div class="admin-player-row">
+        <strong>#${p.id} ${p.username}</strong>
+        <span class="admin-badge">${p.faction || '—'} · ${p.role}</span>
+        <div class="admin-player-stats">⚔️${p.soldiers} 🌾${p.resource_food} 🪵${p.resource_wood} ⚙️${p.resource_iron} 👥${p.resource_manpower}</div>
+        <div class="admin-player-actions">
+          <select id="admin-role-${p.id}">
+            <option value="member" ${p.role === 'member' ? 'selected' : ''}>member</option>
+            <option value="leader" ${p.role === 'leader' ? 'selected' : ''}>leader</option>
+            <option value="admin" ${p.role === 'admin' ? 'selected' : ''}>admin</option>
+          </select>
+          <button class="btn-small" onclick="adminSetRole(${p.id})">Set Role</button>
+          <select id="admin-faction-${p.id}">
+            <option value="blue" ${p.faction === 'blue' ? 'selected' : ''}>blue</option>
+            <option value="red" ${p.faction === 'red' ? 'selected' : ''}>red</option>
+            <option value="green" ${p.faction === 'green' ? 'selected' : ''}>green</option>
+          </select>
+          <button class="btn-small" onclick="adminSetFaction(${p.id})">Set Faction</button>
+          <button class="btn-small" onclick="adminResetPlayer(${p.id})">Reset</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (error) {
+    const msg = document.createElement('p');
+    msg.className = 'info-text';
+    msg.textContent = `Error: ${error.message}`;
+    container.innerHTML = '';
+    container.appendChild(msg);
+  }
+}
+
+async function renderAdminTerritories() {
+  const container = document.getElementById('admin-territory-list');
+  if (!container) return;
+  try {
+    const data = await apiFetch('/admin/territories');
+    container.innerHTML = (data.territories || []).map((t) => `
+      <div class="admin-territory-row">
+        <strong>${t.id}</strong> ${t.name}
+        <span class="admin-badge">${t.owner_faction} · ${t.defense_troops}⚔️</span>
+        <span class="admin-badge-bonus">${formatBonusLabel(t.bonus_type, t.bonus_value)}</span>
+        <div class="admin-territory-actions">
+          <select id="admin-owner-${t.id}">
+            <option value="blue" ${t.owner_faction === 'blue' ? 'selected' : ''}>blue</option>
+            <option value="red" ${t.owner_faction === 'red' ? 'selected' : ''}>red</option>
+            <option value="green" ${t.owner_faction === 'green' ? 'selected' : ''}>green</option>
+            <option value="neutral" ${t.owner_faction === 'neutral' ? 'selected' : ''}>neutral</option>
+          </select>
+          <input id="admin-def-${t.id}" type="number" min="0" value="${t.defense_troops}" style="width:60px" />
+          <button class="btn-small" onclick="adminEditTerritory('${t.id}')">Update</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (error) {
+    const msg = document.createElement('p');
+    msg.className = 'info-text';
+    msg.textContent = `Error: ${error.message}`;
+    container.innerHTML = '';
+    container.appendChild(msg);
+  }
+}
+
+async function adminResetWorld() {
+  if (!confirm('Are you sure you want to reset the entire world?\n\nPlayer accounts will be kept but all territories, resources, and buildings will be reset.')) return;
+  try {
+    const res = await apiFetch('/admin/reset-world', { method: 'POST' });
+    showToast(`✅ ${res.message}`);
+    await loadGame();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function adminResetAllResources() {
+  if (!confirm('Reset all player resources and buildings to defaults?')) return;
+  try {
+    const res = await apiFetch('/admin/reset-all-resources', { method: 'POST' });
+    showToast(`✅ ${res.message}`);
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function adminForceTick() {
+  try {
+    const res = await apiFetch('/admin/force-tick', { method: 'POST' });
+    showToast(`✅ ${res.message}`);
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function adminResetPlayer(playerId) {
+  if (!confirm(`Reset player #${playerId}'s resources and buildings?`)) return;
+  try {
+    const res = await apiFetch('/admin/reset-player', { method: 'POST', body: JSON.stringify({ playerId }) });
+    showToast(`✅ ${res.message}`);
+    renderAdminPlayers();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function adminSetRole(playerId) {
+  const role = document.getElementById(`admin-role-${playerId}`)?.value;
+  if (!role) return;
+  try {
+    const res = await apiFetch(`/admin/player/${playerId}/role`, { method: 'POST', body: JSON.stringify({ role }) });
+    showToast(`✅ ${res.message}`);
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function adminSetFaction(playerId) {
+  const faction = document.getElementById(`admin-faction-${playerId}`)?.value;
+  if (!faction) return;
+  try {
+    const res = await apiFetch(`/admin/player/${playerId}/faction`, { method: 'POST', body: JSON.stringify({ faction }) });
+    showToast(`✅ ${res.message}`);
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function adminEditTerritory(territoryId) {
+  const owner = document.getElementById(`admin-owner-${territoryId}`)?.value;
+  const defense = document.getElementById(`admin-def-${territoryId}`)?.value;
+  try {
+    const res = await apiFetch(`/admin/territory/${territoryId}`, {
+      method: 'POST',
+      body: JSON.stringify({ owner, defense: Number(defense) }),
+    });
+    showToast(`✅ ${res.message}`);
+    renderAdminTerritories();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
 }
 
 function autoSave() {
@@ -793,7 +1072,11 @@ if (typeof document !== 'undefined') {
             const payload = await apiFetch('/game/state');
             G = {
               ...G,
-              player: payload.player,
+              player: {
+                ...payload.player,
+                factionBonuses: payload.player.factionBonuses || G.player.factionBonuses || {},
+                stationedTroops: payload.player.stationedTroops || {},
+              },
               territories: mapTerritories(payload.world.territories),
             };
             renderCity();
@@ -803,6 +1086,13 @@ if (typeof document !== 'undefined') {
             console.warn('Background refresh failed:', error.message);
           }
         }, 60000);
+        // Refresh activity feed every 30 seconds
+        setInterval(() => {
+          const activityScreen = document.getElementById('screen-activity');
+          if (activityScreen && activityScreen.classList.contains('active')) {
+            renderActivity();
+          }
+        }, 30000);
       } else {
         showAuthScreen();
         setAuthMode('login');
@@ -820,5 +1110,6 @@ if (typeof module !== 'undefined') {
     mapTerritories,
     canAttack,
     ownerLabel,
+    formatBonusLabel,
   };
 }

@@ -55,9 +55,10 @@ function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
   const bonuses = { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 };
 
   for (const territory of territories) {
-    if (territory.owner_faction !== faction) continue;
-    const bonusType = String(territory.bonus_type || '').toLowerCase();
-    const bonusValue = Number(territory.bonus_value || 0);
+    const ownerFaction = territory.owner_faction || territory.owner;
+    if (ownerFaction !== faction) continue;
+    const bonusType = String(territory.bonus_type || territory.bonus || '').toLowerCase();
+    const bonusValue = Number(territory.bonus_value ?? territory.bonusValue ?? 0);
 
     if (bonusType === 'food') bonuses.food += bonusValue;
     if (bonusType === 'wood') bonuses.wood += bonusValue;
