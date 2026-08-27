@@ -5,6 +5,7 @@ const {
   getProductionFromBuildings,
   calculateBattleOutcome,
 } = require('../backend/game-logic');
+const { applySchemaMigrations } = require('../backend/db');
 
 test('upgrade cost grows with level using backend rules', () => {
   assert.deepEqual(getUpgradeCost('farm', 1), { food: 50, wood: 80, iron: 0 });
@@ -32,4 +33,30 @@ test('battle outcome is resolved server-side using backend calculations', () => 
   assert.equal(attack.victory, true);
   assert.ok(attack.attackersRemaining >= 1);
   assert.ok(attack.defendersLost >= 1);
+});
+
+test('legacy databases get the required player migration columns before registration runs', async () => {
+  const sqlCalls = [];
+  const fakeClient = {
+    async query(sql) {
+      sqlCalls.push(String(sql));
+      if (sql.includes('information_schema.columns')) {
+        return {
+          rows: [
+            { table_name: 'players', column_name: 'id' },
+            { table_name: 'players', column_name: 'username' },
+            { table_name: 'players', column_name: 'password_hash' },
+            { table_name: 'players', column_name: 'faction' },
+          ],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+
+  await applySchemaMigrations(fakeClient);
+
+  assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS faction_locked')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS role')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS army_name')));
 });
