@@ -2,79 +2,51 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { getFactionTerritoryBonuses, getProductionFromBuildings } = require('../backend/game-logic');
 const { seedWorldIfEmpty } = require('../backend/db');
+const { mapTerritories, isAdminUser } = require('../script.js');
+const {
+  isSafeUsername,
+  isAuthorizedAdminPlayer,
+  getRegistrationRole,
+  normalizeRequestedRole,
+} = require('../backend/admin-policy');
+const { allocateDefenderCasualties } = require('../backend/defender-garrisons');
 
-// ===================== Admin / Leader permission middleware =====================
+// ===================== Admin / Username policy =====================
 
-function buildReq(role) {
-  return { user: { userId: 1, username: 'test', role } };
-}
-
-function buildRes() {
-  const res = {};
-  res.calls = [];
-  res.status = (code) => { res.calls.push({ type: 'status', code }); return res; };
-  res.json = (body) => { res.calls.push({ type: 'json', body }); return res; };
-  return res;
-}
-
-// Extract middleware from server module by requiring it and exercising its logic directly.
-// To keep tests fast and DB-free we inline the logic mirroring the server implementation.
-
-function requireAdmin(req, res, next) {
-  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required.' });
-  next();
-}
-
-function requireLeaderOrAdmin(req, res, next) {
-  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
-  if (req.user.role !== 'admin' && req.user.role !== 'leader') {
-    return res.status(403).json({ error: 'Leader or admin access required.' });
-  }
-  next();
-}
-
-test('requireAdmin allows only admin role', () => {
-  let nextCalled = false;
-  const next = () => { nextCalled = true; };
-
-  // admin passes
-  nextCalled = false;
-  requireAdmin(buildReq('admin'), buildRes(), next);
-  assert.ok(nextCalled, 'admin should pass');
-
-  // leader blocked
-  nextCalled = false;
-  const res = buildRes();
-  requireAdmin(buildReq('leader'), res, next);
-  assert.ok(!nextCalled, 'leader should be blocked');
-  assert.equal(res.calls[0].code, 403);
-
-  // member blocked
-  nextCalled = false;
-  const res2 = buildRes();
-  requireAdmin(buildReq('member'), res2, next);
-  assert.ok(!nextCalled, 'member should be blocked');
-  assert.equal(res2.calls[0].code, 403);
+test('username policy allows only safe usernames', () => {
+  assert.equal(isSafeUsername('Sai'), true);
+  assert.equal(isSafeUsername('good_name-123'), true);
+  assert.equal(isSafeUsername('ab'), false);
+  assert.equal(isSafeUsername('bad name'), false);
+  assert.equal(isSafeUsername('<script>'), false);
+  assert.equal(isSafeUsername('semi;colon'), false);
 });
 
-test('requireLeaderOrAdmin allows admin and leader but not member', () => {
-  let nextCalled = false;
-  const next = () => { nextCalled = true; };
+test('Sai is the only valid admin account', () => {
+  assert.equal(getRegistrationRole('Sai'), 'admin');
+  assert.equal(getRegistrationRole('OtherPlayer'), 'member');
+  assert.equal(isAuthorizedAdminPlayer({ username: 'Sai', role: 'admin' }), true);
+  assert.equal(isAuthorizedAdminPlayer({ username: 'Sai', role: 'leader' }), false);
+  assert.equal(isAuthorizedAdminPlayer({ username: 'OtherPlayer', role: 'admin' }), false);
+});
 
-  nextCalled = false;
-  requireLeaderOrAdmin(buildReq('admin'), buildRes(), next);
-  assert.ok(nextCalled);
-
-  nextCalled = false;
-  requireLeaderOrAdmin(buildReq('leader'), buildRes(), next);
-  assert.ok(nextCalled);
-
-  nextCalled = false;
-  const res = buildRes();
-  requireLeaderOrAdmin(buildReq('member'), res, next);
-  assert.ok(!nextCalled);
-  assert.equal(res.calls[0].code, 403);
+test('role normalization blocks non-Sai admins and preserves Sai admin', () => {
+  assert.deepEqual(
+    normalizeRequestedRole({ username: 'Sai', role: 'admin' }, 'member'),
+    { ok: false, error: 'Sai must remain admin.' }
+  );
+  assert.deepEqual(
+    normalizeRequestedRole({ username: 'Sai', role: 'admin' }, 'admin'),
+    { ok: true, role: 'admin' }
+  );
+  assert.deepEqual(
+    normalizeRequestedRole({ username: 'OtherPlayer', role: 'member' }, 'admin'),
+    { ok: false, error: 'Role must be member or leader for other players.' }
+  );
+  assert.deepEqual(
+    normalizeRequestedRole({ username: 'OtherPlayer', role: 'member' }, 'leader'),
+    { ok: true, role: 'leader' }
+  );
 });
 
 // ===================== Game state privacy =====================
@@ -166,17 +138,29 @@ test('recall validation: only own stationed troops can be recalled (scoped to pl
   assert.equal(getOwnStationedTroops('n1', 3), 0);  // not stationed → 0 → recall would fail
 });
 
+test('defender casualties reduce stationed garrisons proportionally', () => {
+  const allocation = allocateDefenderCasualties([
+    { territory_id: 'n3', player_id: 2, faction: 'red', troops: 7 },
+    { territory_id: 'n3', player_id: 4, faction: 'red', troops: 5 },
+  ], 5);
+
+  assert.equal(allocation.defendersLost, 5);
+  assert.equal(allocation.defendersRemaining, 7);
+  assert.deepEqual(allocation.survivors, [
+    { territory_id: 'n3', player_id: 2, faction: 'red', troops: 4 },
+    { territory_id: 'n3', player_id: 4, faction: 'red', troops: 3 },
+  ]);
+});
+
 // ===================== Territory bonus formatting =====================
 
+test('mapTerritories preserves bonusValue for territory detail rendering', () => {
+  const mapped = mapTerritories([{ id: 'n1', name: 'Farmstead', owner: 'blue', defense: 12, bonus: 'food', bonusValue: 0.1, neighbors: [] }]);
+  assert.equal(mapped.n1.bonusValue, 0.1);
+});
+
 test('formatBonusLabel produces readable labels for all bonus types', () => {
-  // Import from script.js (which exports formatBonusLabel)
-  let formatBonusLabel;
-  try {
-    formatBonusLabel = require('../script.js').formatBonusLabel;
-  } catch (e) {
-    // If script.js can't load in Node (e.g. DOM references), skip gracefully
-    return;
-  }
+  const { formatBonusLabel } = require('../script.js');
 
   assert.equal(formatBonusLabel('food', 0.10), '🌾 +10% Food Production');
   assert.equal(formatBonusLabel('wood', 0.10), '🪵 +10% Wood Production');
@@ -188,6 +172,12 @@ test('formatBonusLabel produces readable labels for all bonus types', () => {
   assert.equal(formatBonusLabel('resource', 0.10), '✨ +10% All Resources');
   assert.equal(formatBonusLabel('none', 0), '—');
   assert.equal(formatBonusLabel(null, 0), '—');
+});
+
+test('admin UI visibility only allows Sai admin', () => {
+  assert.equal(isAdminUser({ username: 'Sai', role: 'admin' }), true);
+  assert.equal(isAdminUser({ username: 'Sai', role: 'leader' }), false);
+  assert.equal(isAdminUser({ username: 'OtherPlayer', role: 'admin' }), false);
 });
 
 // ===================== Territory bonuses work with snapshot-shaped objects =====================

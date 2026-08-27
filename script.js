@@ -5,6 +5,7 @@
    ==================================================== */
 
 const AUTH_STORAGE_KEY = 'trying_game_token';
+const USERNAME_REGEX = /^[A-Za-z0-9_-]{3,32}$/;
 const DEFAULT_STATE = {
   player: {
     id: null,
@@ -53,12 +54,17 @@ function mapTerritories(rawTerritories) {
       owner: territory.owner || territory.owner_faction || 'neutral',
       troops: Number(territory.defense || territory.defense_troops || 0),
       bonus: territory.bonus || territory.bonus_type || 'None',
+      bonusValue: Number(territory.bonusValue ?? territory.bonus_value ?? 0),
       adj: Array.isArray(territory.neighbors) ? territory.neighbors : [],
-      fortress: !!territory.fortress,
-      capital: !!territory.capital,
+      fortress: !!(territory.fortress ?? territory.is_fortress),
+      capital: !!(territory.capital ?? territory.is_capital),
     };
   });
   return entryMap;
+}
+
+function isAdminUser(user) {
+  return user?.username === 'Sai' && user?.role === 'admin';
 }
 
 function getToken() {
@@ -172,6 +178,10 @@ async function submitAuth(event) {
     message.textContent = 'Username must be at least 3 characters.';
     return;
   }
+  if (!USERNAME_REGEX.test(username)) {
+    message.textContent = 'Username must be 3-32 letters, numbers, underscores, or hyphens.';
+    return;
+  }
   if (!password || password.length < 6) {
     message.textContent = 'Password must be at least 6 characters.';
     return;
@@ -272,7 +282,7 @@ async function loadGame() {
     const adminNav = document.getElementById('nav-admin');
     const adminScreen = document.getElementById('screen-admin');
     if (adminNav && adminScreen) {
-      const isAdmin = payload.player?.role === 'admin';
+      const isAdmin = isAdminUser(payload.player);
       adminNav.style.display = isAdmin ? '' : 'none';
       adminScreen.style.display = '';
     }
@@ -801,11 +811,15 @@ async function renderActivity() {
   try {
     const data = await apiFetch('/game/battles');
     const battles = data.battles || [];
+    container.replaceChildren();
     if (!battles.length) {
-      container.innerHTML = '<p class="info-text">No battles yet.</p>';
+      const empty = document.createElement('p');
+      empty.className = 'info-text';
+      empty.textContent = 'No battles yet.';
+      container.appendChild(empty);
       return;
     }
-    container.innerHTML = battles.map((b) => {
+    battles.forEach((b) => {
       const attacker = b.attacker_username ? b.attacker_username : `${factionIcon(b.attacker_faction)} ${b.attacker_faction}`;
       const won = b.winner === b.attacker_faction;
       const territory = b.territory_name || b.territory_id;
@@ -814,26 +828,40 @@ async function renderActivity() {
         ? `${winnerIcon} ${b.attacker_faction} captured ${territory} from ${b.owner_before}`
         : `${winnerIcon} ${b.defender_faction} successfully defended ${territory}`;
       const ts = b.created_at ? new Date(b.created_at).toLocaleString() : '';
-      return `<div class="activity-entry">
-        <div class="activity-headline">⚔️ ${attacker} attacked ${territory} with ${b.troops_sent} troops</div>
-        <div class="activity-result">${resultLine}</div>
-        <div class="activity-losses">Attackers lost: ${b.attackers_lost} · Defenders lost: ${b.defenders_lost}</div>
-        <div class="activity-time">${ts}</div>
-      </div>`;
-    }).join('');
+      const entry = document.createElement('div');
+      entry.className = 'activity-entry';
+
+      const headline = document.createElement('div');
+      headline.className = 'activity-headline';
+      headline.textContent = `⚔️ ${attacker} attacked ${territory} with ${b.troops_sent} troops`;
+
+      const result = document.createElement('div');
+      result.className = 'activity-result';
+      result.textContent = resultLine;
+
+      const losses = document.createElement('div');
+      losses.className = 'activity-losses';
+      losses.textContent = `Attackers lost: ${b.attackers_lost} · Defenders lost: ${b.defenders_lost}`;
+
+      const time = document.createElement('div');
+      time.className = 'activity-time';
+      time.textContent = ts;
+
+      entry.append(headline, result, losses, time);
+      container.appendChild(entry);
+    });
   } catch (error) {
     const msg = document.createElement('p');
     msg.className = 'info-text';
     msg.textContent = `Could not load activity: ${error.message}`;
-    container.innerHTML = '';
-    container.appendChild(msg);
+    container.replaceChildren(msg);
   }
 }
 
 // ===================== ADMIN PANEL =====================
 
 async function renderAdminPanel() {
-  if (G.player?.role !== 'admin') return;
+  if (!isAdminUser(G.player)) return;
   renderAdminPlayers();
   renderAdminTerritories();
 }
@@ -843,34 +871,98 @@ async function renderAdminPlayers() {
   if (!container) return;
   try {
     const data = await apiFetch('/admin/players');
-    container.innerHTML = (data.players || []).map((p) => `
-      <div class="admin-player-row">
-        <strong>#${p.id} ${p.username}</strong>
-        <span class="admin-badge">${p.faction || '—'} · ${p.role}</span>
-        <div class="admin-player-stats">⚔️${p.soldiers} 🌾${p.resource_food} 🪵${p.resource_wood} ⚙️${p.resource_iron} 👥${p.resource_manpower}</div>
-        <div class="admin-player-actions">
-          <select id="admin-role-${p.id}">
-            <option value="member" ${p.role === 'member' ? 'selected' : ''}>member</option>
-            <option value="leader" ${p.role === 'leader' ? 'selected' : ''}>leader</option>
-            <option value="admin" ${p.role === 'admin' ? 'selected' : ''}>admin</option>
-          </select>
-          <button class="btn-small" onclick="adminSetRole(${p.id})">Set Role</button>
-          <select id="admin-faction-${p.id}">
-            <option value="blue" ${p.faction === 'blue' ? 'selected' : ''}>blue</option>
-            <option value="red" ${p.faction === 'red' ? 'selected' : ''}>red</option>
-            <option value="green" ${p.faction === 'green' ? 'selected' : ''}>green</option>
-          </select>
-          <button class="btn-small" onclick="adminSetFaction(${p.id})">Set Faction</button>
-          <button class="btn-small" onclick="adminResetPlayer(${p.id})">Reset</button>
-        </div>
-      </div>
-    `).join('');
+    container.replaceChildren();
+    for (const p of (data.players || [])) {
+      const row = document.createElement('div');
+      row.className = 'admin-player-row';
+
+      const title = document.createElement('strong');
+      title.textContent = `#${p.id} ${p.username}`;
+
+      const badge = document.createElement('span');
+      badge.className = 'admin-badge';
+      badge.textContent = `${p.faction || '—'} · ${p.role}`;
+
+      const stats = document.createElement('div');
+      stats.className = 'admin-player-stats';
+      stats.textContent = `⚔️${p.soldiers} 🌾${p.resource_food} 🪵${p.resource_wood} ⚙️${p.resource_iron} 👥${p.resource_manpower}`;
+
+      const actions = document.createElement('div');
+      actions.className = 'admin-player-actions';
+
+      const roleSelect = document.createElement('select');
+      roleSelect.id = `admin-role-${p.id}`;
+      const roleOptions = p.username === 'Sai' ? ['admin'] : ['member', 'leader'];
+      roleOptions.forEach((roleValue) => {
+        const option = document.createElement('option');
+        option.value = roleValue;
+        option.textContent = roleValue;
+        option.selected = p.role === roleValue;
+        roleSelect.appendChild(option);
+      });
+      roleSelect.disabled = p.username === 'Sai';
+
+      const roleButton = document.createElement('button');
+      roleButton.className = 'btn-small';
+      roleButton.textContent = 'Set Role';
+      roleButton.disabled = p.username === 'Sai';
+      roleButton.addEventListener('click', () => adminSetRole(p.id));
+
+      const factionSelect = document.createElement('select');
+      factionSelect.id = `admin-faction-${p.id}`;
+      ['blue', 'red', 'green'].forEach((factionValue) => {
+        const option = document.createElement('option');
+        option.value = factionValue;
+        option.textContent = factionValue;
+        option.selected = p.faction === factionValue;
+        factionSelect.appendChild(option);
+      });
+
+      const factionButton = document.createElement('button');
+      factionButton.className = 'btn-small';
+      factionButton.textContent = 'Set Faction';
+      factionButton.addEventListener('click', () => adminSetFaction(p.id));
+
+      const resetButton = document.createElement('button');
+      resetButton.className = 'btn-small';
+      resetButton.textContent = 'Reset';
+      resetButton.addEventListener('click', () => adminResetPlayer(p.id));
+
+      const soldiersInput = document.createElement('input');
+      soldiersInput.id = `admin-soldiers-${p.id}`;
+      soldiersInput.type = 'number';
+      soldiersInput.min = '0';
+      soldiersInput.value = p.soldiers;
+
+      const resources = ['food', 'wood', 'iron', 'manpower'];
+      const resourceInputs = resources.map((resourceKey) => {
+        const input = document.createElement('input');
+        input.id = `admin-${resourceKey}-${p.id}`;
+        input.type = 'number';
+        input.min = '0';
+        input.value = p[`resource_${resourceKey}`];
+        return input;
+      });
+
+      const soldiersButton = document.createElement('button');
+      soldiersButton.className = 'btn-small';
+      soldiersButton.textContent = 'Set Soldiers';
+      soldiersButton.addEventListener('click', () => adminSetSoldiers(p.id));
+
+      const resourcesButton = document.createElement('button');
+      resourcesButton.className = 'btn-small';
+      resourcesButton.textContent = 'Set Resources';
+      resourcesButton.addEventListener('click', () => adminSetResources(p.id));
+
+      actions.append(roleSelect, roleButton, factionSelect, factionButton, soldiersInput, soldiersButton, ...resourceInputs, resourcesButton, resetButton);
+      row.append(title, badge, stats, actions);
+      container.appendChild(row);
+    }
   } catch (error) {
     const msg = document.createElement('p');
     msg.className = 'info-text';
     msg.textContent = `Error: ${error.message}`;
-    container.innerHTML = '';
-    container.appendChild(msg);
+    container.replaceChildren(msg);
   }
 }
 
@@ -952,6 +1044,7 @@ async function adminSetRole(playerId) {
   try {
     const res = await apiFetch(`/admin/player/${playerId}/role`, { method: 'POST', body: JSON.stringify({ role }) });
     showToast(`✅ ${res.message}`);
+    renderAdminPlayers();
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }
@@ -963,6 +1056,40 @@ async function adminSetFaction(playerId) {
   try {
     const res = await apiFetch(`/admin/player/${playerId}/faction`, { method: 'POST', body: JSON.stringify({ faction }) });
     showToast(`✅ ${res.message}`);
+    renderAdminPlayers();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function adminSetSoldiers(playerId) {
+  const soldiers = document.getElementById(`admin-soldiers-${playerId}`)?.value;
+  try {
+    const res = await apiFetch(`/admin/player/${playerId}/soldiers`, { method: 'POST', body: JSON.stringify({ soldiers: Number(soldiers) }) });
+    showToast(`✅ ${res.message}`);
+    renderAdminPlayers();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function adminSetResources(playerId) {
+  const food = document.getElementById(`admin-food-${playerId}`)?.value;
+  const wood = document.getElementById(`admin-wood-${playerId}`)?.value;
+  const iron = document.getElementById(`admin-iron-${playerId}`)?.value;
+  const manpower = document.getElementById(`admin-manpower-${playerId}`)?.value;
+  try {
+    const res = await apiFetch(`/admin/player/${playerId}/resources`, {
+      method: 'POST',
+      body: JSON.stringify({
+        food: Number(food),
+        wood: Number(wood),
+        iron: Number(iron),
+        manpower: Number(manpower),
+      }),
+    });
+    showToast(`✅ ${res.message}`);
+    renderAdminPlayers();
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }
@@ -1111,5 +1238,6 @@ if (typeof module !== 'undefined') {
     canAttack,
     ownerLabel,
     formatBonusLabel,
+    isAdminUser,
   };
 }

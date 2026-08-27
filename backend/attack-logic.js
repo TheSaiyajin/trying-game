@@ -1,4 +1,5 @@
 const { calculateBattleOutcome } = require('./game-logic');
+const { applyDefenderCasualties, replaceTerritoryDefenders } = require('./defender-garrisons');
 
 // Thrown for any expected/validated failure so the route can map it to the right
 // HTTP status (400/403/404/409) instead of falling through to a generic 500.
@@ -94,21 +95,22 @@ async function performAttack(client, { playerId, territoryId, soldiers }) {
     const ownerBefore = lockedTarget.owner_faction || 'neutral';
     const attackerFaction = player.faction;
     const defenderFaction = ownerBefore;
+    const allocation = await applyDefenderCasualties(client, cleanTerritoryId, outcome.defendersLost);
+    const remainingDefenders = outcome.victory
+      ? 0
+      : (allocation.survivors.length ? allocation.defendersRemaining : Math.max(0, defensePower - outcome.defendersLost));
 
     if (outcome.victory) {
       await client.query(
         `UPDATE territories SET owner_faction = $1, defense_troops = $2, last_battle_at = NOW() WHERE id = $3`,
         [attackerFaction, outcome.attackersRemaining, cleanTerritoryId]
       );
-      // Previous owner's garrison is gone; leftover attackers become the new defenders.
-      await client.query('DELETE FROM territory_defenders WHERE territory_id = $1', [cleanTerritoryId]);
-      await client.query(
-        `INSERT INTO territory_defenders (territory_id, player_id, faction, troops)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (territory_id, player_id)
-         DO UPDATE SET troops = EXCLUDED.troops, faction = EXCLUDED.faction, updated_at = NOW()`,
-        [cleanTerritoryId, playerId, attackerFaction, outcome.attackersRemaining]
-      );
+      await replaceTerritoryDefenders(client, cleanTerritoryId, [{
+        territory_id: cleanTerritoryId,
+        player_id: playerId,
+        faction: attackerFaction,
+        troops: outcome.attackersRemaining,
+      }]);
       await client.query(
         `UPDATE players SET resource_food = resource_food + 25, resource_wood = resource_wood + 25, resource_iron = resource_iron + 25 WHERE id = $1`,
         [playerId]
@@ -116,7 +118,7 @@ async function performAttack(client, { playerId, territoryId, soldiers }) {
     } else {
       await client.query(
         `UPDATE territories SET defense_troops = $1, last_battle_at = NOW() WHERE id = $2`,
-        [outcome.defendersRemaining, cleanTerritoryId]
+        [remainingDefenders, cleanTerritoryId]
       );
     }
 
@@ -135,7 +137,7 @@ async function performAttack(client, { playerId, territoryId, soldiers }) {
         outcome.attackersLost,
         outcome.attackersRemaining,
         outcome.defendersLost,
-        outcome.defendersRemaining,
+        remainingDefenders,
         ownerBefore,
         outcome.victory ? attackerFaction : ownerBefore,
       ]

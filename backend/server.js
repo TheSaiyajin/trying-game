@@ -13,6 +13,13 @@ const {
   calculateBattleOutcome,
 } = require('./game-logic');
 const { AttackError, performAttack } = require('./attack-logic');
+const {
+  isSafeUsername,
+  isAuthorizedAdminPlayer,
+  getRegistrationRole,
+  normalizeRequestedRole,
+} = require('./admin-policy');
+const { applyDefenderCasualties, replaceTerritoryDefenders } = require('./defender-garrisons');
 
 dotenv.config();
 
@@ -49,20 +56,50 @@ function requireAuth(req, res, next) {
   }
 }
 
-function requireAdmin(req, res, next) {
-  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required.' });
-  }
-  next();
+async function getCurrentAuthedPlayer(req) {
+  if (req.currentPlayer) return req.currentPlayer;
+  const player = await getPlayerById(req.user.userId);
+  req.currentPlayer = player;
+  return player;
 }
 
-function requireLeaderOrAdmin(req, res, next) {
+function syncAuthUser(req, player) {
+  if (!req.user || !player) return;
+  req.user = {
+    ...req.user,
+    username: player.username,
+    faction: player.faction,
+    role: player.role,
+    factionLocked: player.faction_locked,
+  };
+}
+
+async function requireAdmin(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
-  if (req.user.role !== 'admin' && req.user.role !== 'leader') {
-    return res.status(403).json({ error: 'Leader or admin access required.' });
+  try {
+    const player = await getCurrentAuthedPlayer(req);
+    if (!isAuthorizedAdminPlayer(player)) {
+      return res.status(403).json({ error: 'Admin access required.' });
+    }
+    syncAuthUser(req, player);
+    next();
+  } catch (error) {
+    next(error);
   }
-  next();
+}
+
+async function requireLeaderOrAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const player = await getCurrentAuthedPlayer(req);
+    if (!player || (!isAuthorizedAdminPlayer(player) && player.role !== 'leader')) {
+      return res.status(403).json({ error: 'Leader or admin access required.' });
+    }
+    syncAuthUser(req, player);
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
 
 function parsePositiveInt(value, fallback = 0, maxValue = 1000000) {
@@ -305,8 +342,8 @@ app.post('/api/register', asyncHandler(async (req, res) => {
   const rawFaction = String(req.body.faction || '').trim().toLowerCase();
   const faction = rawFaction && validFactions.includes(rawFaction) ? rawFaction : null;
 
-  if (!username || username.length < 3 || username.length > 32) {
-    return res.status(400).json({ error: 'Username must be 3-32 characters.' });
+  if (!isSafeUsername(username)) {
+    return res.status(400).json({ error: 'Username must be 3-32 letters, numbers, underscores, or hyphens.' });
   }
   if (!password || password.length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters.' });
@@ -322,11 +359,12 @@ app.post('/api/register', asyncHandler(async (req, res) => {
 
   const db = await connect();
   const passwordHash = await hashPassword(password);
+  const role = getRegistrationRole(username);
   const insertPlayer = await db.query(
     `INSERT INTO players (username, password_hash, faction, faction_locked, role, army_name)
-     VALUES ($1, $2, $3, $4, 'member', $5)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, username, faction, role, faction_locked`,
-    [username, passwordHash, faction, Boolean(faction), faction ? `${faction.charAt(0).toUpperCase()}${faction.slice(1)} Army` : 'Unassigned Army']
+    [username, passwordHash, faction, Boolean(faction), role, faction ? `${faction.charAt(0).toUpperCase()}${faction.slice(1)} Army` : 'Unassigned Army']
   );
 
   const player = insertPlayer.rows[0];
@@ -345,6 +383,9 @@ app.post('/api/login', asyncHandler(async (req, res) => {
   const password = String(req.body.password || '');
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password required.' });
+  }
+  if (!isSafeUsername(username)) {
+    return res.status(400).json({ error: 'Username must be 3-32 letters, numbers, underscores, or hyphens.' });
   }
 
   const player = await getPlayerByUsername(username);
@@ -583,13 +624,19 @@ app.post('/api/game/recall-defenders', requireAuth, asyncHandler(async (req, res
       `DELETE FROM territory_defenders WHERE territory_id = $1 AND player_id = $2 AND troops <= 0`,
       [territoryId, player.id]
     );
+    const remainingDefenders = await client.query(
+      `SELECT COALESCE(SUM(troops), 0) AS total
+       FROM territory_defenders
+       WHERE territory_id = $1`,
+      [territoryId]
+    );
     await client.query(
       `UPDATE players SET soldiers = soldiers + $1, last_action_at = NOW() WHERE id = $2`,
       [troops, player.id]
     );
     await client.query(
-      `UPDATE territories SET defense_troops = GREATEST(1, defense_troops - $1) WHERE id = $2`,
-      [troops, territoryId]
+      `UPDATE territories SET defense_troops = $1 WHERE id = $2`,
+      [Math.max(0, Number(remainingDefenders.rows[0]?.total) || 0), territoryId]
     );
     await client.query('COMMIT');
   } catch (error) {
@@ -658,13 +705,22 @@ app.post('/api/game/resolve-battle', requireAuth, asyncHandler(async (req, res) 
       const attackerFaction = player.faction || 'neutral';
       const defenderFaction = ownerBefore;
       const survivingAttackers = outcome.victory ? Math.max(1, outcome.attackersRemaining) : 0;
-      const remainingDefenders = outcome.victory ? Math.max(1, Math.max(0, defensePower - outcome.defendersLost)) : Math.max(1, Math.max(0, defensePower - outcome.defendersLost));
+      const allocation = await applyDefenderCasualties(db, territoryId, outcome.defendersLost);
+      const remainingDefenders = outcome.victory
+        ? Math.max(0, allocation.defendersRemaining)
+        : (allocation.survivors.length ? allocation.defendersRemaining : Math.max(0, defensePower - outcome.defendersLost));
 
       if (outcome.victory) {
         await db.query(
           `UPDATE territories SET owner_faction = $1, defense_troops = $2, last_battle_at = NOW() WHERE id = $3`,
           [attackerFaction, survivingAttackers, territoryId]
         );
+        await replaceTerritoryDefenders(db, territoryId, [{
+          territory_id: territoryId,
+          player_id: player.id,
+          faction: attackerFaction,
+          troops: survivingAttackers,
+        }]);
         await db.query(
           `UPDATE players SET resource_food = resource_food + 25, resource_wood = resource_wood + 25, resource_iron = resource_iron + 25 WHERE id = $1`,
           [player.id]
@@ -874,15 +930,14 @@ app.post('/api/admin/player/:id/role', requireAuth, requireAdmin, asyncHandler(a
   const playerId = parsePositiveInt(req.params.id || 0, 0, 100000);
   if (!playerId) return res.status(400).json({ error: 'playerId required.' });
 
-  const role = String(req.body.role || '').trim().toLowerCase();
-  if (!validRoles.includes(role)) return res.status(400).json({ error: 'Role must be member, leader, or admin.' });
-
   const db = await connect();
-  const existing = await db.query('SELECT id FROM players WHERE id = $1', [playerId]);
+  const existing = await db.query('SELECT id, username, role FROM players WHERE id = $1', [playerId]);
   if (!existing.rowCount) return res.status(404).json({ error: 'Player not found.' });
+  const normalized = normalizeRequestedRole(existing.rows[0], req.body.role);
+  if (!normalized.ok) return res.status(400).json({ error: normalized.error });
 
-  await db.query('UPDATE players SET role = $1 WHERE id = $2', [role, playerId]);
-  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'change_role', JSON.stringify({ playerId, role })]);
+  await db.query('UPDATE players SET role = $1 WHERE id = $2', [normalized.role, playerId]);
+  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'change_role', JSON.stringify({ playerId, role: normalized.role })]);
   res.json({ message: 'Role updated.' });
 }));
 
@@ -928,7 +983,7 @@ app.post('/api/admin/territory/:id', requireAuth, requireAdmin, asyncHandler(asy
   res.json({ message: 'Territory updated.' });
 }));
 
-app.post('/api/admin/change-leader', requireAuth, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+app.post('/api/admin/change-leader', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   const faction = String(req.body.faction || '').trim().toLowerCase();
   const playerId = parsePositiveInt(req.body.playerId || 0, 0, 100000);
   if (!validFactions.includes(faction)) return res.status(400).json({ error: 'Invalid faction.' });

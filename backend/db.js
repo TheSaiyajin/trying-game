@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
+const { ADMIN_USERNAME } = require('./admin-policy');
 require('dotenv').config();
 
 // A connection pool (not a single shared Client) is required here: routes that run
@@ -88,6 +89,8 @@ async function applySchemaMigrations(currentClient) {
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
     `CREATE UNIQUE INDEX IF NOT EXISTS attack_contributions_territory_player_idx ON attack_contributions (territory_id, player_id)`,
     `ALTER TABLE admin_actions ADD COLUMN IF NOT EXISTS action_detail TEXT`,
+    `UPDATE players SET role = 'admin' WHERE username = '${ADMIN_USERNAME}'`,
+    `UPDATE players SET role = 'member' WHERE username <> '${ADMIN_USERNAME}' AND role = 'admin'`,
   ];
 
 

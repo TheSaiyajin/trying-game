@@ -6,9 +6,15 @@ function cloneTerritory(territory) {
   return { ...territory };
 }
 
-function createFakeClient({ players, territories, neighbors, lockedTerritoryIds = new Set() }) {
+function createFakeClient({ players, territories, neighbors, lockedTerritoryIds = new Set(), initialDefenders = [] }) {
   const battleHistory = [];
   const defenders = new Map();
+  initialDefenders.forEach((defender) => {
+    defenders.set(`${defender.territory_id}:${defender.player_id}`, {
+      faction: defender.faction,
+      troops: defender.troops,
+    });
+  });
 
   return {
     battleHistory,
@@ -84,6 +90,18 @@ function createFakeClient({ players, territories, neighbors, lockedTerritoryIds 
           if (key.startsWith(`${territoryId}:`)) defenders.delete(key);
         }
         return { rows: [] };
+      }
+
+      if (text.includes('FROM territory_defenders') && text.includes('WHERE territory_id = $1')) {
+        const territoryId = params[0];
+        const rows = [...defenders.entries()]
+          .filter(([key]) => key.startsWith(`${territoryId}:`))
+          .map(([key, value]) => {
+            const [, playerId] = key.split(':');
+            return { territory_id: territoryId, player_id: Number(playerId), faction: value.faction, troops: value.troops };
+          })
+          .sort((left, right) => left.player_id - right.player_id);
+        return { rows, rowCount: rows.length };
       }
 
       if (text.startsWith('INSERT INTO territory_defenders')) {
@@ -174,6 +192,27 @@ test('attacking with fewer troops than defenders fails and only kills that many 
   assert.equal(territories.get('n2').owner_faction, 'neutral');
   assert.equal(territories.get('n2').defense_troops, 90);
   assert.equal(players.get(1).soldiers, 40);
+});
+
+test('failed attacks reduce stationed defender rows so dead troops cannot be recalled', async () => {
+  const { players, territories, neighbors } = buildWorld();
+  territories.set('n3', cloneTerritory({ id: 'n3', owner_faction: 'red', defense_troops: 12, is_fortress: false }));
+  const client = createFakeClient({
+    players,
+    territories,
+    neighbors,
+    initialDefenders: [
+      { territory_id: 'n3', player_id: 2, faction: 'red', troops: 7 },
+      { territory_id: 'n3', player_id: 4, faction: 'red', troops: 5 },
+    ],
+  });
+
+  const result = await performAttack(client, { playerId: 1, territoryId: 'n3', soldiers: 5 });
+
+  assert.equal(result.outcome.victory, false);
+  assert.equal(territories.get('n3').defense_troops, 7);
+  assert.deepEqual(client.defenders.get('n3:2'), { faction: 'red', troops: 4 });
+  assert.deepEqual(client.defenders.get('n3:4'), { faction: 'red', troops: 3 });
 });
 
 test('rejects invalid troop counts with 400', async () => {
