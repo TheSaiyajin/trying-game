@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
 const {
   getUpgradeCost,
   getProductionFromBuildings,
@@ -74,4 +76,19 @@ test('training cost and idle earnings are consistent with server-authoritative r
   assert.equal(offlineGain.wood, 30);
   assert.equal(offlineGain.iron, 20);
   assert.equal(offlineGain.manpower, 10);
+});
+
+test('world seed has 30 neutral territories and one capital per faction', () => {
+  const seedPath = path.join(__dirname, '../backend/world-seed.sql');
+  const sql = fs.readFileSync(seedPath, 'utf8');
+
+  const neutralTerritories = (sql.match(/'n\d+'\s*,\s*'[^']+'\s*,\s*'neutral'/g) || []).length;
+  const blueCapitals = (sql.match(/'b1'\s*,\s*'[^']+'\s*,\s*'blue'/g) || []).length;
+  const redCapitals = (sql.match(/'r1'\s*,\s*'[^']+'\s*,\s*'red'/g) || []).length;
+  const greenCapitals = (sql.match(/'g1'\s*,\s*'[^']+'\s*,\s*'green'/g) || []).length;
+
+  assert.equal(neutralTerritories, 30);
+  assert.equal(blueCapitals, 1);
+  assert.equal(redCapitals, 1);
+  assert.equal(greenCapitals, 1);
 });

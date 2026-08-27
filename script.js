@@ -372,34 +372,62 @@ async function trainSoldiers() {
   }
 }
 
-const TERRITORY_SHAPES = {
-  t3: '0,0 120,0 118,76 0,74',
-  t2: '0,74 118,76 122,150 0,148',
-  t1: '0,148 122,150 120,224 0,222',
-  t4: '0,222 120,224 116,298 0,296',
-  t8: '0,296 116,298 120,370 0,370',
-  t7: '120,0 240,0 242,72 118,76',
-  t6: '118,76 242,72 238,146 122,150',
-  t5: '122,150 238,146 244,220 120,224',
-  t9: '120,224 244,220 240,294 116,298',
-  t14: '116,298 240,294 240,370 120,370',
-  t12: '240,0 360,0 360,74 242,72',
-  t11: '242,72 360,74 360,148 238,146',
-  t10: '238,146 360,148 360,222 244,220',
-  t15: '244,220 360,222 360,296 240,294',
-  t13: '240,294 360,296 360,370 240,370',
-};
-
-const TERRITORY_LABEL = {
-  t3: [60, 37], t7: [182, 36], t12: [300, 36],
-  t2: [61, 111], t6: [180, 110], t11: [299, 110],
-  t1: [61, 185], t5: [183, 185], t10: [300, 185],
-  t4: [60, 259], t9: [183, 258], t15: [302, 258],
-  t8: [60, 333], t14: [182, 333], t13: [300, 333],
-};
-
 const FACTION_FILL = { blue: '#1a4d8f', red: '#7a1a1a', green: '#1a5c2a' };
 const FACTION_STROKE = { blue: '#2e78e0', red: '#d93030', green: '#2ea840' };
+
+function sortTerritoryIds(ids) {
+  const factionOrder = { b: 0, r: 1, g: 2, n: 3 };
+  return [...ids].sort((left, right) => {
+    const leftPrefix = String(left || '').charAt(0).toLowerCase();
+    const rightPrefix = String(right || '').charAt(0).toLowerCase();
+    const leftOrder = factionOrder[leftPrefix] ?? 9;
+    const rightOrder = factionOrder[rightPrefix] ?? 9;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+
+    const leftNumber = Number(String(left || '').slice(1));
+    const rightNumber = Number(String(right || '').slice(1));
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && leftNumber !== rightNumber) {
+      return leftNumber - rightNumber;
+    }
+
+    return String(left).localeCompare(String(right));
+  });
+}
+
+function buildTerritoryLayout(territoriesById) {
+  const ids = sortTerritoryIds(Object.keys(territoriesById));
+  const cols = 6;
+  const xStep = 56;
+  const yStep = 48;
+  const rowOffset = 28;
+  const padX = 36;
+  const padY = 34;
+  const layout = {};
+
+  ids.forEach((id, index) => {
+    const row = Math.floor(index / cols);
+    const col = index % cols;
+    const cx = padX + col * xStep + (row % 2 === 1 ? rowOffset : 0);
+    const cy = padY + row * yStep;
+    layout[id] = { cx, cy };
+  });
+
+  const rows = Math.max(1, Math.ceil(ids.length / cols));
+  const width = padX * 2 + (cols - 1) * xStep + rowOffset + 44;
+  const height = padY * 2 + (rows - 1) * yStep + 40;
+  return { layout, viewBox: `0 0 ${width} ${height}` };
+}
+
+function createHexPoints(cx, cy, radius = 21) {
+  const points = [];
+  for (let i = 0; i < 6; i += 1) {
+    const angle = ((60 * i) - 30) * (Math.PI / 180);
+    const px = cx + radius * Math.cos(angle);
+    const py = cy + radius * Math.sin(angle);
+    points.push(`${px.toFixed(2)},${py.toFixed(2)}`);
+  }
+  return points.join(' ');
+}
 
 function canAttack(id) {
   const territory = G.territories[id];
@@ -409,37 +437,45 @@ function canAttack(id) {
 
 function renderMap() {
   const svg = document.getElementById('map-svg');
+  if (!svg) return;
   svg.innerHTML = '';
-  Object.entries(G.territories).forEach(([id, territory]) => {
-    const shape = TERRITORY_SHAPES[id];
-    if (!shape) return;
+  const { layout, viewBox } = buildTerritoryLayout(G.territories);
+  svg.setAttribute('viewBox', viewBox);
+
+  sortTerritoryIds(Object.keys(G.territories)).forEach((id) => {
+    const territory = G.territories[id];
+    const position = layout[id];
+    if (!territory || !position) return;
 
     const fill = FACTION_FILL[territory.owner] || '#333';
     const stroke = FACTION_STROKE[territory.owner] || '#888';
-    const [x, y] = TERRITORY_LABEL[id] || [180, 185];
+    const { cx: x, cy: y } = position;
 
     const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-    poly.setAttribute('points', shape);
+    poly.setAttribute('points', createHexPoints(x, y));
     poly.setAttribute('fill', fill);
     poly.setAttribute('stroke', selectedTerritoryId === id ? '#fff' : stroke);
     poly.setAttribute('stroke-width', selectedTerritoryId === id ? '3' : '1.5');
+    poly.setAttribute('class', 'territory');
     poly.setAttribute('data-id', id);
     poly.addEventListener('click', () => selectTerritory(id));
     svg.appendChild(poly);
 
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     label.setAttribute('x', x);
-    label.setAttribute('y', y - 6);
+    label.setAttribute('y', y - 5);
     label.setAttribute('fill', '#e6edf3');
-    label.setAttribute('font-size', '8.5');
-    label.textContent = territory.name;
+    label.setAttribute('font-size', '7.5');
+    label.setAttribute('text-anchor', 'middle');
+    label.textContent = String(id).toUpperCase();
     svg.appendChild(label);
 
     const troops = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     troops.setAttribute('x', x);
-    troops.setAttribute('y', y + 8);
+    troops.setAttribute('y', y + 10);
     troops.setAttribute('fill', '#e3b341');
-    troops.setAttribute('font-size', '10');
+    troops.setAttribute('font-size', '9');
+    troops.setAttribute('text-anchor', 'middle');
     troops.textContent = '⚔' + territory.troops;
     svg.appendChild(troops);
   });
