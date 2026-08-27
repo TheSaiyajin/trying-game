@@ -495,7 +495,9 @@ function buildTerritoryLayout(territoriesById) {
   // The world map is a 3-fold symmetric ring: capital -> home -> frontier -> border -> core.
   // Bearings are compass-style (0 = north, clockwise), 120 degrees apart per faction so the
   // layout always matches the neighbor graph in world-seed.sql regardless of live territory data.
-  const center = { cx: 380, cy: 320 };
+  // Radii step down by ~75-90px per ring and each ring's angular spread is wide enough that
+  // adjacent hexes (which render at ~60px across) never touch, on both desktop and mobile.
+  const center = { cx: 400, cy: 380 };
   const factionBearing = { blue: 300, red: 60, green: 180 };
   const borderBearing = { blue_red: 0, red_green: 120, green_blue: 240 };
 
@@ -517,21 +519,21 @@ function buildTerritoryLayout(territoriesById) {
   ['blue', 'red', 'green'].forEach((faction) => {
     const capitalId = { blue: 'b1', red: 'r1', green: 'g1' }[faction];
     if (capitalId in territoriesById) {
-      layout[capitalId] = toXY(factionBearing[faction], 300);
+      layout[capitalId] = toXY(factionBearing[faction], 340);
     }
   });
 
-  placeRing(['n1', 'n2', 'n3'], factionBearing.blue, 210, [-16, 0, 16]);
-  placeRing(['n4', 'n5', 'n6'], factionBearing.red, 210, [-16, 0, 16]);
-  placeRing(['n7', 'n8', 'n9'], factionBearing.green, 210, [-16, 0, 16]);
+  placeRing(['n1', 'n2', 'n3'], factionBearing.blue, 250, [-20, 0, 20]);
+  placeRing(['n4', 'n5', 'n6'], factionBearing.red, 250, [-20, 0, 20]);
+  placeRing(['n7', 'n8', 'n9'], factionBearing.green, 250, [-20, 0, 20]);
 
-  placeRing(['n10', 'n11', 'n12'], factionBearing.blue, 150, [-14, 0, 14]);
-  placeRing(['n13', 'n14', 'n15'], factionBearing.red, 150, [-14, 0, 14]);
-  placeRing(['n16', 'n17', 'n18'], factionBearing.green, 150, [-14, 0, 14]);
+  placeRing(['n10', 'n11', 'n12'], factionBearing.blue, 165, [-28, 0, 28]);
+  placeRing(['n13', 'n14', 'n15'], factionBearing.red, 165, [-28, 0, 28]);
+  placeRing(['n16', 'n17', 'n18'], factionBearing.green, 165, [-28, 0, 28]);
 
-  placeRing(['n19', 'n20', 'n21'], borderBearing.blue_red, 105, [-12, 0, 12]);
-  placeRing(['n22', 'n23', 'n24'], borderBearing.red_green, 105, [-12, 0, 12]);
-  placeRing(['n25', 'n26', 'n27'], borderBearing.green_blue, 105, [-12, 0, 12]);
+  placeRing(['n19', 'n20', 'n21'], borderBearing.blue_red, 95, [-46, 0, 46]);
+  placeRing(['n22', 'n23', 'n24'], borderBearing.red_green, 95, [-46, 0, 46]);
+  placeRing(['n25', 'n26', 'n27'], borderBearing.green_blue, 95, [-46, 0, 46]);
 
   if ('n28' in territoriesById) layout.n28 = toXY(borderBearing.blue_red, 45);
   if ('n29' in territoriesById) layout.n29 = toXY(borderBearing.red_green, 45);
@@ -545,15 +547,15 @@ function buildTerritoryLayout(territoriesById) {
   unplacedIds.forEach((id, index) => {
     const row = Math.floor(index / cols);
     const col = index % cols;
-    layout[id] = { cx: 60 + (col * 100), cy: 640 + (row * 92) };
+    layout[id] = { cx: 60 + (col * 100), cy: 700 + (row * 92) };
   });
 
-  const width = 760;
-  const height = 740;
+  const width = 800;
+  const height = 800;
   return { layout, viewBox: `0 0 ${width} ${height}` };
 }
 
-function createHexPoints(cx, cy, radius = 32) {
+function createHexPoints(cx, cy, radius = 28) {
   const points = [];
   for (let i = 0; i < 6; i += 1) {
     const angle = ((60 * i) - 30) * (Math.PI / 180);

@@ -462,8 +462,10 @@ html, body {
   padding: 6px;
 }
 #map-svg {
-  width: min(980px, 100%);
-  min-width: 740px;
+  width: 100%;
+  max-width: 820px;
+  min-width: 420px;
+  height: auto;
   display: block;
   margin: 0 auto;
 }
@@ -614,7 +616,7 @@ html, body {
 
 @media (max-width: 900px) {
   #map-svg {
-    min-width: 700px;
+    max-width: 100%;
   }
 }
 
@@ -626,7 +628,7 @@ html, body {
   }
 
   #map-svg {
-    min-width: 680px;
+    min-width: 380px;
   }
 }
 
