@@ -318,7 +318,7 @@ function renderCity() {
       <div class="building-info">
         <div class="building-name">${def.icon} ${def.name}</div>
         <div class="building-level">Level ${level}</div>
-        <div class="building-prod">+${prod} ${def.resource}/tick</div>
+        <div class="building-prod">+${prod} ${def.resource}/min</div>
       </div>
       <button class="btn-upgrade" onclick="upgradeBuilding('${key}')">⬆ Lvl ${level + 1}</button>
     `;
@@ -750,7 +750,7 @@ if (typeof document !== 'undefined') {
           } catch (error) {
             console.warn('Background refresh failed:', error.message);
           }
-        }, 5000);
+        }, 60000);
       } else {
         showAuthScreen();
         setAuthMode('login');

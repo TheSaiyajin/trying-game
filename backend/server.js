@@ -145,16 +145,19 @@ async function applyOfflineResourceEarnings(playerId) {
   const faction = player.faction || 'blue';
   const lastUpdated = player.resource_last_updated ? new Date(player.resource_last_updated) : new Date();
   const secondsSince = Math.max(0, Math.min((Date.now() - lastUpdated.getTime()) / 1000, 60 * 60 * 12));
-  if (secondsSince <= 0) return player;
+  if (secondsSince < 60) return player;
+
+  const wholeMinutes = Math.floor(secondsSince / 60);
+  if (wholeMinutes <= 0) return player;
 
   const buildings = await getPlayerBuildingLevels(playerId);
   const territories = await getTerritoriesSnapshot();
   const production = getProductionFromBuildings(buildings, territories, faction, true);
   const gain = {
-    food: Math.floor((production.food / 60) * secondsSince),
-    wood: Math.floor((production.wood / 60) * secondsSince),
-    iron: Math.floor((production.iron / 60) * secondsSince),
-    manpower: Math.floor((production.manpower / 60) * secondsSince),
+    food: Math.max(0, Math.floor(production.food * wholeMinutes)),
+    wood: Math.max(0, Math.floor(production.wood * wholeMinutes)),
+    iron: Math.max(0, Math.floor(production.iron * wholeMinutes)),
+    manpower: Math.max(0, Math.floor(production.manpower * wholeMinutes)),
   };
 
   await db.query(
@@ -163,10 +166,10 @@ async function applyOfflineResourceEarnings(playerId) {
          resource_wood = resource_wood + $2,
          resource_iron = resource_iron + $3,
          resource_manpower = resource_manpower + $4,
-         resource_last_updated = NOW(),
+         resource_last_updated = resource_last_updated + ($5 * INTERVAL '1 minute'),
          last_action_at = NOW()
-     WHERE id = $5`,
-    [gain.food, gain.wood, gain.iron, gain.manpower, playerId]
+     WHERE id = $6`,
+    [gain.food, gain.wood, gain.iron, gain.manpower, wholeMinutes, playerId]
   );
 
   return { ...player, resource_food: Number(player.resource_food) + gain.food, resource_wood: Number(player.resource_wood) + gain.wood, resource_iron: Number(player.resource_iron) + gain.iron, resource_manpower: Number(player.resource_manpower) + gain.manpower };
