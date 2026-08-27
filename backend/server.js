@@ -706,7 +706,7 @@ app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
 app.get('/api/game/faction-chat', requireAuth, asyncHandler(async (req, res) => {
   const player = await getCurrentAuthedPlayer(req);
   const db = await connect();
-  const result = await getFactionChatMessagesForPlayer(db, player, CHAT_RESPONSE_LIMIT);
+  const result = await getFactionChatMessagesForPlayer(db, player);
   if (!result.ok) return res.status(result.status).json({ error: result.error });
   res.json({ faction: result.faction, messages: result.messages });
 }));
@@ -966,9 +966,15 @@ app.post('/api/admin/territory/:id', requireAuth, requireAdmin, asyncHandler(asy
 app.post('/api/admin/change-leader', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   const faction = String(req.body.faction || '').trim().toLowerCase();
   const playerId = parsePositiveInt(req.body.playerId || 0, 0, 100000);
+  if (!playerId) return res.status(400).json({ error: 'playerId required.' });
   if (!validFactions.includes(faction)) return res.status(400).json({ error: 'Invalid faction.' });
 
   const db = await connect();
+  const playerResult = await db.query('SELECT id, faction FROM players WHERE id = $1', [playerId]);
+  if (!playerResult.rowCount) return res.status(404).json({ error: 'Player not found.' });
+  if (String(playerResult.rows[0].faction || '').toLowerCase() !== faction) {
+    return res.status(400).json({ error: 'Player must belong to the selected faction.' });
+  }
   await db.query(
     `INSERT INTO faction_leaders (faction, player_id)
      VALUES ($1, $2)

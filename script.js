@@ -910,6 +910,13 @@ function scrollFactionChatToNewest() {
   container.scrollTop = container.scrollHeight;
 }
 
+function isFactionChatNearBottom() {
+  const container = document.getElementById('chat-messages');
+  if (!container) return true;
+  const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
+  return remaining <= 24;
+}
+
 async function renderFactionChat({ scrollToNewest = false } = {}) {
   const container = document.getElementById('chat-messages');
   if (!container) return;
@@ -929,7 +936,8 @@ async function renderFactionChat({ scrollToNewest = false } = {}) {
 
         const meta = document.createElement('div');
         meta.className = 'chat-meta';
-        const timestamp = entry.created_at ? new Date(entry.created_at).toLocaleString() : '';
+        const createdAt = entry.createdAt || entry.created_at;
+        const timestamp = createdAt ? new Date(createdAt).toLocaleString() : '';
         meta.textContent = `${entry.username} · ${timestamp}`;
 
         const message = document.createElement('div');
@@ -969,7 +977,7 @@ function startFactionChatPolling() {
   factionChatPollHandle = setInterval(() => {
     const chatScreen = document.getElementById('screen-chat');
     if (chatScreen && chatScreen.classList.contains('active')) {
-      renderFactionChat({ scrollToNewest: true });
+      renderFactionChat({ scrollToNewest: isFactionChatNearBottom() });
     }
   }, 4000);
 }
@@ -1372,6 +1380,7 @@ if (typeof module !== 'undefined') {
     formatBonusLabel,
     isAdminUser,
     insertChatEmoji,
+    isFactionChatNearBottom,
     setFactionChoice,
     setGameStateFromSnapshot,
     sendFactionChatMessage,
