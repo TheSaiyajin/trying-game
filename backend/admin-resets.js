@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { logAdminAction } = require('./admin-write-operations');
 
 const STARTING_PLAYER_RESOURCES = Object.freeze({
   food: 500,
@@ -91,10 +92,7 @@ async function resetPlayerProgress(client, { actorId, playerId }) {
       playerId,
     ]
   );
-  await client.query(
-    'INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)',
-    [actorId, 'reset_player', JSON.stringify({ playerId })]
-  );
+  await logAdminAction(client, actorId, 'reset_player', { playerId });
   return { ok: true, playerId };
 }
 
@@ -116,10 +114,7 @@ async function resetAllPlayerResources(client, { actorId }) {
       STARTING_PLAYER_RESOURCES.soldiers,
     ]
   );
-  await client.query(
-    'INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)',
-    [actorId, 'reset_all_resources', JSON.stringify({ scope: 'all_players_resources_and_soldiers' })]
-  );
+  await logAdminAction(client, actorId, 'reset_all_resources', { scope: 'all_players_resources_and_soldiers' });
   return { ok: true };
 }
 
@@ -164,10 +159,7 @@ async function resetWorldState(client, { actorId, applyWorldSeedFn = applyWorldS
   );
 
   await applyWorldSeedFn(client);
-  await client.query(
-    'INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)',
-    [actorId, 'reset_world', JSON.stringify({ preservedAccounts: true })]
-  );
+  await logAdminAction(client, actorId, 'reset_world', { preservedAccounts: true });
   return { ok: true };
 }
 

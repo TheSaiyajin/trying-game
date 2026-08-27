@@ -15,7 +15,6 @@ const {
   isSafeUsername,
   isAuthorizedAdminPlayer,
   getRegistrationRole,
-  normalizeRequestedRole,
 } = require('./admin-policy');
 const { buildArmyName, changePlayerFaction } = require('./admin-faction-change');
 const {
@@ -25,6 +24,14 @@ const {
   resetWorldState,
   runAdminTransaction,
 } = require('./admin-resets');
+const {
+  logAdminAction,
+  updatePlayerResources,
+  updatePlayerRole,
+  updatePlayerSoldiers,
+  updateTerritory,
+  assignFactionLeader,
+} = require('./admin-write-operations');
 const {
   applyDefenderCasualties,
   getLockedTerritoryDefenders,
@@ -37,7 +44,6 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const validFactions = ['blue', 'red', 'green'];
-const validRoles = ['member', 'leader', 'admin'];
 const buildingNames = ['farm', 'lumbermill', 'ironmine', 'barracks'];
 
 app.use(helmet());
@@ -119,9 +125,9 @@ function parsePositiveInt(value, fallback = 0, maxValue = 1000000) {
   return Math.min(Math.max(0, Math.floor(num)), maxValue);
 }
 
-async function getPlayerById(playerId) {
-  const db = await connect();
-  const result = await db.query('SELECT * FROM players WHERE id = $1', [playerId]);
+async function getPlayerById(playerId, db = null) {
+  const queryable = db || await connect();
+  const result = await queryable.query('SELECT * FROM players WHERE id = $1', [playerId]);
   return result.rows[0] || null;
 }
 
@@ -131,9 +137,9 @@ async function getPlayerByUsername(username) {
   return result.rows[0] || null;
 }
 
-async function getPlayerBuildingLevels(playerId) {
-  const db = await connect();
-  const result = await db.query('SELECT * FROM buildings WHERE player_id = $1', [playerId]);
+async function getPlayerBuildingLevels(playerId, db = null) {
+  const queryable = db || await connect();
+  const result = await queryable.query('SELECT * FROM buildings WHERE player_id = $1', [playerId]);
   const row = result.rows[0] || {};
   return {
     farm: Number(row.farm || 1),
@@ -143,9 +149,9 @@ async function getPlayerBuildingLevels(playerId) {
   };
 }
 
-async function getTerritoriesSnapshot() {
-  const db = await connect();
-  const result = await db.query(`
+async function getTerritoriesSnapshot(db = null) {
+  const queryable = db || await connect();
+  const result = await queryable.query(`
     SELECT t.*,
       COALESCE(ARRAY_AGG(n.neighbor_id ORDER BY n.neighbor_id) FILTER (WHERE n.neighbor_id IS NOT NULL), ARRAY[]::varchar[]) AS neighbors
     FROM territories t
@@ -240,16 +246,17 @@ async function applyOfflineResourceEarnings(playerId) {
 // Authoritative resource generation: runs on the server every minute for every
 // player, independent of whether anyone is actively making requests. The lazy
 // catch-up above only covers the gap after a server restart/downtime.
-async function runGlobalResourceTick() {
+async function runGlobalResourceTick(db = null, options = {}) {
+  const { suppressErrors = true } = options;
   try {
-    const db = await connect();
-    const territories = await getTerritoriesSnapshot();
-    const playersResult = await db.query('SELECT id, faction FROM players');
+    const queryable = db || await connect();
+    const territories = await getTerritoriesSnapshot(queryable);
+    const playersResult = await queryable.query('SELECT id, faction FROM players');
 
     for (const row of playersResult.rows) {
-      const buildings = await getPlayerBuildingLevels(row.id);
+      const buildings = await getPlayerBuildingLevels(row.id, queryable);
       const production = getProductionFromBuildings(buildings, territories, row.faction || 'blue', true);
-      await db.query(
+      await queryable.query(
         `UPDATE players
          SET resource_food = resource_food + $1,
              resource_wood = resource_wood + $2,
@@ -261,6 +268,7 @@ async function runGlobalResourceTick() {
       );
     }
   } catch (error) {
+    if (!suppressErrors) throw error;
     console.error('Resource tick failed:', error);
   }
 }
@@ -820,9 +828,15 @@ app.post('/api/admin/reset-all-resources', requireAuth, requireAdmin, asyncHandl
 }));
 
 app.post('/api/admin/force-tick', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  await runGlobalResourceTick();
-  const db = await connect();
-  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'force_tick', 'Admin forced resource tick']);
+  const client = await getClient();
+  try {
+    await runAdminTransaction(client, async () => {
+      await runGlobalResourceTick(client, { suppressErrors: false });
+      await logAdminAction(client, req.user.userId, 'force_tick', { mode: 'manual_admin_trigger' });
+    });
+  } finally {
+    client.release();
+  }
   res.json({ message: 'Resource tick applied.' });
 }));
 
@@ -844,26 +858,18 @@ app.post('/api/admin/player/:id/resources', requireAuth, requireAdmin, asyncHand
   const playerId = parsePositiveInt(req.params.id || 0, 0, 100000);
   if (!playerId) return res.status(400).json({ error: 'playerId required.' });
 
-  const db = await connect();
-  const existing = await db.query('SELECT id FROM players WHERE id = $1', [playerId]);
-  if (!existing.rowCount) return res.status(404).json({ error: 'Player not found.' });
-
-  const food = req.body.food !== undefined ? Number(req.body.food) : null;
-  const wood = req.body.wood !== undefined ? Number(req.body.wood) : null;
-  const iron = req.body.iron !== undefined ? Number(req.body.iron) : null;
-  const manpower = req.body.manpower !== undefined ? Number(req.body.manpower) : null;
-
-  const updates = [];
-  const params = [];
-  if (Number.isFinite(food)) { params.push(Math.max(0, food)); updates.push(`resource_food = $${params.length}`); }
-  if (Number.isFinite(wood)) { params.push(Math.max(0, wood)); updates.push(`resource_wood = $${params.length}`); }
-  if (Number.isFinite(iron)) { params.push(Math.max(0, iron)); updates.push(`resource_iron = $${params.length}`); }
-  if (Number.isFinite(manpower)) { params.push(Math.max(0, manpower)); updates.push(`resource_manpower = $${params.length}`); }
-  if (!updates.length) return res.status(400).json({ error: 'No resource values provided.' });
-
-  params.push(playerId);
-  await db.query(`UPDATE players SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
-  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'edit_resources', JSON.stringify({ playerId, food, wood, iron, manpower })]);
+  const client = await getClient();
+  let result;
+  try {
+    result = await runAdminTransaction(client, async () => updatePlayerResources(client, {
+      actorId: req.user.userId,
+      playerId,
+      input: req.body || {},
+    }));
+  } finally {
+    client.release();
+  }
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
   res.json({ message: 'Resources updated.' });
 }));
 
@@ -871,15 +877,18 @@ app.post('/api/admin/player/:id/soldiers', requireAuth, requireAdmin, asyncHandl
   const playerId = parsePositiveInt(req.params.id || 0, 0, 100000);
   if (!playerId) return res.status(400).json({ error: 'playerId required.' });
 
-  const soldiers = Number(req.body.soldiers);
-  if (!Number.isFinite(soldiers)) return res.status(400).json({ error: 'soldiers value required.' });
-
-  const db = await connect();
-  const existing = await db.query('SELECT id FROM players WHERE id = $1', [playerId]);
-  if (!existing.rowCount) return res.status(404).json({ error: 'Player not found.' });
-
-  await db.query('UPDATE players SET soldiers = $1 WHERE id = $2', [Math.max(0, Math.floor(soldiers)), playerId]);
-  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'edit_soldiers', JSON.stringify({ playerId, soldiers })]);
+  const client = await getClient();
+  let result;
+  try {
+    result = await runAdminTransaction(client, async () => updatePlayerSoldiers(client, {
+      actorId: req.user.userId,
+      playerId,
+      soldiers: req.body.soldiers,
+    }));
+  } finally {
+    client.release();
+  }
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
   res.json({ message: 'Soldiers updated.' });
 }));
 
@@ -891,38 +900,39 @@ app.post('/api/admin/player/:id/faction', requireAuth, requireAdmin, asyncHandle
   if (!validFactions.includes(faction)) return res.status(400).json({ error: 'Invalid faction.' });
 
   const db = await getClient();
+  let result;
   try {
-    await db.query('BEGIN');
-    const result = await changePlayerFaction(db, { actorId: req.user.userId, playerId, faction });
-    if (!result.ok) {
-      await db.query('ROLLBACK');
-      return res.status(result.status).json({ error: result.error });
-    }
-    await db.query('COMMIT');
-    const message = result.recalledTroops > 0
-      ? `Faction updated. Recalled ${result.recalledTroops} stationed troops from territories that no longer match the player faction.`
-      : 'Faction updated.';
-    res.json({ message, recalledTroops: result.recalledTroops, clearedTerritories: result.clearedTerritories });
-  } catch (error) {
-    await db.query('ROLLBACK').catch(() => {});
-    throw error;
+    result = await runAdminTransaction(db, async () => changePlayerFaction(db, {
+      actorId: req.user.userId,
+      playerId,
+      faction,
+    }));
   } finally {
     db.release();
   }
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  const message = result.recalledTroops > 0
+    ? `Faction updated. Recalled ${result.recalledTroops} stationed troops from territories that no longer match the player faction.`
+    : 'Faction updated.';
+  res.json({ message, recalledTroops: result.recalledTroops, clearedTerritories: result.clearedTerritories });
 }));
 
 app.post('/api/admin/player/:id/role', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   const playerId = parsePositiveInt(req.params.id || 0, 0, 100000);
   if (!playerId) return res.status(400).json({ error: 'playerId required.' });
 
-  const db = await connect();
-  const existing = await db.query('SELECT id, username, role FROM players WHERE id = $1', [playerId]);
-  if (!existing.rowCount) return res.status(404).json({ error: 'Player not found.' });
-  const normalized = normalizeRequestedRole(existing.rows[0], req.body.role);
-  if (!normalized.ok) return res.status(400).json({ error: normalized.error });
-
-  await db.query('UPDATE players SET role = $1 WHERE id = $2', [normalized.role, playerId]);
-  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'change_role', JSON.stringify({ playerId, role: normalized.role })]);
+  const client = await getClient();
+  let result;
+  try {
+    result = await runAdminTransaction(client, async () => updatePlayerRole(client, {
+      actorId: req.user.userId,
+      playerId,
+      role: req.body.role,
+    }));
+  } finally {
+    client.release();
+  }
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
   res.json({ message: 'Role updated.' });
 }));
 
@@ -942,46 +952,40 @@ app.post('/api/admin/territory/:id', requireAuth, requireAdmin, asyncHandler(asy
   const territoryId = String(req.params.id || '').trim();
   if (!territoryId) return res.status(400).json({ error: 'Territory ID required.' });
 
-  const db = await connect();
-  const existing = await db.query('SELECT id FROM territories WHERE id = $1', [territoryId]);
-  if (!existing.rowCount) return res.status(404).json({ error: 'Territory not found.' });
-
-  const updates = [];
-  const params = [];
-
-  if (req.body.owner !== undefined) {
-    const owner = String(req.body.owner || '').trim().toLowerCase();
-    if (!validFactions.includes(owner) && owner !== 'neutral') return res.status(400).json({ error: 'Invalid owner faction.' });
-    params.push(owner);
-    updates.push(`owner_faction = $${params.length}`);
+  const client = await getClient();
+  let result;
+  try {
+    result = await runAdminTransaction(client, async () => updateTerritory(client, {
+      actorId: req.user.userId,
+      territoryId,
+      owner: req.body.owner,
+      defense: req.body.defense,
+      validFactions,
+    }));
+  } finally {
+    client.release();
   }
-  if (req.body.defense !== undefined) {
-    const defense = Math.max(0, Math.floor(Number(req.body.defense) || 0));
-    params.push(defense);
-    updates.push(`defense_troops = $${params.length}`);
-  }
-  if (!updates.length) return res.status(400).json({ error: 'No fields to update.' });
-
-  params.push(territoryId);
-  await db.query(`UPDATE territories SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
-  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'edit_territory', JSON.stringify({ territoryId, ...req.body })]);
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
   res.json({ message: 'Territory updated.' });
 }));
 
 app.post('/api/admin/change-leader', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  const faction = String(req.body.faction || '').trim().toLowerCase();
   const playerId = parsePositiveInt(req.body.playerId || 0, 0, 100000);
-  if (!validFactions.includes(faction)) return res.status(400).json({ error: 'Invalid faction.' });
+  if (!playerId) return res.status(400).json({ error: 'playerId required.' });
 
-  const db = await connect();
-  await db.query(
-    `INSERT INTO faction_leaders (faction, player_id)
-     VALUES ($1, $2)
-     ON CONFLICT (faction) DO UPDATE SET player_id = EXCLUDED.player_id`,
-    [faction, playerId]
-  );
-  await db.query('UPDATE players SET role = $1 WHERE id = $2', ['leader', playerId]);
-  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'change_leader', JSON.stringify({ faction, playerId })]);
+  const client = await getClient();
+  let result;
+  try {
+    result = await runAdminTransaction(client, async () => assignFactionLeader(client, {
+      actorId: req.user.userId,
+      playerId,
+      faction: req.body.faction,
+      validFactions,
+    }));
+  } finally {
+    client.release();
+  }
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
   res.json({ message: 'Leader updated.' });
 }));
 
@@ -994,7 +998,9 @@ app.get('/api/admin/season-reset-plan', requireAuth, requireAdmin, asyncHandler(
 // Express's default HTML error page, which previously made every unexpected failure
 // look like an opaque "Request failed: 500" with no detail in the browser.
 app.use((err, req, res, next) => {
-  console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, err);
+  const errorCode = err && err.code ? ` [code=${err.code}]` : '';
+  const errorMessage = err && err.message ? err.message : String(err);
+  console.error(`Unhandled error on ${req.method} ${req.originalUrl}${errorCode}: ${errorMessage}`);
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'Internal server error.' });
 });

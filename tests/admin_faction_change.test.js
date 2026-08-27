@@ -5,11 +5,14 @@ const { changePlayerFaction } = require('../backend/admin-faction-change');
 
 function createFakeClient({ players, territories, defenders, factionLeaders }) {
   const adminActions = [];
+  const executedQueries = [];
 
   return {
     adminActions,
+    executedQueries,
     async query(sql, params = []) {
       const text = sql.trim();
+      executedQueries.push(text);
 
       if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') {
         return { rows: [] };
@@ -20,7 +23,7 @@ function createFakeClient({ players, territories, defenders, factionLeaders }) {
         return { rows: player ? [{ id: player.id, username: player.username, faction: player.faction, role: player.role }] : [] };
       }
 
-      if (text.startsWith('SELECT DISTINCT t.id, t.owner_faction, t.defense_troops')) {
+      if (text.startsWith('SELECT t.id, t.owner_faction, t.defense_troops')) {
         const [playerId, faction] = params;
         const rows = [...defenders.entries()]
           .filter(([key]) => Number(key.split(':')[1]) === Number(playerId))
@@ -157,6 +160,15 @@ test('changing a player faction keeps progress, locks faction, recalls invalid d
   assert.deepEqual(client.adminActions[0].detail.clearedTerritories, [
     { territoryId: 'b1', ownerFaction: 'blue', troopsRecalled: 8 },
   ]);
+  assert.ok(
+    client.executedQueries.some((sql) => sql.includes('EXISTS (') && sql.includes('FOR UPDATE OF t')),
+    'cleanup query should lock matching territories with EXISTS'
+  );
+  assert.equal(
+    client.executedQueries.some((sql) => sql.includes('DISTINCT') && sql.includes('FOR UPDATE')),
+    false,
+    'cleanup query must not combine DISTINCT with FOR UPDATE'
+  );
 });
 
 test('changing faction returns 404 for a missing player', async () => {
