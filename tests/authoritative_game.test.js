@@ -72,8 +72,14 @@ test('legacy databases get the required player migration columns before registra
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS faction_locked')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS role')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS army_name')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS resource_last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW()')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE territories ADD COLUMN IF NOT EXISTS last_battle_at TIMESTAMPTZ')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS updated_at')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS faction')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NULL')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE buildings ADD COLUMN IF NOT EXISTS farm')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE territories ADD COLUMN IF NOT EXISTS owner_faction')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS contribution')));
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE UNIQUE INDEX IF NOT EXISTS territory_defenders_territory_player_idx')));
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE UNIQUE INDEX IF NOT EXISTS attack_contributions_territory_player_idx')));
 });

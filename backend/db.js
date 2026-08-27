@@ -47,31 +47,49 @@ async function getClient() {
   return pool.connect();
 }
 
-async function applySchemaMigrations(currentClient = client) {
+async function applySchemaMigrations(currentClient) {
   const migrationStatements = [
+    `ALTER TABLE players ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NULL`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS faction_locked BOOLEAN NOT NULL DEFAULT TRUE`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'member'`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS army_name VARCHAR(64) DEFAULT 'Blue Army'`,
+    `ALTER TABLE players ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS last_action_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE players ADD COLUMN IF NOT EXISTS resource_last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS resource_food INTEGER NOT NULL DEFAULT 500`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS resource_wood INTEGER NOT NULL DEFAULT 400`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS resource_iron INTEGER NOT NULL DEFAULT 300`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS resource_manpower INTEGER NOT NULL DEFAULT 250`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS soldiers INTEGER NOT NULL DEFAULT 100`,
+    `ALTER TABLE buildings ADD COLUMN IF NOT EXISTS farm INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE buildings ADD COLUMN IF NOT EXISTS lumbermill INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE buildings ADD COLUMN IF NOT EXISTS ironmine INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE buildings ADD COLUMN IF NOT EXISTS barracks INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE buildings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS owner_faction VARCHAR(16) NOT NULL DEFAULT 'neutral'`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS defense_troops INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS bonus_type VARCHAR(32) NOT NULL DEFAULT 'none'`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS bonus_value NUMERIC(6, 3) NOT NULL DEFAULT 0`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS is_fortress BOOLEAN NOT NULL DEFAULT FALSE`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS is_capital BOOLEAN NOT NULL DEFAULT FALSE`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS resource_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS storage_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS last_battle_at TIMESTAMPTZ`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS troops INTEGER NOT NULL DEFAULT 0`,
     `CREATE UNIQUE INDEX IF NOT EXISTS territory_defenders_territory_player_idx ON territory_defenders (territory_id, player_id)`,
+    `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS contribution INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
     `CREATE UNIQUE INDEX IF NOT EXISTS attack_contributions_territory_player_idx ON attack_contributions (territory_id, player_id)`,
     `ALTER TABLE admin_actions ADD COLUMN IF NOT EXISTS action_detail TEXT`,
   ];
+
 
   for (const statement of migrationStatements) {
     try {
