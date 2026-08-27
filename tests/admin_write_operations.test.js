@@ -7,6 +7,7 @@ const {
   updatePlayerRole,
   updatePlayerSoldiers,
   updateTerritory,
+  updateCapital,
 } = require('../backend/admin-write-operations');
 
 function createAdminClient({ players, territories, factionLeaders }) {
@@ -35,6 +36,31 @@ function createAdminClient({ players, territories, factionLeaders }) {
       if (text === 'SELECT * FROM territories WHERE id = $1 FOR UPDATE') {
         const territory = territories.get(params[0]);
         return { rows: territory ? [{ ...territory }] : [], rowCount: territory ? 1 : 0 };
+      }
+
+      if (text === 'SELECT id FROM territories WHERE id = $1 FOR UPDATE') {
+        const territory = territories.get(params[0]);
+        return { rows: territory ? [{ id: territory.id }] : [], rowCount: territory ? 1 : 0 };
+      }
+
+      if (text === 'SELECT id FROM territories WHERE is_capital = TRUE AND owner_faction = $1 FOR UPDATE') {
+        const match = [...territories.values()].find((t) => t.is_capital && t.owner_faction === params[0]);
+        return { rows: match ? [{ id: match.id }] : [], rowCount: match ? 1 : 0 };
+      }
+
+      if (text === 'UPDATE territories SET is_capital = FALSE WHERE id = $1') {
+        const territory = territories.get(params[0]);
+        if (territory) territory.is_capital = false;
+        return { rows: [], rowCount: territory ? 1 : 0 };
+      }
+
+      if (text === 'UPDATE territories SET owner_faction = $1, is_capital = TRUE WHERE id = $2') {
+        const territory = territories.get(params[1]);
+        if (territory) {
+          territory.owner_faction = params[0];
+          territory.is_capital = true;
+        }
+        return { rows: [], rowCount: territory ? 1 : 0 };
       }
 
       if (text.startsWith('UPDATE players SET resource_')) {
@@ -252,4 +278,67 @@ test('admin can still change a capital defense amount without changing its owner
   assert.equal(territories.get('b1').owner_faction, 'blue');
   assert.equal(territories.get('b1').defense_troops, 42);
   assert.equal(client.adminActions.length, 1);
+});
+
+test('admin can move the capital designation to a new territory and unset the previous one', async () => {
+  const territories = new Map([
+    ['b1', { id: 'b1', owner_faction: 'blue', is_capital: true, defense_troops: 35 }],
+    ['n1', { id: 'n1', owner_faction: 'blue', is_capital: false, defense_troops: 18 }],
+  ]);
+  const client = createAdminClient({ players: new Map(), territories, factionLeaders: new Map() });
+
+  const result = await updateCapital(client, {
+    actorId: 1,
+    territoryId: 'n1',
+    faction: 'blue',
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(territories.get('b1').is_capital, false);
+  assert.equal(territories.get('n1').is_capital, true);
+  assert.equal(territories.get('n1').owner_faction, 'blue');
+  assert.equal(client.adminActions.length, 1);
+});
+
+test('admin can reassign a capital to a different faction', async () => {
+  const territories = new Map([
+    ['b1', { id: 'b1', owner_faction: 'blue', is_capital: true, defense_troops: 35 }],
+  ]);
+  const client = createAdminClient({ players: new Map(), territories, factionLeaders: new Map() });
+
+  const result = await updateCapital(client, {
+    actorId: 1,
+    territoryId: 'b1',
+    faction: 'red',
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(territories.get('b1').owner_faction, 'red');
+  assert.equal(territories.get('b1').is_capital, true);
+});
+
+test('capital assignment rejects invalid factions and missing territories', async () => {
+  const territories = new Map([
+    ['b1', { id: 'b1', owner_faction: 'blue', is_capital: true, defense_troops: 35 }],
+  ]);
+  const client = createAdminClient({ players: new Map(), territories, factionLeaders: new Map() });
+
+  const invalidFaction = await updateCapital(client, {
+    actorId: 1,
+    territoryId: 'b1',
+    faction: 'purple',
+    validFactions: ['blue', 'red', 'green'],
+  });
+  const missingTerritory = await updateCapital(client, {
+    actorId: 1,
+    territoryId: 'missing',
+    faction: 'blue',
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.deepEqual(invalidFaction, { ok: false, status: 400, error: 'Invalid faction.' });
+  assert.deepEqual(missingTerritory, { ok: false, status: 404, error: 'Territory not found.' });
+  assert.equal(client.adminActions.length, 0);
 });

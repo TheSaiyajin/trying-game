@@ -490,28 +490,62 @@ function sortTerritoryIds(ids) {
 }
 
 function buildTerritoryLayout(territoriesById) {
-  const ids = sortTerritoryIds(Object.keys(territoriesById));
   const layout = {};
 
-  // Keep faction capitals on opposite sides so they are never adjacent.
-  layout.b1 = { cx: 110, cy: 86 };
-  layout.r1 = { cx: 650, cy: 86 };
-  layout.g1 = { cx: 380, cy: 650 };
+  // The world map is a 3-fold symmetric ring: capital -> home -> frontier -> border -> core.
+  // Bearings are compass-style (0 = north, clockwise), 120 degrees apart per faction so the
+  // layout always matches the neighbor graph in world-seed.sql regardless of live territory data.
+  const center = { cx: 380, cy: 320 };
+  const factionBearing = { blue: 300, red: 60, green: 180 };
+  const borderBearing = { blue_red: 0, red_green: 120, green_blue: 240 };
 
-  const neutralIds = ids.filter((id) => id.startsWith('n'));
+  const toXY = (bearingDeg, radius) => {
+    const angle = (bearingDeg * Math.PI) / 180;
+    return {
+      cx: Math.round(center.cx + (radius * Math.sin(angle))),
+      cy: Math.round(center.cy - (radius * Math.cos(angle))),
+    };
+  };
+
+  const placeRing = (ids, bearing, radius, offsets) => {
+    ids.forEach((id, index) => {
+      if (!(id in territoriesById)) return;
+      layout[id] = toXY(bearing + offsets[index], radius);
+    });
+  };
+
+  ['blue', 'red', 'green'].forEach((faction) => {
+    const capitalId = { blue: 'b1', red: 'r1', green: 'g1' }[faction];
+    if (capitalId in territoriesById) {
+      layout[capitalId] = toXY(factionBearing[faction], 300);
+    }
+  });
+
+  placeRing(['n1', 'n2', 'n3'], factionBearing.blue, 210, [-16, 0, 16]);
+  placeRing(['n4', 'n5', 'n6'], factionBearing.red, 210, [-16, 0, 16]);
+  placeRing(['n7', 'n8', 'n9'], factionBearing.green, 210, [-16, 0, 16]);
+
+  placeRing(['n10', 'n11', 'n12'], factionBearing.blue, 150, [-14, 0, 14]);
+  placeRing(['n13', 'n14', 'n15'], factionBearing.red, 150, [-14, 0, 14]);
+  placeRing(['n16', 'n17', 'n18'], factionBearing.green, 150, [-14, 0, 14]);
+
+  placeRing(['n19', 'n20', 'n21'], borderBearing.blue_red, 105, [-12, 0, 12]);
+  placeRing(['n22', 'n23', 'n24'], borderBearing.red_green, 105, [-12, 0, 12]);
+  placeRing(['n25', 'n26', 'n27'], borderBearing.green_blue, 105, [-12, 0, 12]);
+
+  if ('n28' in territoriesById) layout.n28 = toXY(borderBearing.blue_red, 45);
+  if ('n29' in territoriesById) layout.n29 = toXY(borderBearing.red_green, 45);
+  if ('n30' in territoriesById) layout.n30 = toXY(borderBearing.green_blue, 45);
+
+  // Any territory outside the known map shape (e.g. custom/test data) still gets a
+  // reasonable spot instead of being dropped from the render.
+  const placedIds = new Set(Object.keys(layout));
+  const unplacedIds = sortTerritoryIds(Object.keys(territoriesById)).filter((id) => !placedIds.has(id));
   const cols = 6;
-  const xStep = 100;
-  const yStep = 92;
-  const rowOffset = 50;
-  const startX = 85;
-  const startY = 210;
-
-  neutralIds.forEach((id, index) => {
+  unplacedIds.forEach((id, index) => {
     const row = Math.floor(index / cols);
     const col = index % cols;
-    const cx = startX + (col * xStep) + (row % 2 === 1 ? rowOffset : 0);
-    const cy = startY + (row * yStep);
-    layout[id] = { cx, cy };
+    layout[id] = { cx: 60 + (col * 100), cy: 640 + (row * 92) };
   });
 
   const width = 760;
@@ -1119,6 +1153,14 @@ async function renderAdminTerritories() {
           <input id="admin-def-${t.id}" type="number" min="0" value="${t.defense_troops}" style="width:60px" />
           <button class="btn-small" onclick="adminEditTerritory('${t.id}')">Update</button>
         </div>
+        <div class="admin-territory-actions">
+          <select id="admin-capital-faction-${t.id}">
+            <option value="blue" ${t.owner_faction === 'blue' ? 'selected' : ''}>blue</option>
+            <option value="red" ${t.owner_faction === 'red' ? 'selected' : ''}>red</option>
+            <option value="green" ${t.owner_faction === 'green' ? 'selected' : ''}>green</option>
+          </select>
+          <button class="btn-small btn-secondary" onclick="adminSetCapital('${t.id}')">Make Capital</button>
+        </div>
       </div>
     `).join('');
   } catch (error) {
@@ -1247,6 +1289,23 @@ async function adminEditTerritory(territoryId) {
       body: JSON.stringify({ owner, defense: Number(defense) }),
     });
     showToast(`✅ ${res.message}`);
+    renderAdminTerritories();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function adminSetCapital(territoryId) {
+  const faction = document.getElementById(`admin-capital-faction-${territoryId}`)?.value;
+  if (!faction) return;
+  if (!confirm(`Make ${territoryId} the ${faction} capital?\n\nThe faction's previous capital will lose its protected status.`)) return;
+  try {
+    const res = await apiFetch('/admin/capital', {
+      method: 'POST',
+      body: JSON.stringify({ territoryId, faction }),
+    });
+    showToast(`✅ ${res.message}`);
+    await loadGame();
     renderAdminTerritories();
   } catch (error) {
     showToast(`❌ ${error.message}`);

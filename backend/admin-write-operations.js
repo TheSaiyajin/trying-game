@@ -163,6 +163,33 @@ async function assignFactionLeader(client, { actorId, playerId, faction, validFa
   return { ok: true, faction: normalizedFaction, playerId };
 }
 
+async function updateCapital(client, { actorId, territoryId, faction, validFactions }) {
+  const normalizedFaction = String(faction || '').trim().toLowerCase();
+  if (!validFactions.includes(normalizedFaction)) {
+    return { ok: false, status: 400, error: 'Invalid faction.' };
+  }
+
+  const existing = await client.query('SELECT id FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
+  if (!existing.rowCount) {
+    return { ok: false, status: 404, error: 'Territory not found.' };
+  }
+
+  const previousCapital = await client.query(
+    'SELECT id FROM territories WHERE is_capital = TRUE AND owner_faction = $1 FOR UPDATE',
+    [normalizedFaction]
+  );
+  if (previousCapital.rowCount && previousCapital.rows[0].id !== territoryId) {
+    await client.query('UPDATE territories SET is_capital = FALSE WHERE id = $1', [previousCapital.rows[0].id]);
+  }
+
+  await client.query(
+    'UPDATE territories SET owner_faction = $1, is_capital = TRUE WHERE id = $2',
+    [normalizedFaction, territoryId]
+  );
+  await logAdminAction(client, actorId, 'change_capital', { territoryId, faction: normalizedFaction });
+  return { ok: true, territoryId, faction: normalizedFaction };
+}
+
 module.exports = {
   POSTGRES_INT_MAX,
   parseNonNegativeInteger,
@@ -172,4 +199,5 @@ module.exports = {
   updatePlayerRole,
   updateTerritory,
   assignFactionLeader,
+  updateCapital,
 };

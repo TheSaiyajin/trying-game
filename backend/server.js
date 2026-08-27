@@ -30,6 +30,7 @@ const {
   updatePlayerSoldiers,
   updateTerritory,
   assignFactionLeader,
+  updateCapital,
 } = require('./admin-write-operations');
 const {
   applyDefenderCasualties,
@@ -954,6 +955,26 @@ app.post('/api/admin/change-leader', requireAuth, requireAdmin, asyncHandler(asy
   }
   if (!result.ok) return res.status(result.status).json({ error: result.error });
   res.json({ message: 'Leader updated.' });
+}));
+
+app.post('/api/admin/capital', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const territoryId = String(req.body.territoryId || '').trim();
+  if (!territoryId) return res.status(400).json({ error: 'Territory ID required.' });
+
+  const client = await getClient();
+  let result;
+  try {
+    result = await runAdminTransaction(client, async () => updateCapital(client, {
+      actorId: req.user.userId,
+      territoryId,
+      faction: req.body.faction,
+      validFactions,
+    }));
+  } finally {
+    client.release();
+  }
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  res.json({ message: 'Capital updated.' });
 }));
 
 app.get('/api/admin/season-reset-plan', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
