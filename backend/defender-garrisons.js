@@ -66,7 +66,20 @@ function allocateDefenderCasualties(defenders, casualties) {
 
 async function replaceTerritoryDefenders(client, territoryId, defenders) {
   await client.query('DELETE FROM territory_defenders WHERE territory_id = $1', [territoryId]);
+  const mergedDefenders = new Map();
   for (const defender of defenders) {
+    const playerId = Number(defender.player_id);
+    if (!Number.isFinite(playerId)) continue;
+    const existing = mergedDefenders.get(playerId);
+    mergedDefenders.set(playerId, {
+      territory_id: territoryId,
+      player_id: playerId,
+      faction: defender.faction,
+      troops: Math.max(0, Math.floor(Number(existing?.troops || 0) + Number(defender.troops || 0))),
+    });
+  }
+  for (const defender of mergedDefenders.values()) {
+    if (defender.troops <= 0) continue;
     await client.query(
       `INSERT INTO territory_defenders (territory_id, player_id, faction, troops)
        VALUES ($1, $2, $3, $4)
