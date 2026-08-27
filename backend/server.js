@@ -991,7 +991,7 @@ app.post('/api/admin/change-leader', requireAuth, requireAdmin, asyncHandler(asy
 // Express's default HTML error page, which previously made every unexpected failure
 // look like an opaque "Request failed: 500" with no detail in the browser.
 app.use((err, req, res, next) => {
-  console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, err);
+  console.error('Unhandled error on', req.method, req.originalUrl, err);
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'Internal server error.' });
 });
