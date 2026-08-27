@@ -101,6 +101,18 @@ async function applySchemaMigrations(currentClient) {
       }
     }
   }
+  await currentClient.query(`
+    WITH stationed AS (
+      SELECT territory_id, COALESCE(SUM(GREATEST(troops, 0)), 0) AS stationed_troops
+      FROM territory_defenders
+      GROUP BY territory_id
+    )
+    UPDATE territories t
+    SET defense_troops = GREATEST(t.defense_troops, COALESCE(stationed.stationed_troops, 0))
+    FROM stationed
+    WHERE t.id = stationed.territory_id
+      AND t.defense_troops < COALESCE(stationed.stationed_troops, 0)
+  `);
   await currentClient.query(`UPDATE players SET role = 'admin' WHERE username = $1`, [ADMIN_USERNAME]);
   await currentClient.query(`UPDATE players SET role = 'member' WHERE username <> $1 AND role = 'admin'`, [ADMIN_USERNAME]);
 }

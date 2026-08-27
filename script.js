@@ -114,6 +114,10 @@ async function ensureSession() {
 
 let selectedAuthFaction = 'blue';
 
+function buildAuthPayload({ username, password, isRegister }) {
+  return isRegister ? { username, password, faction: selectedAuthFaction } : { username, password };
+}
+
 function setAuthMode(mode) {
   document.querySelectorAll('.auth-mode-btn').forEach((button) => {
     button.classList.toggle('active', button.dataset.mode === mode);
@@ -136,6 +140,12 @@ function setFactionChoice(faction) {
   selectedAuthFaction = faction;
   document.querySelectorAll('.faction-choice-btn').forEach((button) => {
     button.classList.toggle('active', button.dataset.faction === faction);
+  });
+}
+
+function wireFactionChoiceButtons(root = document) {
+  root.querySelectorAll('.faction-choice-btn').forEach((button) => {
+    button.addEventListener('click', () => setFactionChoice(button.dataset.faction));
   });
 }
 
@@ -202,7 +212,7 @@ async function submitAuth(event) {
     const path = isRegister ? '/register' : '/login';
     const payload = await apiFetch(path, {
       method: 'POST',
-      body: JSON.stringify(isRegister ? { username, password, faction: selectedAuthFaction } : { username, password }),
+      body: JSON.stringify(buildAuthPayload({ username, password, isRegister })),
     });
 
     setToken(payload.token);
@@ -1053,10 +1063,11 @@ async function adminSetRole(playerId) {
 async function adminSetFaction(playerId) {
   const faction = document.getElementById(`admin-faction-${playerId}`)?.value;
   if (!faction) return;
+  if (!confirm(`Change player #${playerId} to the ${faction} faction?\n\nThis will keep the account, resources, buildings, and soldiers, lock the new faction, and recall any stationed defenders that no longer belong on that faction's territories.`)) return;
   try {
     const res = await apiFetch(`/admin/player/${playerId}/faction`, { method: 'POST', body: JSON.stringify({ faction }) });
     showToast(`✅ ${res.message}`);
-    renderAdminPlayers();
+    await loadGame();
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }
@@ -1186,6 +1197,7 @@ if (typeof document !== 'undefined') {
     authModeButtons.forEach((button) => {
       button.addEventListener('click', () => setAuthMode(button.dataset.mode));
     });
+    wireFactionChoiceButtons();
 
     if (authForm) {
       authForm.addEventListener('submit', submitAuth);
@@ -1242,10 +1254,13 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined') {
   module.exports = {
+    buildAuthPayload,
     mapTerritories,
     canAttack,
     ownerLabel,
     formatBonusLabel,
     isAdminUser,
+    setFactionChoice,
+    wireFactionChoiceButtons,
   };
 }

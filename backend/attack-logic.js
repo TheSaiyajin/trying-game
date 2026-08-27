@@ -1,5 +1,10 @@
 const { calculateBattleOutcome } = require('./game-logic');
-const { applyDefenderCasualties, replaceTerritoryDefenders } = require('./defender-garrisons');
+const {
+  applyDefenderCasualties,
+  getLockedTerritoryDefenders,
+  getTerritoryDefenseState,
+  replaceTerritoryDefenders,
+} = require('./defender-garrisons');
 
 // Thrown for any expected/validated failure so the route can map it to the right
 // HTTP status (400/403/404/409) instead of falling through to a generic 500.
@@ -90,15 +95,21 @@ async function performAttack(client, { playerId, territoryId, soldiers }) {
       [soldierCount, playerId]
     );
 
-    const defensePower = Math.max(0, Math.floor(Number(lockedTarget.defense_troops) || 0));
+    const lockedDefenders = await getLockedTerritoryDefenders(client, cleanTerritoryId);
+    const defenseState = getTerritoryDefenseState(lockedTarget.defense_troops, lockedDefenders);
+    const defensePower = defenseState.totalDefenseTroops;
     const outcome = calculateBattleOutcome({ attackers: soldierCount }, { defenders: defensePower });
     const ownerBefore = lockedTarget.owner_faction || 'neutral';
     const attackerFaction = player.faction;
     const defenderFaction = ownerBefore;
-    const allocation = await applyDefenderCasualties(client, cleanTerritoryId, outcome.defendersLost);
-    const remainingDefenders = outcome.victory
-      ? 0
-      : (allocation.survivors.length ? allocation.defendersRemaining : Math.max(0, defensePower - outcome.defendersLost));
+    const allocation = await applyDefenderCasualties(
+      client,
+      cleanTerritoryId,
+      defensePower,
+      outcome.defendersLost,
+      lockedDefenders
+    );
+    const remainingDefenders = outcome.victory ? 0 : allocation.defendersRemaining;
 
     if (outcome.victory) {
       await client.query(

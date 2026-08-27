@@ -215,6 +215,79 @@ test('failed attacks reduce stationed defender rows so dead troops cannot be rec
   assert.deepEqual(client.defenders.get('n3:4'), { faction: 'red', troops: 3 });
 });
 
+test('failed attacks against base defenders only reduce total defense without creating stationed rows', async () => {
+  const { players, territories, neighbors } = buildWorld();
+  territories.set('n3', cloneTerritory({ id: 'n3', owner_faction: 'red', defense_troops: 35, is_fortress: false }));
+  const client = createFakeClient({ players, territories, neighbors });
+
+  const result = await performAttack(client, { playerId: 1, territoryId: 'n3', soldiers: 5 });
+
+  assert.equal(result.outcome.victory, false);
+  assert.equal(territories.get('n3').defense_troops, 30);
+  assert.equal(client.defenders.size, 0);
+});
+
+test('failed attacks preserve base defenders while reducing a single stationed garrison', async () => {
+  const { players, territories, neighbors } = buildWorld();
+  territories.set('n3', cloneTerritory({ id: 'n3', owner_faction: 'red', defense_troops: 45, is_fortress: false }));
+  const client = createFakeClient({
+    players,
+    territories,
+    neighbors,
+    initialDefenders: [
+      { territory_id: 'n3', player_id: 2, faction: 'red', troops: 10 },
+    ],
+  });
+
+  const result = await performAttack(client, { playerId: 1, territoryId: 'n3', soldiers: 5 });
+
+  assert.equal(result.outcome.victory, false);
+  assert.equal(territories.get('n3').defense_troops, 40);
+  assert.deepEqual(client.defenders.get('n3:2'), { faction: 'red', troops: 5 });
+});
+
+test('failed attacks preserve base defenders when multiple stationed garrisons take casualties', async () => {
+  const { players, territories, neighbors } = buildWorld();
+  territories.set('n3', cloneTerritory({ id: 'n3', owner_faction: 'red', defense_troops: 45, is_fortress: false }));
+  const client = createFakeClient({
+    players,
+    territories,
+    neighbors,
+    initialDefenders: [
+      { territory_id: 'n3', player_id: 2, faction: 'red', troops: 6 },
+      { territory_id: 'n3', player_id: 4, faction: 'red', troops: 4 },
+    ],
+  });
+
+  const result = await performAttack(client, { playerId: 1, territoryId: 'n3', soldiers: 12 });
+
+  assert.equal(result.outcome.victory, false);
+  assert.equal(territories.get('n3').defense_troops, 33);
+  assert.equal(client.defenders.has('n3:2'), false);
+  assert.equal(client.defenders.has('n3:4'), false);
+});
+
+test('capturing a territory with only player-garrison defenders replaces them with the attacking survivors', async () => {
+  const { players, territories, neighbors } = buildWorld();
+  territories.set('n3', cloneTerritory({ id: 'n3', owner_faction: 'red', defense_troops: 5, is_fortress: false }));
+  const client = createFakeClient({
+    players,
+    territories,
+    neighbors,
+    initialDefenders: [
+      { territory_id: 'n3', player_id: 2, faction: 'red', troops: 5 },
+    ],
+  });
+
+  const result = await performAttack(client, { playerId: 1, territoryId: 'n3', soldiers: 20 });
+
+  assert.equal(result.outcome.victory, true);
+  assert.equal(territories.get('n3').owner_faction, 'blue');
+  assert.equal(territories.get('n3').defense_troops, 15);
+  assert.deepEqual(client.defenders.get('n3:1'), { faction: 'blue', troops: 15 });
+  assert.equal(client.defenders.has('n3:2'), false);
+});
+
 test('rejects invalid troop counts with 400', async () => {
   const { players, territories, neighbors } = buildWorld();
   const client = createFakeClient({ players, territories, neighbors });

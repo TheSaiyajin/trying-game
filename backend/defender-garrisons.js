@@ -2,15 +2,29 @@ function sumStationedDefenders(defenders) {
   return defenders.reduce((total, defender) => total + Math.max(0, Math.floor(Number(defender.troops) || 0)), 0);
 }
 
+function sanitizeTroopCount(value) {
+  return Math.max(0, Math.floor(Number(value) || 0));
+}
+
+function getTerritoryDefenseState(totalDefenseTroops, defenders) {
+  const stationedTroops = sumStationedDefenders(defenders);
+  const totalTroops = Math.max(sanitizeTroopCount(totalDefenseTroops), stationedTroops);
+  return {
+    totalDefenseTroops: totalTroops,
+    stationedTroops,
+    baseDefenseTroops: totalTroops - stationedTroops,
+  };
+}
+
 function allocateDefenderCasualties(defenders, casualties) {
   const sanitizedDefenders = defenders.map((defender) => ({
     territory_id: defender.territory_id,
     player_id: defender.player_id,
     faction: defender.faction,
-    troops: Math.max(0, Math.floor(Number(defender.troops) || 0)),
+    troops: sanitizeTroopCount(defender.troops),
   })).filter((defender) => defender.troops > 0);
   const totalDefenders = sumStationedDefenders(sanitizedDefenders);
-  const totalCasualties = Math.min(Math.max(0, Math.floor(Number(casualties) || 0)), totalDefenders);
+  const totalCasualties = Math.min(sanitizeTroopCount(casualties), totalDefenders);
 
   if (!sanitizedDefenders.length || totalCasualties <= 0) {
     return {
@@ -64,6 +78,36 @@ function allocateDefenderCasualties(defenders, casualties) {
   };
 }
 
+async function getLockedTerritoryDefenders(client, territoryId) {
+  const stationedResult = await client.query(
+    `SELECT territory_id, player_id, faction, troops
+     FROM territory_defenders
+     WHERE territory_id = $1
+     ORDER BY player_id
+     FOR UPDATE`,
+    [territoryId]
+  );
+  return stationedResult.rows;
+}
+
+function resolveDefenderCasualties(totalDefenseTroops, defenders, casualties) {
+  const defenseState = getTerritoryDefenseState(totalDefenseTroops, defenders);
+  const totalCasualties = Math.min(sanitizeTroopCount(casualties), defenseState.totalDefenseTroops);
+  const stationedCasualties = Math.min(totalCasualties, defenseState.stationedTroops);
+  const allocation = allocateDefenderCasualties(defenders, stationedCasualties);
+  const baseCasualties = totalCasualties - stationedCasualties;
+
+  return {
+    survivors: allocation.survivors,
+    defendersLost: totalCasualties,
+    defendersRemaining: Math.max(0, defenseState.totalDefenseTroops - totalCasualties),
+    stationedDefendersRemaining: allocation.defendersRemaining,
+    baseDefendersRemaining: Math.max(0, defenseState.baseDefenseTroops - baseCasualties),
+    stationedCasualties,
+    baseCasualties,
+  };
+}
+
 async function replaceTerritoryDefenders(client, territoryId, defenders) {
   await client.query('DELETE FROM territory_defenders WHERE territory_id = $1', [territoryId]);
   const mergedDefenders = new Map();
@@ -90,23 +134,19 @@ async function replaceTerritoryDefenders(client, territoryId, defenders) {
   }
 }
 
-async function applyDefenderCasualties(client, territoryId, defendersLost) {
-  const stationedResult = await client.query(
-    `SELECT territory_id, player_id, faction, troops
-     FROM territory_defenders
-     WHERE territory_id = $1
-     ORDER BY player_id
-     FOR UPDATE`,
-    [territoryId]
-  );
-  const allocation = allocateDefenderCasualties(stationedResult.rows, defendersLost);
-  await replaceTerritoryDefenders(client, territoryId, allocation.survivors);
-  return allocation;
+async function applyDefenderCasualties(client, territoryId, totalDefenseTroops, defendersLost, lockedDefenders = null) {
+  const defenders = lockedDefenders || await getLockedTerritoryDefenders(client, territoryId);
+  const resolution = resolveDefenderCasualties(totalDefenseTroops, defenders, defendersLost);
+  await replaceTerritoryDefenders(client, territoryId, resolution.survivors);
+  return resolution;
 }
 
 module.exports = {
   sumStationedDefenders,
+  getTerritoryDefenseState,
   allocateDefenderCasualties,
+  getLockedTerritoryDefenders,
+  resolveDefenderCasualties,
   replaceTerritoryDefenders,
   applyDefenderCasualties,
 };
