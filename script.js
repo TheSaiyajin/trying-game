@@ -302,16 +302,28 @@ function renderCity() {
   const container = document.getElementById('building-list');
   container.innerHTML = '';
 
+  // Mirrors backend/game-logic.js BUILDING_DEFS cost + getUpgradeCost formula, display-only.
   const defs = {
-    farm: { name: 'Farm', icon: '🌾', resource: 'food', production: 5 },
-    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', production: 4 },
-    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', production: 3 },
-    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', production: 2 },
+    farm: { name: 'Farm', icon: '🌾', resource: 'food', production: 5, cost: { food: 50, wood: 80, iron: 0 } },
+    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', production: 4, cost: { food: 40, wood: 0, iron: 60 } },
+    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', production: 3, cost: { food: 30, wood: 100, iron: 0 } },
+    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', production: 2, cost: { food: 80, wood: 60, iron: 80 } },
   };
 
   Object.entries(defs).forEach(([key, def]) => {
     const level = Number(buildings[key] || 1);
     const prod = def.production * level;
+    const nextLevel = level + 1;
+    const cost = {
+      food: def.cost.food * nextLevel,
+      wood: def.cost.wood * nextLevel,
+      iron: def.cost.iron * nextLevel,
+    };
+    const costParts = [];
+    if (cost.food > 0) costParts.push(`${fmt(cost.food)}🌾`);
+    if (cost.wood > 0) costParts.push(`${fmt(cost.wood)}🪵`);
+    if (cost.iron > 0) costParts.push(`${fmt(cost.iron)}⚙️`);
+
     const card = document.createElement('div');
     card.className = 'building-card';
     card.innerHTML = `
@@ -319,8 +331,9 @@ function renderCity() {
         <div class="building-name">${def.icon} ${def.name}</div>
         <div class="building-level">Level ${level}</div>
         <div class="building-prod">+${prod} ${def.resource}/min</div>
+        <div class="building-cost">Next: ${costParts.join(' + ')}</div>
       </div>
-      <button class="btn-upgrade" onclick="upgradeBuilding('${key}')">⬆ Lvl ${level + 1}</button>
+      <button class="btn-upgrade" onclick="upgradeBuilding('${key}')">⬆ Lvl ${nextLevel}</button>
     `;
     container.appendChild(card);
   });
