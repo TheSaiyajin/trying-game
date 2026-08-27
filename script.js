@@ -1131,7 +1131,7 @@ async function renderAdminTerritories() {
 }
 
 async function adminResetWorld() {
-  if (!confirm('Are you sure you want to reset the entire world?\n\nPlayer accounts will be kept but all territories, resources, and buildings will be reset.')) return;
+  if (!confirm('Reset the entire game world? Player accounts will NOT be deleted.')) return;
   try {
     const res = await apiFetch('/admin/reset-world', { method: 'POST' });
     showToast(`✅ ${res.message}`);
@@ -1142,10 +1142,11 @@ async function adminResetWorld() {
 }
 
 async function adminResetAllResources() {
-  if (!confirm('Reset all player resources and buildings to defaults?')) return;
+  if (!confirm('Reset resources and soldiers for all players? Territory ownership and the world map will stay unchanged.')) return;
   try {
     const res = await apiFetch('/admin/reset-all-resources', { method: 'POST' });
     showToast(`✅ ${res.message}`);
+    await loadGame();
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }
@@ -1161,11 +1162,11 @@ async function adminForceTick() {
 }
 
 async function adminResetPlayer(playerId) {
-  if (!confirm(`Reset player #${playerId}'s resources and buildings?`)) return;
+  if (!confirm(`Reset player #${playerId} to starting resources, soldiers, and buildings?`)) return;
   try {
     const res = await apiFetch('/admin/reset-player', { method: 'POST', body: JSON.stringify({ playerId }) });
     showToast(`✅ ${res.message}`);
-    renderAdminPlayers();
+    await loadGame();
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }

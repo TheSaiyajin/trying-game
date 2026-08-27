@@ -191,9 +191,12 @@
 
       <div class="section-card">
         <h3>World Controls</h3>
-        <button class="btn-danger wide" onclick="adminResetWorld()">🔄 Reset World</button>
-        <button class="btn-secondary wide" style="margin-top:8px" onclick="adminResetAllResources()">💰 Reset All Resources</button>
-        <button class="btn-secondary wide" style="margin-top:8px" onclick="adminForceTick()">⏱️ Force Resource Tick</button>
+        <p class="info-text">Sai-only reset tools. Account records stay intact unless explicitly changed.</p>
+        <div class="admin-world-controls">
+          <button class="btn-danger wide" onclick="adminResetWorld()">🔄 Reset World</button>
+          <button class="btn-secondary wide" onclick="adminResetAllResources()">💰 Reset All Resources</button>
+          <button class="btn-secondary wide" onclick="adminForceTick()">⏱️ Force Resource Tick</button>
+        </div>
       </div>
 
       <div class="section-card">

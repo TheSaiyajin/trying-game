@@ -749,7 +749,13 @@ html, body {
   margin-top: 6px;
   align-items: center;
 }
-.admin-player-actions select, .admin-territory-actions select {
+.admin-world-controls {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.admin-player-actions select, .admin-territory-actions select,
+.admin-player-actions input[type=number], .admin-territory-actions input[type=number] {
   background: var(--bg-card);
   border: 1px solid var(--border);
   color: var(--text-main);
@@ -757,13 +763,10 @@ html, body {
   padding: 4px 6px;
   font-size: 12px;
 }
-.admin-territory-actions input[type=number] {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  color: var(--text-main);
-  border-radius: 6px;
-  padding: 4px 6px;
-  font-size: 12px;
+.admin-player-actions > *,
+.admin-territory-actions > * {
+  flex: 1 1 110px;
+  min-width: 0;
 }
 .btn-danger {
   background: #7a1a1a;
@@ -789,6 +792,27 @@ html, body {
 .btn-secondary:hover { background: var(--bg-card); }
 .btn-secondary.wide { width: 100%; }
 .btn-danger.wide { width: 100%; }
+
+@media (max-width: 640px) {
+  .admin-player-row, .admin-territory-row {
+    padding: 12px;
+  }
+
+  .admin-badge, .admin-badge-bonus {
+    display: inline-flex;
+    margin: 6px 6px 0 0;
+  }
+
+  .admin-player-actions, .admin-territory-actions {
+    align-items: stretch;
+  }
+
+  .admin-player-actions > *,
+  .admin-territory-actions > * {
+    flex-basis: 100%;
+    width: 100%;
+  }
+}
 
 /* ---------- Building bonus line ---------- */
 .building-bonus {

@@ -1,4 +1,5 @@
 const { isSaiUsername } = require('./admin-policy');
+const { logAdminAction } = require('./admin-write-operations');
 const {
   getLockedTerritoryDefenders,
   getTerritoryDefenseState,
@@ -18,10 +19,15 @@ function getFactionChangeRole(player) {
 
 async function clearInvalidFactionDefenders(client, playerId, faction) {
   const territoryResult = await client.query(
-    `SELECT DISTINCT t.id, t.owner_faction, t.defense_troops
-     FROM territory_defenders td
-     INNER JOIN territories t ON t.id = td.territory_id
-     WHERE td.player_id = $1 AND t.owner_faction <> $2
+    `SELECT t.id, t.owner_faction, t.defense_troops
+     FROM territories t
+     WHERE t.owner_faction <> $2
+       AND EXISTS (
+         SELECT 1
+         FROM territory_defenders td
+         WHERE td.territory_id = t.id
+           AND td.player_id = $1
+       )
      ORDER BY t.id
      FOR UPDATE OF t`,
     [playerId, faction]
@@ -93,22 +99,15 @@ async function changePlayerFaction(client, { actorId, playerId, faction }) {
        AND t.owner_faction = $1`,
     [faction, playerId]
   );
-  await client.query(
-    'INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)',
-    [
-      actorId,
-      'change_faction',
-      JSON.stringify({
-        playerId,
-        username: player.username,
-        oldFaction: player.faction,
-        newFaction: faction,
-        recalledTroops: cleanup.recalledTroops,
-        clearedTerritories: cleanup.clearedTerritories,
-        roleAfterChange: nextRole,
-      }),
-    ]
-  );
+  await logAdminAction(client, actorId, 'change_faction', {
+    playerId,
+    username: player.username,
+    oldFaction: player.faction,
+    newFaction: faction,
+    recalledTroops: cleanup.recalledTroops,
+    clearedTerritories: cleanup.clearedTerritories,
+    roleAfterChange: nextRole,
+  });
 
   return {
     ok: true,
