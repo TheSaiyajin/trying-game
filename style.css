@@ -628,3 +628,118 @@ html, body {
     min-width: 680px;
   }
 }
+
+/* ---------- Activity Feed ---------- */
+.activity-feed {
+  padding: 0 4px;
+}
+.activity-entry {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.activity-headline {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 4px;
+}
+.activity-result {
+  font-size: 13px;
+  color: var(--accent-gold);
+  margin-bottom: 4px;
+}
+.activity-losses {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+.activity-time {
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+/* ---------- Admin Panel ---------- */
+.admin-player-row, .admin-territory-row {
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.admin-badge {
+  font-size: 11px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin-left: 6px;
+  color: var(--text-dim);
+}
+.admin-badge-bonus {
+  font-size: 11px;
+  color: var(--accent-gold);
+  margin-left: 6px;
+}
+.admin-player-stats {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 4px 0;
+}
+.admin-player-actions, .admin-territory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}
+.admin-player-actions select, .admin-territory-actions select {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.admin-territory-actions input[type=number] {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.btn-danger {
+  background: #7a1a1a;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn-danger:hover { background: #a02020; }
+.btn-secondary {
+  background: var(--bg-card2);
+  color: var(--text-main);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-secondary:hover { background: var(--bg-card); }
+.btn-secondary.wide { width: 100%; }
+.btn-danger.wide { width: 100%; }
+
+/* ---------- Building bonus line ---------- */
+.building-bonus {
+  font-size: 11px;
+  color: var(--accent-gold);
+}
