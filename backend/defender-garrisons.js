@@ -141,6 +141,39 @@ async function applyDefenderCasualties(client, territoryId, totalDefenseTroops, 
   return resolution;
 }
 
+// After any admin action changes a territory's owner_faction, defenders stationed under the
+// old faction are no longer valid there (a player can't garrison a territory their faction
+// doesn't own). This removes those stale rows and refunds the troops back to each affected
+// player's reserve soldiers, then keeps defense_troops consistent with what remains stationed.
+async function reconcileTerritoryDefendersForNewOwner(client, territoryId, newOwnerFaction, totalDefenseTroops) {
+  const defenders = await getLockedTerritoryDefenders(client, territoryId);
+  const staleDefenders = defenders.filter((defender) => defender.faction !== newOwnerFaction);
+  if (!staleDefenders.length) {
+    return { refundedTroops: 0, refunds: [] };
+  }
+
+  const validDefenders = defenders.filter((defender) => defender.faction === newOwnerFaction);
+  const defenseState = getTerritoryDefenseState(totalDefenseTroops, defenders);
+  const remainingStationed = sumStationedDefenders(validDefenders);
+
+  for (const defender of staleDefenders) {
+    await client.query('UPDATE players SET soldiers = soldiers + $1 WHERE id = $2', [defender.troops, defender.player_id]);
+  }
+  await client.query(
+    'DELETE FROM territory_defenders WHERE territory_id = $1 AND faction <> $2',
+    [territoryId, newOwnerFaction]
+  );
+  await client.query(
+    'UPDATE territories SET defense_troops = $1 WHERE id = $2',
+    [defenseState.baseDefenseTroops + remainingStationed, territoryId]
+  );
+
+  return {
+    refundedTroops: staleDefenders.reduce((sum, defender) => sum + Number(defender.troops), 0),
+    refunds: staleDefenders.map((defender) => ({ playerId: defender.player_id, troops: Number(defender.troops) })),
+  };
+}
+
 module.exports = {
   sumStationedDefenders,
   getTerritoryDefenseState,
@@ -149,4 +182,5 @@ module.exports = {
   resolveDefenderCasualties,
   replaceTerritoryDefenders,
   applyDefenderCasualties,
+  reconcileTerritoryDefendersForNewOwner,
 };

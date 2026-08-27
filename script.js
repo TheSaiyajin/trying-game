@@ -30,6 +30,12 @@ let defendSendCount = 10;
 let trainAmount = 1;
 let factionChatPollHandle = null;
 
+// Canonical topology module (world-topology.js): required directly under Node (tests),
+// exposed as window.WORLD_TOPOLOGY when loaded via <script> in the browser.
+const WORLD_TOPOLOGY = (typeof module !== 'undefined' && typeof require === 'function')
+  ? require('./world-topology')
+  : (typeof window !== 'undefined' ? window.WORLD_TOPOLOGY : undefined);
+
 function showToast(msg) {
   const old = document.querySelector('.toast');
   if (old) old.remove();
@@ -490,54 +496,13 @@ function sortTerritoryIds(ids) {
 }
 
 function buildTerritoryLayout(territoriesById) {
-  const layout = {};
-
-  // The world map is a 3-fold symmetric ring: capital -> home -> frontier -> border -> core.
-  // Bearings are compass-style (0 = north, clockwise), 120 degrees apart per faction so the
-  // layout always matches the neighbor graph in world-seed.sql regardless of live territory data.
-  // Radii step down by ~75-90px per ring and each ring's angular spread is wide enough that
-  // adjacent hexes (which render at ~60px across) never touch, on both desktop and mobile.
-  const center = { cx: 400, cy: 380 };
-  const factionBearing = { blue: 300, red: 60, green: 180 };
-  const borderBearing = { blue_red: 0, red_green: 120, green_blue: 240 };
-
-  const toXY = (bearingDeg, radius) => {
-    const angle = (bearingDeg * Math.PI) / 180;
-    return {
-      cx: Math.round(center.cx + (radius * Math.sin(angle))),
-      cy: Math.round(center.cy - (radius * Math.cos(angle))),
-    };
-  };
-
-  const placeRing = (ids, bearing, radius, offsets) => {
-    ids.forEach((id, index) => {
-      if (!(id in territoriesById)) return;
-      layout[id] = toXY(bearing + offsets[index], radius);
-    });
-  };
-
-  ['blue', 'red', 'green'].forEach((faction) => {
-    const capitalId = { blue: 'b1', red: 'r1', green: 'g1' }[faction];
-    if (capitalId in territoriesById) {
-      layout[capitalId] = toXY(factionBearing[faction], 340);
-    }
+  // Delegates to the canonical topology module (world-topology.js) so the rendered map
+  // always matches the graph actually stored in PostgreSQL — never a hand-tuned layout
+  // that can drift from world-seed.sql/the migration.
+  const layout = { ...WORLD_TOPOLOGY.buildLayout() };
+  Object.keys(layout).forEach((id) => {
+    if (!(id in territoriesById)) delete layout[id];
   });
-
-  placeRing(['n1', 'n2', 'n3'], factionBearing.blue, 250, [-20, 0, 20]);
-  placeRing(['n4', 'n5', 'n6'], factionBearing.red, 250, [-20, 0, 20]);
-  placeRing(['n7', 'n8', 'n9'], factionBearing.green, 250, [-20, 0, 20]);
-
-  placeRing(['n10', 'n11', 'n12'], factionBearing.blue, 165, [-28, 0, 28]);
-  placeRing(['n13', 'n14', 'n15'], factionBearing.red, 165, [-28, 0, 28]);
-  placeRing(['n16', 'n17', 'n18'], factionBearing.green, 165, [-28, 0, 28]);
-
-  placeRing(['n19', 'n20', 'n21'], borderBearing.blue_red, 95, [-46, 0, 46]);
-  placeRing(['n22', 'n23', 'n24'], borderBearing.red_green, 95, [-46, 0, 46]);
-  placeRing(['n25', 'n26', 'n27'], borderBearing.green_blue, 95, [-46, 0, 46]);
-
-  if ('n28' in territoriesById) layout.n28 = toXY(borderBearing.blue_red, 45);
-  if ('n29' in territoriesById) layout.n29 = toXY(borderBearing.red_green, 45);
-  if ('n30' in territoriesById) layout.n30 = toXY(borderBearing.green_blue, 45);
 
   // Any territory outside the known map shape (e.g. custom/test data) still gets a
   // reasonable spot instead of being dropped from the render.
@@ -550,8 +515,7 @@ function buildTerritoryLayout(territoriesById) {
     layout[id] = { cx: 60 + (col * 100), cy: 700 + (row * 92) };
   });
 
-  const width = 800;
-  const height = 800;
+  const { width, height } = WORLD_TOPOLOGY.LAYOUT_VIEWBOX;
   return { layout, viewBox: `0 0 ${width} ${height}` };
 }
 
@@ -1155,14 +1119,10 @@ async function renderAdminTerritories() {
           <input id="admin-def-${t.id}" type="number" min="0" value="${t.defense_troops}" style="width:60px" />
           <button class="btn-small" onclick="adminEditTerritory('${t.id}')">Update</button>
         </div>
+        ${!t.is_capital && t.owner_faction !== 'neutral' ? `
         <div class="admin-territory-actions">
-          <select id="admin-capital-faction-${t.id}">
-            <option value="blue" ${t.owner_faction === 'blue' ? 'selected' : ''}>blue</option>
-            <option value="red" ${t.owner_faction === 'red' ? 'selected' : ''}>red</option>
-            <option value="green" ${t.owner_faction === 'green' ? 'selected' : ''}>green</option>
-          </select>
-          <button class="btn-small btn-secondary" onclick="adminSetCapital('${t.id}')">Make Capital</button>
-        </div>
+          <button class="btn-small btn-secondary" onclick="adminSetCapital('${t.id}', '${t.owner_faction}')">Make ${t.owner_faction} capital</button>
+        </div>` : ''}
       </div>
     `).join('');
   } catch (error) {
@@ -1297,10 +1257,9 @@ async function adminEditTerritory(territoryId) {
   }
 }
 
-async function adminSetCapital(territoryId) {
-  const faction = document.getElementById(`admin-capital-faction-${territoryId}`)?.value;
+async function adminSetCapital(territoryId, faction) {
   if (!faction) return;
-  if (!confirm(`Make ${territoryId} the ${faction} capital?\n\nThe faction's previous capital will lose its protected status.`)) return;
+  if (!confirm(`Make ${territoryId} the ${faction} capital?\n\nThis only works on a territory ${faction} already owns. The faction's previous capital will lose its protected status; ownership, defenses, and troops are otherwise unchanged.`)) return;
   try {
     const res = await apiFetch('/admin/capital', {
       method: 'POST',
@@ -1454,5 +1413,6 @@ if (typeof module !== 'undefined') {
     sendFactionChatMessage,
     startFactionChatPolling,
     wireFactionChoiceButtons,
+    buildTerritoryLayout,
   };
 }

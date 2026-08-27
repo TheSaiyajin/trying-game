@@ -2,6 +2,8 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 const { ADMIN_USERNAME } = require('./admin-policy');
+const topology = require('../world-topology');
+const topologySql = require('./topology-sql');
 require('dotenv').config();
 
 // A connection pool (not a single shared Client) is required here: routes that run
@@ -98,6 +100,11 @@ async function applySchemaMigrations(currentClient) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time ON faction_chat_messages (faction, created_at DESC, id DESC)`,
+    `CREATE TABLE IF NOT EXISTS topology_version (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      version INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
   ];
 
 
@@ -122,7 +129,10 @@ async function applySchemaMigrations(currentClient) {
     WHERE t.id = stationed.territory_id
       AND t.defense_troops < COALESCE(stationed.stationed_troops, 0)
   `);
-  await currentClient.query(`UPDATE players SET role = 'admin' WHERE username = $1`, [ADMIN_USERNAME]);
+  // NOTE: role is intentionally NOT auto-granted to username === ADMIN_USERNAME here.
+  // Admin is only ever granted via the bootstrap CLI (node backend/db.js --bootstrap-admin
+  // <token>, guarded by ADMIN_BOOTSTRAP_TOKEN). This is a defense-in-depth safety net that
+  // only ever removes an unexpected admin role from a non-Sai account; it never grants one.
   await currentClient.query(`UPDATE players SET role = 'member' WHERE username <> $1 AND role = 'admin'`, [ADMIN_USERNAME]);
 }
 
@@ -140,32 +150,73 @@ async function initializeDatabase() {
     setupClient.release();
   }
   console.log('Database initialized');
+  await applyTopologyMigrationIfNeeded();
+}
+
+// Idempotent, transactional migration that brings an EXISTING database's territory graph
+// up to the canonical topology (world-topology.js) without touching anything else. Safe to
+// run on every startup: once topology_version.version reaches TOPOLOGY_VERSION, this is a
+// no-op (a single indexed SELECT), so restarting the server repeatedly never re-runs it or
+// duplicates edges.
+async function applyTopologyMigrationIfNeeded(externalClient = null) {
+  const client = externalClient || await pool.connect();
+  const shouldRelease = !externalClient;
+  try {
+    await client.query('BEGIN');
+    const versionResult = await client.query('SELECT version FROM topology_version WHERE id = 1 FOR UPDATE');
+    const currentVersion = versionResult.rowCount ? Number(versionResult.rows[0].version) : 0;
+
+    if (currentVersion >= topology.TOPOLOGY_VERSION) {
+      await client.query('COMMIT');
+      return { migrated: false, currentVersion };
+    }
+
+    const territoryCount = await client.query('SELECT COUNT(*) AS cnt FROM territories');
+    if (Number(territoryCount.rows[0]?.cnt || 0) === 0) {
+      // Nothing to migrate yet (seedWorldIfEmpty will set the version once it seeds).
+      await client.query('COMMIT');
+      return { migrated: false, currentVersion };
+    }
+
+    // Only territory_neighbors is touched. Players, ownership, defenders, resources, chat,
+    // factions, bonuses, and battle history are never modified by this migration.
+    await client.query('DELETE FROM territory_neighbors');
+    await client.query(topologySql.buildNeighborValuesSQL());
+    await client.query(
+      `INSERT INTO topology_version (id, version) VALUES (1, $1)
+       ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, updated_at = NOW()`,
+      [topology.TOPOLOGY_VERSION]
+    );
+    await client.query('COMMIT');
+    console.log(`Topology migrated: v${currentVersion} -> v${topology.TOPOLOGY_VERSION} (territory_neighbors replaced only).`);
+    return { migrated: true, previousVersion: currentVersion, currentVersion: topology.TOPOLOGY_VERSION };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    if (shouldRelease) client.release();
+  }
 }
 
 async function seedWorldIfEmpty() {
-  const seedPath = path.join(__dirname, 'world-seed.sql');
-  if (!fs.existsSync(seedPath)) {
-    throw new Error('Missing world-seed.sql');
-  }
   const result = await pool.query('SELECT COUNT(*) AS cnt FROM territories');
   const count = Number(result.rows[0]?.cnt || 0);
   if (count > 0) {
     console.log(`World seed skipped: ${count} territories already exist.`);
     return;
   }
-  const seedSql = fs.readFileSync(seedPath, 'utf8');
-  // Strip DELETE statements so seeding is safe on existing accounts
-  const lines = seedSql.split('\n').filter((line) => {
-    const t = line.trim().toUpperCase();
-    return !(t.startsWith('DELETE FROM PLAYERS') ||
-             t.startsWith('DELETE FROM BUILDINGS') ||
-             t.startsWith('DELETE FROM ATTACK_CONTRIBUTIONS') ||
-             t.startsWith('DELETE FROM ATTACK_TARGETS') ||
-             t.startsWith('DELETE FROM TERRITORY_NEIGHBORS') ||
-             t.startsWith('DELETE FROM TERRITORIES'));
-  });
-  await pool.query(lines.join('\n'));
-  console.log('World seeded from world-seed.sql');
+  // Territories/neighbors are generated directly from the canonical topology module
+  // (world-topology.js via topology-sql.js), not parsed from world-seed.sql, so a fresh
+  // database can never drift from the same graph the migration and frontend use. This also
+  // means world seeding can never contain a DELETE FROM players/buildings statement.
+  await pool.query(topologySql.buildTerritoryValuesSQL());
+  await pool.query(topologySql.buildNeighborValuesSQL());
+  await pool.query(
+    `INSERT INTO topology_version (id, version) VALUES (1, $1)
+     ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, updated_at = NOW()`,
+    [topology.TOPOLOGY_VERSION]
+  );
+  console.log('World seeded from the canonical topology.');
 }
 
 module.exports = {
@@ -173,6 +224,7 @@ module.exports = {
   connect,
   getClient,
   applySchemaMigrations,
+  applyTopologyMigrationIfNeeded,
   initializeDatabase,
   seedWorldIfEmpty,
 };
@@ -186,6 +238,32 @@ if (require.main === module) {
       process.exit(0);
     })().catch((err) => {
       console.error('DB init failed:', err.message);
+      process.exit(1);
+    });
+  } else if (command === '--bootstrap-admin') {
+    const token = process.argv[3];
+    (async () => {
+      const { bootstrapAdmin } = require('./admin-bootstrap');
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await bootstrapAdmin(client, { token });
+        if (!result.ok) {
+          await client.query('ROLLBACK');
+          console.error(`Bootstrap failed: ${result.error}`);
+          process.exit(1);
+        }
+        await client.query('COMMIT');
+        console.log(`"${result.username}" is now an admin.`);
+        process.exit(0);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    })().catch((err) => {
+      console.error('Bootstrap failed:', err.message);
       process.exit(1);
     });
   }

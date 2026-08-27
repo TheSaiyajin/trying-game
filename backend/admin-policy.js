@@ -15,8 +15,11 @@ function isAuthorizedAdminPlayer(player) {
     && String(player.role || '').toLowerCase() === 'admin';
 }
 
-function getRegistrationRole(username) {
-  return isSaiUsername(username) ? 'admin' : 'member';
+function getRegistrationRole() {
+  // Public registration must never grant a role above 'member', regardless of the
+  // requested username. The Sai account only becomes admin through the bootstrap
+  // process (see admin-bootstrap.js), never automatically at signup.
+  return 'member';
 }
 
 function normalizeRequestedRole(player, requestedRole) {

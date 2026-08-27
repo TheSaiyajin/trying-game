@@ -113,10 +113,12 @@ test('username policy allows only safe usernames', () => {
   assert.equal(isSafeUsername('semi;colon'), false);
 });
 
-test('Sai is the only valid admin account', () => {
-  assert.equal(getRegistrationRole('Sai'), 'admin');
+test('registering the username Sai never grants admin automatically', () => {
+  assert.equal(getRegistrationRole('Sai'), 'member');
   assert.equal(getRegistrationRole('OtherPlayer'), 'member');
+  assert.equal(getRegistrationRole(), 'member');
   assert.equal(isAuthorizedAdminPlayer({ username: 'Sai', role: 'admin' }), true);
+  assert.equal(isAuthorizedAdminPlayer({ username: 'Sai', role: 'member' }), false);
   assert.equal(isAuthorizedAdminPlayer({ username: 'Sai', role: 'leader' }), false);
   assert.equal(isAuthorizedAdminPlayer({ username: 'OtherPlayer', role: 'admin' }), false);
 });

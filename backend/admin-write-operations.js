@@ -1,5 +1,6 @@
 const { isSaiUsername, normalizeRequestedRole } = require('./admin-policy');
 const { isCapitalTerritory } = require('./territory-protection');
+const { reconcileTerritoryDefendersForNewOwner } = require('./defender-garrisons');
 
 const POSTGRES_INT_MAX = 2147483647;
 
@@ -130,6 +131,16 @@ async function updateTerritory(client, { actorId, territoryId, owner, defense, v
 
   params.push(territoryId);
   await client.query(`UPDATE territories SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
+
+  const ownerChanged = detail.owner !== undefined && detail.owner !== String(existingTerritory.owner_faction || '').toLowerCase();
+  if (ownerChanged) {
+    const totalDefense = detail.defense !== undefined ? detail.defense : Number(existingTerritory.defense_troops);
+    const reconciliation = await reconcileTerritoryDefendersForNewOwner(client, territoryId, detail.owner, totalDefense);
+    if (reconciliation.refundedTroops > 0) {
+      detail.defendersRefunded = reconciliation.refundedTroops;
+    }
+  }
+
   await logAdminAction(client, actorId, 'edit_territory', detail);
   return { ok: true, detail };
 }
@@ -169,25 +180,37 @@ async function updateCapital(client, { actorId, territoryId, faction, validFacti
     return { ok: false, status: 400, error: 'Invalid faction.' };
   }
 
-  const existing = await client.query('SELECT id FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
+  const existing = await client.query('SELECT id, owner_faction, is_capital FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
   if (!existing.rowCount) {
     return { ok: false, status: 404, error: 'Territory not found.' };
+  }
+  const territory = existing.rows[0];
+  const territoryOwner = String(territory.owner_faction || '').trim().toLowerCase();
+
+  // A capital can only ever be a territory the faction already owns. This also rejects
+  // trying to make another faction's existing capital your own: that territory's owner is
+  // the other faction, not this one, so it fails the ownership check below.
+  if (territoryOwner !== normalizedFaction) {
+    return { ok: false, status: 400, error: 'A territory can only become a capital for the faction that already owns it.' };
   }
 
   const previousCapital = await client.query(
     'SELECT id FROM territories WHERE is_capital = TRUE AND owner_faction = $1 FOR UPDATE',
     [normalizedFaction]
   );
-  if (previousCapital.rowCount && previousCapital.rows[0].id !== territoryId) {
-    await client.query('UPDATE territories SET is_capital = FALSE WHERE id = $1', [previousCapital.rows[0].id]);
+  const previousCapitalId = previousCapital.rows[0]?.id || null;
+
+  if (previousCapitalId === territoryId) {
+    // Already the capital for this faction: nothing to change.
+    return { ok: true, territoryId, faction: normalizedFaction, previousCapitalId };
   }
 
-  await client.query(
-    'UPDATE territories SET owner_faction = $1, is_capital = TRUE WHERE id = $2',
-    [normalizedFaction, territoryId]
-  );
-  await logAdminAction(client, actorId, 'change_capital', { territoryId, faction: normalizedFaction });
-  return { ok: true, territoryId, faction: normalizedFaction };
+  if (previousCapitalId) {
+    await client.query('UPDATE territories SET is_capital = FALSE WHERE id = $1', [previousCapitalId]);
+  }
+  await client.query('UPDATE territories SET is_capital = TRUE WHERE id = $1', [territoryId]);
+  await logAdminAction(client, actorId, 'change_capital', { territoryId, faction: normalizedFaction, previousCapitalId });
+  return { ok: true, territoryId, faction: normalizedFaction, previousCapitalId };
 }
 
 module.exports = {

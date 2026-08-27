@@ -9,10 +9,10 @@
     "dev": "node --watch backend/server.js",
     "db:init": "node backend/db.js --init",
     "test": "node --test tests/*.js",
-    "build": "node --check backend/server.js && node --check script.js"
+    "build": "node --check backend/server.js && node --check script.js && node --check world-topology.js && node --check backend/topology-sql.js && node --check backend/admin-bootstrap.js"
   },
   "dependencies": {
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "express-rate-limit": "^7.4.1",

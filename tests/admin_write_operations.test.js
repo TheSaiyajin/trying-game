@@ -10,13 +10,14 @@ const {
   updateCapital,
 } = require('../backend/admin-write-operations');
 
-function createAdminClient({ players, territories, factionLeaders }) {
+function createAdminClient({ players, territories, factionLeaders, territoryDefenders = new Map() }) {
   const adminActions = [];
 
   return {
     adminActions,
+    territoryDefenders,
     async query(sql, params = []) {
-      const text = sql.trim();
+      const text = sql.trim().replace(/\s+/g, ' ');
 
       if (text === 'SELECT id FROM players WHERE id = $1 FOR UPDATE') {
         const player = players.get(params[0]);
@@ -38,9 +39,12 @@ function createAdminClient({ players, territories, factionLeaders }) {
         return { rows: territory ? [{ ...territory }] : [], rowCount: territory ? 1 : 0 };
       }
 
-      if (text === 'SELECT id FROM territories WHERE id = $1 FOR UPDATE') {
+      if (text === 'SELECT id, owner_faction, is_capital FROM territories WHERE id = $1 FOR UPDATE') {
         const territory = territories.get(params[0]);
-        return { rows: territory ? [{ id: territory.id }] : [], rowCount: territory ? 1 : 0 };
+        return {
+          rows: territory ? [{ id: territory.id, owner_faction: territory.owner_faction, is_capital: !!territory.is_capital }] : [],
+          rowCount: territory ? 1 : 0,
+        };
       }
 
       if (text === 'SELECT id FROM territories WHERE is_capital = TRUE AND owner_faction = $1 FOR UPDATE') {
@@ -54,13 +58,27 @@ function createAdminClient({ players, territories, factionLeaders }) {
         return { rows: [], rowCount: territory ? 1 : 0 };
       }
 
-      if (text === 'UPDATE territories SET owner_faction = $1, is_capital = TRUE WHERE id = $2') {
-        const territory = territories.get(params[1]);
-        if (territory) {
-          territory.owner_faction = params[0];
-          territory.is_capital = true;
-        }
+      if (text === 'UPDATE territories SET is_capital = TRUE WHERE id = $1') {
+        const territory = territories.get(params[0]);
+        if (territory) territory.is_capital = true;
         return { rows: [], rowCount: territory ? 1 : 0 };
+      }
+
+      if (text === 'SELECT territory_id, player_id, faction, troops FROM territory_defenders WHERE territory_id = $1 ORDER BY player_id FOR UPDATE') {
+        const rows = (territoryDefenders.get(params[0]) || []).map((d) => ({ ...d }));
+        return { rows, rowCount: rows.length };
+      }
+
+      if (text === 'DELETE FROM territory_defenders WHERE territory_id = $1 AND faction <> $2') {
+        const remaining = (territoryDefenders.get(params[0]) || []).filter((d) => d.faction === params[1]);
+        territoryDefenders.set(params[0], remaining);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (text === 'UPDATE players SET soldiers = soldiers + $1 WHERE id = $2') {
+        const player = players.get(params[1]);
+        if (player) player.soldiers = Number(player.soldiers || 0) + Number(params[0]);
+        return { rows: [], rowCount: player ? 1 : 0 };
       }
 
       if (text.startsWith('UPDATE players SET resource_')) {
@@ -280,7 +298,7 @@ test('admin can still change a capital defense amount without changing its owner
   assert.equal(client.adminActions.length, 1);
 });
 
-test('admin can move the capital designation to a new territory and unset the previous one', async () => {
+test('admin can move the capital designation to a new territory the faction already owns', async () => {
   const territories = new Map([
     ['b1', { id: 'b1', owner_faction: 'blue', is_capital: true, defense_troops: 35 }],
     ['n1', { id: 'n1', owner_faction: 'blue', is_capital: false, defense_troops: 18 }],
@@ -298,10 +316,13 @@ test('admin can move the capital designation to a new territory and unset the pr
   assert.equal(territories.get('b1').is_capital, false);
   assert.equal(territories.get('n1').is_capital, true);
   assert.equal(territories.get('n1').owner_faction, 'blue');
+  // Exactly one capital remains for blue: never zero, never two.
+  const blueCapitals = [...territories.values()].filter((t) => t.owner_faction === 'blue' && t.is_capital);
+  assert.equal(blueCapitals.length, 1);
   assert.equal(client.adminActions.length, 1);
 });
 
-test('admin can reassign a capital to a different faction', async () => {
+test('capital reassignment is a no-op when the territory is already that faction capital', async () => {
   const territories = new Map([
     ['b1', { id: 'b1', owner_faction: 'blue', is_capital: true, defense_troops: 35 }],
   ]);
@@ -310,12 +331,58 @@ test('admin can reassign a capital to a different faction', async () => {
   const result = await updateCapital(client, {
     actorId: 1,
     territoryId: 'b1',
-    faction: 'red',
+    faction: 'blue',
     validFactions: ['blue', 'red', 'green'],
   });
 
   assert.equal(result.ok, true);
-  assert.equal(territories.get('b1').owner_faction, 'red');
+  assert.equal(territories.get('b1').is_capital, true);
+  assert.equal(client.adminActions.length, 0);
+});
+
+test('capital reassignment rejects a territory the faction does not own instead of silently changing its owner', async () => {
+  const territories = new Map([
+    ['b1', { id: 'b1', owner_faction: 'blue', is_capital: true, defense_troops: 35 }],
+    ['n1', { id: 'n1', owner_faction: 'neutral', is_capital: false, defense_troops: 18 }],
+  ]);
+  const client = createAdminClient({ players: new Map(), territories, factionLeaders: new Map() });
+
+  const result = await updateCapital(client, {
+    actorId: 1,
+    territoryId: 'n1',
+    faction: 'blue',
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    status: 400,
+    error: 'A territory can only become a capital for the faction that already owns it.',
+  });
+  // Ownership must stay untouched: no silent capture through the capital tool.
+  assert.equal(territories.get('n1').owner_faction, 'neutral');
+  assert.equal(territories.get('n1').is_capital, false);
+  assert.equal(client.adminActions.length, 0);
+});
+
+test('capital reassignment cannot steal another faction\'s existing capital', async () => {
+  const territories = new Map([
+    ['b1', { id: 'b1', owner_faction: 'blue', is_capital: true, defense_troops: 35 }],
+    ['r1', { id: 'r1', owner_faction: 'red', is_capital: true, defense_troops: 35 }],
+  ]);
+  const client = createAdminClient({ players: new Map(), territories, factionLeaders: new Map() });
+
+  const result = await updateCapital(client, {
+    actorId: 1,
+    territoryId: 'r1',
+    faction: 'blue',
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 400);
+  assert.equal(territories.get('r1').owner_faction, 'red');
+  assert.equal(territories.get('r1').is_capital, true);
   assert.equal(territories.get('b1').is_capital, true);
 });
 
@@ -342,3 +409,83 @@ test('capital assignment rejects invalid factions and missing territories', asyn
   assert.deepEqual(missingTerritory, { ok: false, status: 404, error: 'Territory not found.' });
   assert.equal(client.adminActions.length, 0);
 });
+
+test('admin ownership change refunds and removes stale enemy-faction defenders (blue territory)', async () => {
+  const territories = new Map([
+    ['n1', { id: 'n1', owner_faction: 'blue', defense_troops: 40 }],
+  ]);
+  const players = new Map([
+    [10, { id: 10, faction: 'blue', soldiers: 5 }],
+  ]);
+  const territoryDefenders = new Map([
+    ['n1', [{ territory_id: 'n1', player_id: 10, faction: 'blue', troops: 15 }]],
+  ]);
+  const client = createAdminClient({ players, territories, factionLeaders: new Map(), territoryDefenders });
+
+  const result = await updateTerritory(client, {
+    actorId: 1,
+    territoryId: 'n1',
+    owner: 'red',
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.detail.defendersRefunded, 15);
+  assert.equal(players.get(10).soldiers, 20);
+  assert.deepEqual(territoryDefenders.get('n1'), []);
+  // Total defense drops by exactly the refunded stationed troops (40 - 15 = 25).
+  assert.equal(territories.get('n1').defense_troops, 25);
+});
+
+test('admin ownership change refunds stale defenders for all three factions', async () => {
+  for (const [oldFaction, newFaction] of [['blue', 'red'], ['red', 'green'], ['green', 'blue']]) {
+    const territories = new Map([
+      ['n1', { id: 'n1', owner_faction: oldFaction, defense_troops: 30 }],
+    ]);
+    const players = new Map([
+      [1, { id: 1, faction: oldFaction, soldiers: 0 }],
+    ]);
+    const territoryDefenders = new Map([
+      ['n1', [{ territory_id: 'n1', player_id: 1, faction: oldFaction, troops: 10 }]],
+    ]);
+    const client = createAdminClient({ players, territories, factionLeaders: new Map(), territoryDefenders });
+
+    const result = await updateTerritory(client, {
+      actorId: 1,
+      territoryId: 'n1',
+      owner: newFaction,
+      validFactions: ['blue', 'red', 'green'],
+    });
+
+    assert.equal(result.ok, true, `${oldFaction} -> ${newFaction}`);
+    assert.equal(players.get(1).soldiers, 10, `${oldFaction} -> ${newFaction} refund`);
+    assert.deepEqual(territoryDefenders.get('n1'), [], `${oldFaction} -> ${newFaction} cleared`);
+  }
+});
+
+test('admin ownership change keeps valid same-faction defenders untouched', async () => {
+  const territories = new Map([
+    ['n1', { id: 'n1', owner_faction: 'blue', defense_troops: 30 }],
+  ]);
+  const players = new Map([
+    [10, { id: 10, faction: 'blue', soldiers: 0 }],
+  ]);
+  const territoryDefenders = new Map([
+    ['n1', [{ territory_id: 'n1', player_id: 10, faction: 'blue', troops: 12 }]],
+  ]);
+  const client = createAdminClient({ players, territories, factionLeaders: new Map(), territoryDefenders });
+
+  // Re-assigning the same owner should not disturb already-valid defenders or refund anyone.
+  const result = await updateTerritory(client, {
+    actorId: 1,
+    territoryId: 'n1',
+    owner: 'blue',
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.detail.defendersRefunded, undefined);
+  assert.equal(players.get(10).soldiers, 0);
+  assert.deepEqual(territoryDefenders.get('n1'), [{ territory_id: 'n1', player_id: 10, faction: 'blue', troops: 12 }]);
+});
+

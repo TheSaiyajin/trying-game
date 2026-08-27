@@ -84,10 +84,13 @@ test('legacy databases get the required player migration columns before registra
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE UNIQUE INDEX IF NOT EXISTS attack_contributions_territory_player_idx')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE faction_leaders ALTER COLUMN player_id DROP NOT NULL')));
   assert.ok(sqlCalls.some((sql) => sql.includes('UPDATE territories t') && sql.includes('GREATEST(t.defense_troops')));
-  assert.ok(sqlCalls.some((sql) => sql.includes("UPDATE players SET role = 'admin' WHERE username = $1")));
+  // Admin is never auto-granted by this migration anymore (that was the username-only
+  // admin vulnerability); only the defense-in-depth demotion of unexpected admins remains.
+  assert.ok(!sqlCalls.some((sql) => sql.includes("UPDATE players SET role = 'admin' WHERE username = $1")));
   assert.ok(sqlCalls.some((sql) => sql.includes("UPDATE players SET role = 'member' WHERE username <> $1 AND role = 'admin'")));
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS faction_chat_messages')));
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS topology_version')));
 });
 
 test('training cost and idle earnings are consistent with server-authoritative rules', () => {
