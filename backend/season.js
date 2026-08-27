@@ -7,6 +7,7 @@ const topology = require('../world-topology');
 const topologySql = require('./topology-sql');
 const { STARTING_PLAYER_RESOURCES, STARTING_BUILDING_LEVELS } = require('./admin-resets');
 const { logAdminAction } = require('./admin-write-operations');
+const { buildArmyName } = require('./admin-faction-change');
 
 // Postgres advisory lock keys (arbitrary but fixed int4-range constants). Transaction-scoped
 // (pg_advisory_xact_lock) so they auto-release on COMMIT/ROLLBACK regardless of which pooled
@@ -22,18 +23,24 @@ async function getActiveSeason(client) {
   return result.rows[0] || null;
 }
 
-async function createSeasonRow(client, { seasonNumber, startsAt, endsAt }) {
+// season_number is a sequential display counter (1, 2, 3, ...), completely independent of
+// starts_at/ends_at scheduling. Using the calendar day as the number (the previous approach)
+// meant force-finishing a season mid-day tried to create a new season with the SAME number as
+// the one just completed today, hit the UNIQUE constraint, and silently left zero active
+// seasons. This always runs inside runSeasonRollover's advisory-locked transaction, so
+// concurrent callers can never compute/insert the same next number.
+async function createSeasonRow(client, { startsAt, endsAt }) {
+  const nextNumberResult = await client.query(
+    'SELECT COALESCE(MAX(season_number), 0) + 1 AS next_number FROM seasons WHERE season_number > 0'
+  );
+  const seasonNumber = Number(nextNumberResult.rows[0].next_number);
   const inserted = await client.query(
     `INSERT INTO seasons (season_number, starts_at, ends_at, status)
      VALUES ($1, $2, $3, 'active')
-     ON CONFLICT (season_number) DO NOTHING
      RETURNING *`,
     [seasonNumber, startsAt, endsAt]
   );
-  if (inserted.rows[0]) return inserted.rows[0];
-  // Another process already created this day's season row concurrently.
-  const existing = await client.query('SELECT * FROM seasons WHERE season_number = $1', [seasonNumber]);
-  return existing.rows[0];
+  return inserted.rows[0];
 }
 
 // Capitals score nothing and stay protected; core territories (from the canonical topology,
@@ -131,7 +138,10 @@ async function runSeasonRollover(client, { actorId = null, now = new Date(), for
 
     const activeResult = await client.query(`SELECT * FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1 FOR UPDATE`);
     const current = activeResult.rows[0] || null;
-    const { seasonNumber, startsAt, endsAt } = getCurrentUtcDayBounds(now);
+    // The new season always starts right now and ends at the next 00:00 UTC boundary after
+    // now. For a real midnight rollover "now" already IS ~00:00 UTC; for a forced mid-day
+    // finish this correctly starts the new season immediately instead of at today's midnight.
+    const { endsAt } = getCurrentUtcDayBounds(now);
 
     if (current && !force && new Date(current.ends_at) > now) {
       await client.query('COMMIT');
@@ -172,7 +182,7 @@ async function runSeasonRollover(client, { actorId = null, now = new Date(), for
       }
     }
 
-    const newSeason = await createSeasonRow(client, { seasonNumber, startsAt, endsAt });
+    const newSeason = await createSeasonRow(client, { startsAt: now, endsAt });
     await client.query('COMMIT');
     return { rotated: true, season: newSeason, finishedSeason };
   } catch (error) {
@@ -234,13 +244,13 @@ async function ensurePlayerFactionAssignment(client, { seasonId, playerId }) {
        ON CONFLICT (season_id, player_id) DO NOTHING`,
       [seasonId, playerId, faction]
     );
-    // Existing game logic reads players.faction directly; keep it in sync as a cache of the
-    // authoritative current-season assignment so attack/defense/chat/production code needs
-    // no rewrite. It is never trusted on its own for authorization -- callers must confirm it
-    // matches a season_memberships row for the active season.
+    // Existing game logic reads players.faction (and army_name) directly; keep them in sync
+    // as a cache of the authoritative current-season assignment so attack/defense/chat/
+    // production code needs no rewrite. faction is never trusted on its own for authorization
+    // -- callers must confirm it matches a season_memberships row for the active season.
     await client.query(
-      'UPDATE players SET faction = $1, faction_locked = TRUE WHERE id = $2',
-      [faction, playerId]
+      'UPDATE players SET faction = $1, faction_locked = TRUE, army_name = $2 WHERE id = $3',
+      [faction, buildArmyName(faction), playerId]
     );
 
     const finalRow = await client.query(

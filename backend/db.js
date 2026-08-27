@@ -178,6 +178,39 @@ async function applySchemaMigrations(currentClient) {
       [legacySeasonRow.id]
     );
   }
+
+  await renumberSeasonsSequentially(currentClient);
+}
+
+// Older deployments numbered seasons by UTC day-since-epoch (e.g. 20520), which broke Force
+// Finish: a forced rollover tries to create a new season the same calendar day, collides with
+// the just-completed season's number, and silently leaves zero active seasons. This safely
+// renumbers existing seasons to a sequential 1, 2, 3... display order (oldest first) without
+// touching season ids, memberships, chat, or history -- everything else references seasons by
+// id, never by season_number. Only runs when non-sequential numbering is actually detected, and
+// is idempotent (a no-op on every later startup).
+async function renumberSeasonsSequentially(currentClient) {
+  const check = await currentClient.query(
+    `SELECT COUNT(*)::int AS cnt, COALESCE(MAX(season_number), 0) AS max_number
+     FROM seasons WHERE season_number > 0`
+  );
+  const { cnt = 0, max_number: maxNumber = 0 } = check.rows[0] || {};
+  if (Number(maxNumber) === Number(cnt)) {
+    return; // already sequential (or no real seasons yet)
+  }
+
+  // Two passes to avoid transient UNIQUE(season_number) collisions when reordering: first
+  // move every real season to a guaranteed-distinct negative placeholder, then assign final
+  // sequential numbers in chronological (id) order.
+  await currentClient.query('UPDATE seasons SET season_number = -id WHERE season_number > 0');
+  await currentClient.query(`
+    WITH ordered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM seasons WHERE season_number < 0
+    )
+    UPDATE seasons s SET season_number = ordered.rn
+    FROM ordered
+    WHERE s.id = ordered.id
+  `);
 }
 
 async function initializeDatabase() {

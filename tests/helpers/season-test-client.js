@@ -65,10 +65,17 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         return { rows: active.slice(0, 1) };
       }
 
+      if (text.startsWith('SELECT COALESCE(MAX(season_number), 0) + 1 AS next_number FROM seasons')) {
+        const maxNumber = state.seasons
+          .filter((s) => s.season_number > 0)
+          .reduce((max, s) => Math.max(max, s.season_number), 0);
+        return { rows: [{ next_number: maxNumber + 1 }] };
+      }
+
       if (text.startsWith('INSERT INTO seasons')) {
         const [seasonNumber, startsAt, endsAt] = params;
         if (state.seasons.some((s) => s.season_number === seasonNumber)) {
-          return { rows: [] };
+          throw new Error(`duplicate key value violates unique constraint "seasons_season_number_key" (${seasonNumber})`);
         }
         const row = {
           id: nextSeasonId++,
@@ -84,11 +91,6 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         };
         state.seasons.push(row);
         return { rows: [row] };
-      }
-
-      if (text.startsWith('SELECT * FROM seasons WHERE season_number = $1')) {
-        const row = state.seasons.find((s) => s.season_number === params[0]);
-        return { rows: row ? [row] : [] };
       }
 
       if (text.startsWith('SELECT id, owner_faction, is_capital FROM territories')) {
@@ -207,12 +209,13 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         return { rows: [] };
       }
 
-      if (text === 'UPDATE players SET faction = $1, faction_locked = TRUE WHERE id = $2') {
-        const [faction, playerId] = params;
+      if (text === 'UPDATE players SET faction = $1, faction_locked = TRUE, army_name = $2 WHERE id = $3') {
+        const [faction, armyName, playerId] = params;
         const player = state.players.get(playerId);
         if (player) {
           player.faction = faction;
           player.faction_locked = true;
+          player.army_name = armyName;
         }
         return { rows: [] };
       }

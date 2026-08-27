@@ -245,10 +245,10 @@ async function ensureSession() {
   return null;
 }
 
-let selectedAuthFaction = 'blue';
-
-function buildAuthPayload({ username, password, isRegister }) {
-  return isRegister ? { username, password, faction: selectedAuthFaction } : { username, password };
+function buildAuthPayload({ username, password }) {
+  // Faction is never chosen by the player or sent by the frontend: it is assigned
+  // automatically by the current season's balancing on first authenticated activity.
+  return { username, password };
 }
 
 function setAuthMode(mode) {
@@ -267,19 +267,6 @@ function setAuthMode(mode) {
 
   const message = document.getElementById('auth-message');
   if (message) message.textContent = '';
-}
-
-function setFactionChoice(faction) {
-  selectedAuthFaction = faction;
-  document.querySelectorAll('.faction-choice-btn').forEach((button) => {
-    button.classList.toggle('active', button.dataset.faction === faction);
-  });
-}
-
-function wireFactionChoiceButtons(root = document) {
-  root.querySelectorAll('.faction-choice-btn').forEach((button) => {
-    button.addEventListener('click', () => setFactionChoice(button.dataset.faction));
-  });
 }
 
 function setGameShellVisible(isVisible) {
@@ -336,17 +323,13 @@ async function submitAuth(event) {
       message.textContent = 'Passwords do not match.';
       return;
     }
-    if (!['blue', 'red', 'green'].includes(selectedAuthFaction)) {
-      message.textContent = 'Please choose a faction.';
-      return;
-    }
   }
 
   try {
     const path = isRegister ? '/register' : '/login';
     const payload = await apiFetch(path, {
       method: 'POST',
-      body: JSON.stringify(buildAuthPayload({ username, password, isRegister })),
+      body: JSON.stringify(buildAuthPayload({ username, password })),
     });
 
     setToken(payload.token);
@@ -369,7 +352,6 @@ function logoutPlayer() {
   document.getElementById('auth-confirm-password').value = '';
   const message = document.getElementById('auth-message');
   if (message) message.textContent = 'Logged out.';
-  setFactionChoice('blue');
   showAuthScreen();
   setAuthMode('login');
   showToast('🚪 Logged out.');
@@ -1455,7 +1437,6 @@ if (typeof document !== 'undefined') {
     authModeButtons.forEach((button) => {
       button.addEventListener('click', () => setAuthMode(button.dataset.mode));
     });
-    wireFactionChoiceButtons();
 
     if (authForm) {
       authForm.addEventListener('submit', submitAuth);
@@ -1525,11 +1506,9 @@ if (typeof module !== 'undefined') {
     isAdminUser,
     insertChatEmoji,
     isFactionChatNearBottom,
-    setFactionChoice,
     setGameStateFromSnapshot,
     sendFactionChatMessage,
     startFactionChatPolling,
-    wireFactionChoiceButtons,
     buildTerritoryLayout,
     formatCountdown,
     renderScoreboard,

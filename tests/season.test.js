@@ -12,6 +12,7 @@ const {
   ensureCurrentSeason,
   forceFinishCurrentSeason,
   ensurePlayerFactionAssignment,
+  createSeasonRow,
 } = require('../backend/season');
 
 function buildPlayers(list) {
@@ -181,6 +182,17 @@ test('a player is assigned only on first activity in a season; repeated calls re
   assert.equal(first, second);
   assert.equal(second, third);
   assert.equal(client.state.seasonMemberships.filter((m) => m.player_id === 1).length, 1);
+});
+
+test('assignment also syncs army_name to match the assigned faction', async () => {
+  const client = createSeasonTestClient({ players: buildPlayers([{ id: 1 }]), territories: new Map() });
+  await ensureCurrentSeason(client, { now: new Date('2026-05-01T00:00:01.000Z') });
+  const seasonId = client.state.seasons[0].id;
+
+  const faction = await ensurePlayerFactionAssignment(client, { seasonId, playerId: 1 });
+
+  const expected = `${faction.charAt(0).toUpperCase()}${faction.slice(1)} Army`;
+  assert.equal(client.state.players.get(1).army_name, expected);
 });
 
 test('refreshing or logging in again never changes the assigned faction', async () => {
@@ -373,4 +385,100 @@ test('seasonal reset clears gameplay progress and restores the canonical balance
   assert.equal(client.state.territories.get('n1').owner_faction, 'neutral');
   assert.equal(client.state.territories.get('n28').owner_faction, 'neutral');
   assert.equal(client.state.territories.size, 33);
+});
+
+// ===================== Force Finish bug fix regression =====================
+// Previously season_number was the UTC day number, so Force Finish tried to create a new
+// season with the SAME number as the one it just completed today, hit the seasons table's
+// unique constraint on season_number, and silently left the game with zero active seasons.
+
+test('season numbers are sequential display numbers (1, 2, 3...), never the calendar day', async () => {
+  const client = createSeasonTestClient({ players: buildPlayers([]), territories: buildTerritories() });
+
+  await ensureCurrentSeason(client, { now: new Date('2026-09-01T00:00:01.000Z') });
+  await forceFinishCurrentSeason(client, { actorId: 1, now: new Date('2026-09-01T05:00:00.000Z') });
+  await forceFinishCurrentSeason(client, { actorId: 1, now: new Date('2026-09-01T10:00:00.000Z') });
+  await forceFinishCurrentSeason(client, { actorId: 1, now: new Date('2026-09-01T15:00:00.000Z') });
+
+  const numbers = client.state.seasons
+    .filter((s) => s.season_number > 0)
+    .sort((a, b) => a.id - b.id)
+    .map((s) => s.season_number);
+  assert.deepEqual(numbers, [1, 2, 3, 4]);
+});
+
+test('Force Finish repeatedly on the same UTC day never collides and always leaves exactly one playable active season', async () => {
+  const players = buildPlayers([{ id: 1 }]);
+  const territories = buildTerritories({ n1: 'blue' });
+  const client = createSeasonTestClient({ players, territories });
+  const sameDay = new Date('2026-09-05T00:00:01.000Z');
+
+  await ensureCurrentSeason(client, { now: sameDay });
+  await ensurePlayerFactionAssignment(client, { seasonId: client.state.seasons[0].id, playerId: 1 });
+
+  for (let i = 0; i < 3; i += 1) {
+    const result = await forceFinishCurrentSeason(client, {
+      actorId: 1,
+      now: new Date(sameDay.getTime() + (i + 1) * 60 * 60 * 1000),
+    });
+    const active = client.state.seasons.filter((s) => s.status === 'active');
+    assert.equal(active.length, 1, `iteration ${i}: exactly one active season`);
+    assert.equal(result.season.status, 'active');
+    assert.equal(result.season.id, active[0].id);
+    // The new season is genuinely usable: it starts at/around "now" and ends in the future.
+    assert.ok(new Date(result.season.ends_at) > new Date(result.season.starts_at));
+  }
+});
+
+test('the seasons table enforces a real unique constraint on season_number (defense in depth)', async () => {
+  const client = createSeasonTestClient({ players: buildPlayers([]), territories: new Map() });
+  await ensureCurrentSeason(client, { now: new Date('2026-09-01T00:00:01.000Z') });
+  const existingNumber = client.state.seasons[0].season_number;
+
+  await assert.rejects(
+    () => client.query(
+      `INSERT INTO seasons (season_number, starts_at, ends_at, status) VALUES ($1, $2, $3, 'active') RETURNING *`,
+      [existingNumber, new Date(), new Date()]
+    ),
+    /unique constraint/
+  );
+});
+
+test('automatic midnight rollover creates the next season ending at the following 00:00 UTC', async () => {
+  const client = createSeasonTestClient({ players: buildPlayers([]), territories: buildTerritories() });
+  const midnight = new Date('2026-09-10T00:00:00.000Z');
+
+  const first = await ensureCurrentSeason(client, { now: midnight });
+  assert.equal(new Date(first.ends_at).toISOString(), '2026-09-11T00:00:00.000Z');
+
+  const nextMidnight = new Date('2026-09-11T00:00:00.000Z');
+  const second = await ensureCurrentSeason(client, { now: nextMidnight });
+
+  assert.notEqual(second.id, first.id);
+  assert.equal(second.season_number, first.season_number + 1);
+  assert.equal(new Date(second.ends_at).toISOString(), '2026-09-12T00:00:00.000Z');
+  assert.equal(client.state.seasons.filter((s) => s.status === 'active').length, 1);
+});
+
+// ===================== Registration cannot choose a faction =====================
+
+test('registration route source never reads or trusts a client-supplied faction', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const serverSource = fs.readFileSync(path.join(__dirname, '../backend/server.js'), 'utf8');
+  const registerRouteMatch = serverSource.match(/app\.post\('\/api\/register'[\s\S]*?\n\}\)\);/);
+
+  assert.ok(registerRouteMatch, 'could not locate the /api/register route in server.js');
+  assert.ok(!registerRouteMatch[0].includes('req.body.faction'), 'registration must never read req.body.faction');
+  assert.ok(registerRouteMatch[0].includes("VALUES ($1, $2, NULL, FALSE"), 'registration must always insert an unassigned faction');
+});
+
+test('the manual player faction endpoint is disabled for normal players', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const serverSource = fs.readFileSync(path.join(__dirname, '../backend/server.js'), 'utf8');
+  const routeMatch = serverSource.match(/app\.post\('\/api\/player\/faction'[\s\S]*?\n\}\)\);/);
+
+  assert.ok(routeMatch, 'could not locate the /api/player/faction route in server.js');
+  assert.ok(routeMatch[0].includes('res.status(403)'), 'the manual faction endpoint must always reject with 403');
 });

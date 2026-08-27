@@ -8,8 +8,6 @@ const {
   getFactionLegendEntries,
   mapTerritories,
   isAdminUser,
-  setFactionChoice,
-  wireFactionChoiceButtons,
 } = require('../script.js');
 const {
   isSafeUsername,
@@ -19,71 +17,17 @@ const {
 } = require('../backend/admin-policy');
 const { allocateDefenderCasualties } = require('../backend/defender-garrisons');
 
-function createFakeFactionButton(faction, active = false) {
-  const listeners = new Map();
-  const classes = new Set(active ? ['active'] : []);
-  return {
-    dataset: { faction },
-    addEventListener(eventName, handler) {
-      listeners.set(eventName, handler);
-    },
-    click() {
-      listeners.get('click')?.();
-    },
-    classList: {
-      toggle(className, force) {
-        if (force) {
-          classes.add(className);
-        } else {
-          classes.delete(className);
-        }
-      },
-      contains(className) {
-        return classes.has(className);
-      },
-    },
-  };
-}
-
 // ===================== Admin / Username policy =====================
 
-test('faction selector wiring updates active button and registration payload for blue, red, and green', () => {
-  const buttons = [
-    createFakeFactionButton('blue', true),
-    createFakeFactionButton('red'),
-    createFakeFactionButton('green'),
-  ];
-  const fakeDocument = {
-    querySelectorAll(selector) {
-      assert.equal(selector, '.faction-choice-btn');
-      return buttons;
-    },
-  };
-  const previousDocument = global.document;
-  global.document = fakeDocument;
-
-  try {
-    setFactionChoice('blue');
-    wireFactionChoiceButtons(fakeDocument);
-
-    for (const faction of ['blue', 'red', 'green']) {
-      buttons.find((button) => button.dataset.faction === faction).click();
-      assert.equal(
-        buttons.filter((button) => button.classList.contains('active')).length,
-        1,
-        `exactly one faction should be active after choosing ${faction}`
-      );
-      buttons.forEach((button) => {
-        assert.equal(button.classList.contains('active'), button.dataset.faction === faction);
-      });
-      assert.deepEqual(
-        buildAuthPayload({ username: 'PlayerOne', password: 'secret123', isRegister: true }),
-        { username: 'PlayerOne', password: 'secret123', faction }
-      );
-    }
-  } finally {
-    global.document = previousDocument;
-  }
+test('registration payload never includes a faction: it is assigned automatically each season', () => {
+  assert.deepEqual(
+    buildAuthPayload({ username: 'PlayerOne', password: 'secret123', isRegister: true }),
+    { username: 'PlayerOne', password: 'secret123' }
+  );
+  assert.deepEqual(
+    buildAuthPayload({ username: 'PlayerOne', password: 'secret123', isRegister: true, faction: 'red' }),
+    { username: 'PlayerOne', password: 'secret123' }
+  );
 });
 
 test('map legend marks only blue as the current player for blue players', () => {

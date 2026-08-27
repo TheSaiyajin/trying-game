@@ -15,7 +15,7 @@ const {
   isAuthorizedAdminPlayer,
   getRegistrationRole,
 } = require('./admin-policy');
-const { buildArmyName, changePlayerFaction } = require('./admin-faction-change');
+const { changePlayerFaction } = require('./admin-faction-change');
 const {
   getSeasonResetPlan,
   resetAllPlayerResources,
@@ -411,17 +411,15 @@ app.get('/api/health', (req, res) => {
 app.post('/api/register', asyncHandler(async (req, res) => {
   const username = String(req.body.username || '').trim();
   const password = String(req.body.password || '');
-  const rawFaction = String(req.body.faction || '').trim().toLowerCase();
-  const faction = rawFaction && validFactions.includes(rawFaction) ? rawFaction : null;
+  // Faction is never accepted from the client: it is only ever assigned by the current
+  // season's automatic balancing on first authenticated activity (see season.js). Any
+  // faction submitted here is silently ignored, never validated or trusted.
 
   if (!isSafeUsername(username)) {
     return res.status(400).json({ error: 'Username must be 3-32 letters, numbers, underscores, or hyphens.' });
   }
   if (!password || password.length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-  }
-  if (rawFaction && !validFactions.includes(rawFaction)) {
-    return res.status(400).json({ error: 'Faction must be blue, red, or green.' });
   }
 
   const existing = await getPlayerByUsername(username);
@@ -434,9 +432,9 @@ app.post('/api/register', asyncHandler(async (req, res) => {
   const role = getRegistrationRole(username);
   const insertPlayer = await db.query(
     `INSERT INTO players (username, password_hash, faction, faction_locked, role, army_name)
-     VALUES ($1, $2, $3, $4, $5, $6)
+     VALUES ($1, $2, NULL, FALSE, $3, 'Unassigned Army')
      RETURNING id, username, faction, role, faction_locked`,
-    [username, passwordHash, faction, Boolean(faction), role, faction ? buildArmyName(faction) : 'Unassigned Army']
+    [username, passwordHash, role]
   );
 
   const player = insertPlayer.rows[0];
@@ -477,20 +475,11 @@ app.get('/api/me', requireAuth, asyncHandler(async (req, res) => {
   res.json({ id: player.id, username: player.username, faction: player.faction, role: player.role, factionLocked: player.faction_locked, needsFactionSelection: !player.faction });
 }));
 
+// Disabled for normal players: factions are only ever assigned by the current season's
+// automatic balancing (see season.js), never chosen manually. Kept as a route (rather than
+// removed) so old clients get a clear, stable error instead of a raw 404.
 app.post('/api/player/faction', requireAuth, asyncHandler(async (req, res) => {
-  const faction = String(req.body.faction || '').trim().toLowerCase();
-  const player = await getPlayerById(req.user.userId);
-
-  if (!validFactions.includes(faction)) {
-    return res.status(400).json({ error: 'Faction must be blue, red, or green.' });
-  }
-  if (player.faction_locked && player.faction && player.faction !== faction) {
-    return res.status(409).json({ error: 'Faction is permanent and cannot be changed.' });
-  }
-
-  const db = await connect();
-  await db.query('UPDATE players SET faction = $1, faction_locked = TRUE, army_name = $3 WHERE id = $2', [faction, player.id, buildArmyName(faction)]);
-  res.json({ ok: true, faction, factionLocked: true, needsFactionSelection: false });
+  res.status(403).json({ error: 'Faction is assigned automatically at the start of each season and cannot be chosen manually.' });
 }));
 
 app.get('/api/world', requireAuth, asyncHandler(async (req, res) => {
