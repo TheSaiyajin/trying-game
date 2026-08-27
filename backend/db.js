@@ -4,6 +4,7 @@ const path = require('path');
 const { ADMIN_USERNAME } = require('./admin-policy');
 const topology = require('../world-topology');
 const topologySql = require('./topology-sql');
+const { ensureCurrentSeason } = require('./season');
 require('dotenv').config();
 
 // A connection pool (not a single shared Client) is required here: routes that run
@@ -105,6 +106,31 @@ async function applySchemaMigrations(currentClient) {
       version INTEGER NOT NULL DEFAULT 0,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
+    `ALTER TABLE players ADD COLUMN IF NOT EXISTS season_wins INTEGER NOT NULL DEFAULT 0`,
+    `CREATE TABLE IF NOT EXISTS seasons (
+      id SERIAL PRIMARY KEY,
+      season_number INTEGER UNIQUE NOT NULL,
+      starts_at TIMESTAMPTZ NOT NULL,
+      ends_at TIMESTAMPTZ NOT NULL,
+      status VARCHAR(16) NOT NULL DEFAULT 'active',
+      blue_score INTEGER,
+      red_score INTEGER,
+      green_score INTEGER,
+      result VARCHAR(16),
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_seasons_status ON seasons (status, id DESC)`,
+    `CREATE TABLE IF NOT EXISTS season_memberships (
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      faction VARCHAR(16) NOT NULL,
+      assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (season_id, player_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_season_memberships_season_faction ON season_memberships (season_id, faction)`,
+    `ALTER TABLE faction_chat_messages ADD COLUMN IF NOT EXISTS season_id INTEGER REFERENCES seasons(id)`,
+    `CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_season_faction ON faction_chat_messages (season_id, faction, created_at DESC, id DESC)`,
   ];
 
 
@@ -134,6 +160,24 @@ async function applySchemaMigrations(currentClient) {
   // <token>, guarded by ADMIN_BOOTSTRAP_TOKEN). This is a defense-in-depth safety net that
   // only ever removes an unexpected admin role from a non-Sai account; it never grants one.
   await currentClient.query(`UPDATE players SET role = 'member' WHERE username <> $1 AND role = 'admin'`, [ADMIN_USERNAME]);
+
+  // Reserved "legacy" season (season_number = 0, already completed) so pre-season chat rows
+  // have somewhere to live. Normal chat endpoints only ever query the active season's id, so
+  // this legacy bucket is never returned to players -- idempotent to run on every startup.
+  const legacySeasonInsert = await currentClient.query(
+    `INSERT INTO seasons (season_number, starts_at, ends_at, status, completed_at)
+     VALUES (0, TO_TIMESTAMP(0), TO_TIMESTAMP(0), 'completed', TO_TIMESTAMP(0))
+     ON CONFLICT (season_number) DO NOTHING
+     RETURNING id`
+  );
+  const legacySeasonRow = legacySeasonInsert.rows[0]
+    || (await currentClient.query('SELECT id FROM seasons WHERE season_number = 0')).rows[0];
+  if (legacySeasonRow) {
+    await currentClient.query(
+      'UPDATE faction_chat_messages SET season_id = $1 WHERE season_id IS NULL',
+      [legacySeasonRow.id]
+    );
+  }
 }
 
 async function initializeDatabase() {
@@ -151,6 +195,20 @@ async function initializeDatabase() {
   }
   console.log('Database initialized');
   await applyTopologyMigrationIfNeeded();
+  await ensureCurrentSeasonOnStartup();
+}
+
+// Startup safety net for "server was offline at midnight": ensures exactly one active
+// season exists, completing any missed rollover(s) using the same transactional,
+// advisory-lock-protected code path as a live request would use.
+async function ensureCurrentSeasonOnStartup() {
+  const client = await pool.connect();
+  try {
+    const season = await ensureCurrentSeason(client);
+    console.log(`Active season: #${season.season_number} (ends ${new Date(season.ends_at).toISOString()})`);
+  } finally {
+    client.release();
+  }
 }
 
 // Idempotent, transactional migration that brings an EXISTING database's territory graph

@@ -103,6 +103,19 @@
     <div class="screen" id="screen-map">
       <h2 class="screen-title">🗺️ World Map</h2>
 
+      <div class="scoreboard" id="scoreboard">
+        <div class="scoreboard-row scoreboard-top">
+          <span id="scoreboard-season">Season —</span>
+          <span id="scoreboard-countdown" title="Daily reset: 00:00 UTC">--:--:--</span>
+        </div>
+        <div class="scoreboard-row scoreboard-scores">
+          <span class="sb-blue">🔵 <span id="scoreboard-blue-score">0</span> <small id="scoreboard-blue-count">(0)</small></span>
+          <span class="sb-red">🔴 <span id="scoreboard-red-score">0</span> <small id="scoreboard-red-count">(0)</small></span>
+          <span class="sb-green">🟢 <span id="scoreboard-green-score">0</span> <small id="scoreboard-green-count">(0)</small></span>
+        </div>
+        <div class="scoreboard-row scoreboard-note">Daily reset: 00:00 UTC</div>
+      </div>
+
       <div class="map-legend" id="map-legend">
         <span class="leg-blue">■ Blue</span>
         <span class="leg-red">■ Red</span>
@@ -112,6 +125,11 @@
 
       <div class="map-container">
         <svg id="map-svg" viewBox="0 0 360 370" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+
+      <div class="section-card" id="season-history-card">
+        <h3>📜 Season History</h3>
+        <div id="season-history-list" class="season-history-list">Loading...</div>
       </div>
 
       <!-- Territory detail panel -->
@@ -188,6 +206,15 @@
     <!-- --- SCREEN 4: ADMIN (admin only) --- -->
     <div class="screen" id="screen-admin" style="display:none;">
       <h2 class="screen-title">🔑 Admin Panel</h2>
+
+      <div class="section-card">
+        <h3>Season Controls</h3>
+        <p class="info-text">Sai-only testing tools. Uses the exact same finalize/reset code as the automatic 00:00 UTC rollover.</p>
+        <div id="admin-season-info">Loading...</div>
+        <div class="admin-world-controls">
+          <button class="btn-danger wide" onclick="adminForceFinishSeason()">⏭️ Force-Finish Season Now</button>
+        </div>
+      </div>
 
       <div class="section-card">
         <h3>World Controls</h3>

@@ -440,6 +440,66 @@ html, body {
 }
 
 /* ---------- Map Screen ---------- */
+.scoreboard {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.scoreboard-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.scoreboard-top {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+#scoreboard-countdown {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-gold);
+}
+.scoreboard-scores {
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+}
+.scoreboard-scores small {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.sb-blue  { color: #7ab8ff; }
+.sb-red   { color: #ff7070; }
+.sb-green { color: #66cc77; }
+.scoreboard-note {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  justify-content: flex-start;
+}
+
+.season-history-list {
+  font-size: 12px;
+}
+.season-history-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.season-history-row:last-child { border-bottom: none; }
+.season-history-result { font-weight: 700; color: var(--accent-gold); }
+
+@media (max-width: 450px) {
+  .scoreboard { font-size: 12px; padding: 7px 8px; }
+  .scoreboard-scores { font-size: 12px; gap: 6px; }
+}
+
 .map-legend {
   display: flex; gap: 8px; flex-wrap: wrap;
   font-size: 11px; margin-bottom: 6px; padding: 0 2px;

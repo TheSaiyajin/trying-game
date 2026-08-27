@@ -39,6 +39,14 @@ const {
 } = require('./defender-garrisons');
 const { resolveBattle } = require('./resolve-battle');
 const {
+  ensureCurrentSeason,
+  ensurePlayerFactionAssignment,
+  forceFinishCurrentSeason,
+  getFactionMemberCounts,
+  computeScores,
+} = require('./season');
+const { getCurrentUtcDayBounds } = require('./season-time');
+const {
  CHAT_RESPONSE_LIMIT,
  createFactionChatMessage,
  getFactionChatMessagesForPlayer,
@@ -74,16 +82,32 @@ function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
-function requireAuth(req, res, next) {
+// Verifies the JWT, then confirms/rotates the active season and (on a player's first
+// authenticated request of a season) assigns them to the currently smallest faction. This
+// runs before every authenticated route so gameplay authorization always reflects the
+// active season -- a still-logged-in player is transparently moved into the new season
+// without needing to log out, and previous-season membership can never authorize anything.
+async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Authentication required.' });
 
   try {
     req.user = verifyToken(token);
-    next();
   } catch (error) {
     return res.status(401).json({ error: 'Invalid or expired session token.' });
+  }
+
+  const client = await getClient();
+  try {
+    const season = await ensureCurrentSeason(client);
+    await ensurePlayerFactionAssignment(client, { seasonId: season.id, playerId: req.user.userId });
+    req.currentSeason = season;
+    next();
+  } catch (error) {
+    next(error);
+  } finally {
+    client.release();
   }
 }
 
@@ -293,7 +317,7 @@ function startResourceTickLoop() {
   resourceTickHandle = setInterval(runGlobalResourceTick, 60 * 1000);
 }
 
-async function getPlayerWorldState(playerId) {
+async function getPlayerWorldState(playerId, season = null) {
   const player = await applyOfflineResourceEarnings(playerId) || await getPlayerById(playerId);
   if (!player) return null;
 
@@ -344,6 +368,21 @@ async function getPlayerWorldState(playerId) {
         role: row.role,
       })),
     },
+    season: await buildSeasonSummary(db, season, territories),
+  };
+}
+
+async function buildSeasonSummary(db, season, territories) {
+  if (!season) return null;
+  const liveScores = computeScores(territories);
+  const memberCounts = await getFactionMemberCounts(db, season.id);
+  return {
+    seasonNumber: season.season_number,
+    startsAt: season.starts_at,
+    endsAt: season.ends_at,
+    status: season.status,
+    scores: liveScores,
+    memberCounts,
   };
 }
 
@@ -455,23 +494,24 @@ app.post('/api/player/faction', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 app.get('/api/world', requireAuth, asyncHandler(async (req, res) => {
-  const snapshot = await getPlayerWorldState(req.user.userId);
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
   if (!snapshot) return res.status(404).json({ error: 'Player not found.' });
   res.json(snapshot.world);
 }));
 
 app.get('/api/player/state', requireAuth, asyncHandler(async (req, res) => {
-  const snapshot = await getPlayerWorldState(req.user.userId);
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
   if (!snapshot) return res.status(404).json({ error: 'Player not found.' });
   res.json(snapshot.player);
 }));
 
 app.get('/api/game/state', requireAuth, asyncHandler(async (req, res) => {
-  const snapshot = await getPlayerWorldState(req.user.userId);
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
   if (!snapshot) return res.status(404).json({ error: 'Player not found.' });
   res.json({
     player: snapshot.player,
     world: snapshot.world,
+    season: snapshot.season,
     serverTime: Date.now(),
   });
 }));
@@ -534,7 +574,7 @@ app.post('/api/game/upgrade-building', requireAuth, asyncHandler(async (req, res
     [player.id]
   );
 
-  const snapshot = await getPlayerWorldState(player.id);
+  const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
   res.json({ ok: true, state: snapshot });
 }));
 
@@ -564,7 +604,7 @@ app.post('/api/game/train-soldiers', requireAuth, asyncHandler(async (req, res) 
     [cost.food, cost.iron, cost.manpower, count, player.id]
   );
 
-  const snapshot = await getPlayerWorldState(player.id);
+  const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
   res.json({ ok: true, state: snapshot, trainingCost: cost, trained: count });
 }));
 
@@ -623,7 +663,7 @@ app.post('/api/game/defend', requireAuth, asyncHandler(async (req, res) => {
     client.release();
   }
 
-  const snapshot = await getPlayerWorldState(player.id);
+  const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
   res.json({ ok: true, state: snapshot, stationed: troops, territoryId });
 }));
 
@@ -689,7 +729,7 @@ app.post('/api/game/recall-defenders', requireAuth, asyncHandler(async (req, res
     client.release();
   }
 
-  const snapshot = await getPlayerWorldState(player.id);
+  const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
   res.json({ ok: true, state: snapshot, recalled: troops, territoryId });
 }));
 
@@ -714,22 +754,22 @@ app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
     client.release();
   }
 
-  const snapshot = await getPlayerWorldState(req.user.userId);
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
   res.json({ ok: true, state: snapshot, sent: result.sent, territoryId: result.territoryId, outcome: result.outcome });
 }));
 
 app.get('/api/game/faction-chat', requireAuth, asyncHandler(async (req, res) => {
   const player = await getCurrentAuthedPlayer(req);
   const db = await connect();
-  const result = await getFactionChatMessagesForPlayer(db, player);
+  const result = await getFactionChatMessagesForPlayer(db, player, req.currentSeason.id);
   if (!result.ok) return res.status(result.status).json({ error: result.error });
-  res.json({ faction: result.faction, messages: result.messages });
+  res.json({ faction: result.faction, seasonId: result.seasonId, messages: result.messages });
 }));
 
 app.post('/api/game/faction-chat', requireAuth, factionChatSendRateLimit, asyncHandler(async (req, res) => {
   const player = await getCurrentAuthedPlayer(req);
   const db = await connect();
-  const result = await createFactionChatMessage(db, { player, message: req.body.message });
+  const result = await createFactionChatMessage(db, { player, seasonId: req.currentSeason.id, message: req.body.message });
   if (!result.ok) return res.status(result.status).json({ error: result.error });
 
   res.status(201).json({ faction: player.faction, message: result.message });
@@ -747,7 +787,7 @@ app.post('/api/game/resolve-battle', requireAuth, asyncHandler(async (req, res) 
     if (!result.ok) {
       return res.status(result.status).json({ error: result.error });
     }
-    const snapshot = await getPlayerWorldState(player.id);
+    const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
     res.json({ ok: true, outcome: result.outcome, state: snapshot });
   } finally {
     db.release();
@@ -979,6 +1019,76 @@ app.post('/api/admin/capital', requireAuth, requireAdmin, asyncHandler(async (re
 
 app.get('/api/admin/season-reset-plan', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   res.json({ plan: getSeasonResetPlan() });
+}));
+
+app.get('/api/game/season-history', requireAuth, asyncHandler(async (req, res) => {
+  const db = await connect();
+  const limit = Math.min(20, Math.max(1, Number(req.query.limit || 10)));
+  const result = await db.query(
+    `SELECT season_number, starts_at, ends_at, status, blue_score, red_score, green_score, result, completed_at
+     FROM seasons
+     WHERE season_number > 0 AND status = 'completed'
+     ORDER BY season_number DESC
+     LIMIT $1`,
+    [limit]
+  );
+  res.json({
+    seasons: result.rows.map((row) => ({
+      seasonNumber: row.season_number,
+      startsAt: row.starts_at,
+      endsAt: row.ends_at,
+      blueScore: row.blue_score,
+      redScore: row.red_score,
+      greenScore: row.green_score,
+      result: row.result,
+      completedAt: row.completed_at,
+    })),
+  });
+}));
+
+app.get('/api/admin/season', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const db = await connect();
+  const season = req.currentSeason;
+  const memberCounts = await getFactionMemberCounts(db, season.id);
+  const territories = await getTerritoriesSnapshot();
+  res.json({
+    season: {
+      id: season.id,
+      seasonNumber: season.season_number,
+      startsAt: season.starts_at,
+      endsAt: season.ends_at,
+      status: season.status,
+      memberCounts,
+      liveScores: computeScores(territories),
+    },
+  });
+}));
+
+app.post('/api/admin/season/force-finish', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  if (req.body.confirm !== true) {
+    return res.status(400).json({ error: 'Set confirm: true to force-finish the current season.' });
+  }
+
+  const client = await getClient();
+  let result;
+  try {
+    result = await forceFinishCurrentSeason(client, { actorId: req.user.userId });
+  } finally {
+    client.release();
+  }
+
+  res.json({
+    message: result.finishedSeason
+      ? `Season #${result.finishedSeason.season_number} force-finished (${result.finishedSeason.result}). Season #${result.season.season_number} has started.`
+      : `No active season to finish. Season #${result.season.season_number} has started.`,
+    finishedSeason: result.finishedSeason,
+    newSeason: {
+      id: result.season.id,
+      seasonNumber: result.season.season_number,
+      startsAt: result.season.starts_at,
+      endsAt: result.season.ends_at,
+    },
+  });
 }));
 
 // Must be registered last, before listen. Logs the real exception server-side (never

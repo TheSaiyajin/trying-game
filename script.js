@@ -21,6 +21,7 @@ const DEFAULT_STATE = {
   attackTarget: '',
   attackContributions: {},
   chatMessages: [],
+  season: null,
 };
 
 let G = structuredClone(DEFAULT_STATE);
@@ -98,6 +99,71 @@ function renderMapLegend(playerFaction, root = document) {
   });
 }
 
+function formatCountdown(msRemaining) {
+  const totalSeconds = Math.max(0, Math.floor(msRemaining / 1000));
+  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function renderScoreboard() {
+  const season = G.season;
+  const seasonEl = document.getElementById('scoreboard-season');
+  const countdownEl = document.getElementById('scoreboard-countdown');
+  if (!seasonEl || !countdownEl) return;
+
+  if (!season) {
+    seasonEl.textContent = 'Season —';
+    countdownEl.textContent = '--:--:--';
+    return;
+  }
+
+  seasonEl.textContent = `Season ${season.seasonNumber}`;
+  countdownEl.textContent = formatCountdown(new Date(season.endsAt).getTime() - Date.now());
+
+  const scores = season.scores || { blue: 0, red: 0, green: 0 };
+  const counts = season.memberCounts || { blue: 0, red: 0, green: 0 };
+  document.getElementById('scoreboard-blue-score').textContent = scores.blue ?? 0;
+  document.getElementById('scoreboard-red-score').textContent = scores.red ?? 0;
+  document.getElementById('scoreboard-green-score').textContent = scores.green ?? 0;
+  document.getElementById('scoreboard-blue-count').textContent = `(${counts.blue ?? 0})`;
+  document.getElementById('scoreboard-red-count').textContent = `(${counts.red ?? 0})`;
+  document.getElementById('scoreboard-green-count').textContent = `(${counts.green ?? 0})`;
+}
+
+function tickScoreboardCountdown() {
+  const countdownEl = document.getElementById('scoreboard-countdown');
+  if (!countdownEl || !G.season) return;
+  countdownEl.textContent = formatCountdown(new Date(G.season.endsAt).getTime() - Date.now());
+}
+
+async function renderSeasonHistory() {
+  const container = document.getElementById('season-history-list');
+  if (!container) return;
+  try {
+    const data = await apiFetch('/game/season-history?limit=5');
+    const seasons = data.seasons || [];
+    if (!seasons.length) {
+      container.textContent = 'No completed seasons yet.';
+      return;
+    }
+    container.innerHTML = seasons.map((s) => {
+      const resultLabel = s.result === 'draw' ? 'Draw' : `${s.result?.charAt(0).toUpperCase()}${s.result?.slice(1)} won`;
+      return `
+        <div class="season-history-row">
+          <strong>Season ${s.seasonNumber}</strong>
+          <span class="info-text">${new Date(s.startsAt).toISOString().slice(0, 10)} → ${new Date(s.endsAt).toISOString().slice(0, 10)} UTC</span>
+          <span>🔵${s.blueScore ?? 0} 🔴${s.redScore ?? 0} 🟢${s.greenScore ?? 0}</span>
+          <span class="season-history-result">${resultLabel}</span>
+        </div>
+      `;
+    }).join('');
+  } catch (error) {
+    container.textContent = `Error: ${error.message}`;
+  }
+}
+
 function updateAdminVisibility(player) {
   const adminNav = document.getElementById('nav-admin');
   const adminScreen = document.getElementById('screen-admin');
@@ -108,6 +174,7 @@ function updateAdminVisibility(player) {
 }
 
 function setGameStateFromSnapshot(snapshot) {
+  const previousFaction = G.player?.faction || null;
   G = {
     player: {
       ...(snapshot.player || {}),
@@ -120,10 +187,17 @@ function setGameStateFromSnapshot(snapshot) {
     territories: mapTerritories(snapshot.world?.territories || snapshot.territories || []),
     attackTarget: '',
     attackContributions: {},
-    chatMessages: G.chatMessages || [],
+    // A season/faction change invalidates any cached chat: never show the previous
+    // faction's messages, even briefly, while the new season's chat loads.
+    chatMessages: previousFaction && previousFaction === G.player?.faction ? (G.chatMessages || []) : [],
+    season: snapshot.season || null,
   };
   renderMapLegend(G.player.faction);
   updateAdminVisibility(G.player);
+  renderScoreboard();
+  if (previousFaction && snapshot.player && previousFaction !== snapshot.player.faction) {
+    renderFactionChat({ scrollToNewest: true });
+  }
 }
 
 function getToken() {
@@ -370,7 +444,7 @@ function showScreen(name) {
   const targetNav = document.getElementById('nav-' + name);
   if (targetNav) targetNav.classList.add('active');
   if (name === 'city') renderCity();
-  if (name === 'map') renderMap();
+  if (name === 'map') { renderMap(); renderScoreboard(); renderSeasonHistory(); }
   if (name === 'activity') renderActivity();
   if (name === 'chat') renderFactionChat({ scrollToNewest: true });
   if (name === 'admin') renderAdminPanel();
@@ -994,8 +1068,48 @@ function stopFactionChatPolling() {
 
 async function renderAdminPanel() {
   if (!isAdminUser(G.player)) return;
+  renderAdminSeasonInfo();
   renderAdminPlayers();
   renderAdminTerritories();
+}
+
+async function renderAdminSeasonInfo() {
+  const container = document.getElementById('admin-season-info');
+  if (!container) return;
+  try {
+    const data = await apiFetch('/admin/season');
+    const s = data.season;
+    const counts = s.memberCounts || {};
+    const scores = s.liveScores || {};
+    container.innerHTML = `
+      <div class="admin-territory-row">
+        <strong>Season ${s.seasonNumber}</strong>
+        <span class="admin-badge">ends ${new Date(s.endsAt).toISOString()}</span>
+      </div>
+      <div class="admin-territory-row">
+        <span>🔵 ${scores.blue ?? 0} pts (${counts.blue ?? 0} players)</span>
+        <span>🔴 ${scores.red ?? 0} pts (${counts.red ?? 0} players)</span>
+        <span>🟢 ${scores.green ?? 0} pts (${counts.green ?? 0} players)</span>
+      </div>
+    `;
+  } catch (error) {
+    container.textContent = `Error: ${error.message}`;
+  }
+}
+
+async function adminForceFinishSeason() {
+  if (!confirm('Force-finish the current season right now?\n\nThis finalizes scores, awards prestige to the winning faction, and immediately starts the next season using the same reset as an automatic midnight rollover.')) return;
+  try {
+    const res = await apiFetch('/admin/season/force-finish', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
+    });
+    showToast(`✅ ${res.message}`);
+    await loadGame();
+    renderAdminSeasonInfo();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
 }
 
 async function renderAdminPlayers() {
@@ -1384,6 +1498,9 @@ if (typeof document !== 'undefined') {
             renderActivity();
           }
         }, 30000);
+        // Smooth HH:MM:SS countdown to the next daily 00:00 UTC reset; the season data
+        // itself only refreshes with the 60s background poll above.
+        setInterval(tickScoreboardCountdown, 1000);
       } else {
         showAuthScreen();
         setAuthMode('login');
@@ -1414,5 +1531,7 @@ if (typeof module !== 'undefined') {
     startFactionChatPolling,
     wireFactionChoiceButtons,
     buildTerritoryLayout,
+    formatCountdown,
+    renderScoreboard,
   };
 }

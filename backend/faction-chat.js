@@ -26,20 +26,24 @@ function assertFactionPlayer(player) {
   return { ok: true };
 }
 
-async function listFactionChatMessages(client, faction, limit = CHAT_RESPONSE_LIMIT) {
+// Messages are always scoped to a specific season_id + faction: a player reassigned to a
+// different faction next season (or a season that has since ended) must never see chat from
+// a faction/season combination they were not a current member of at the time.
+async function listFactionChatMessages(client, seasonId, faction, limit = CHAT_RESPONSE_LIMIT) {
   const safeLimit = Math.max(1, Math.min(CHAT_RESPONSE_LIMIT, Number(limit) || CHAT_RESPONSE_LIMIT));
   const result = await client.query(
-    `SELECT fcm.id, fcm.faction, fcm.player_id, p.username, fcm.message, fcm.created_at
+    `SELECT fcm.id, fcm.season_id, fcm.faction, fcm.player_id, p.username, fcm.message, fcm.created_at
      FROM faction_chat_messages fcm
      INNER JOIN players p ON p.id = fcm.player_id
-     WHERE fcm.faction = $1
+     WHERE fcm.season_id = $1 AND fcm.faction = $2
      ORDER BY fcm.created_at DESC, fcm.id DESC
-     LIMIT $2`,
-    [faction, safeLimit]
+     LIMIT $3`,
+    [seasonId, faction, safeLimit]
   );
 
   return result.rows.reverse().map((row) => ({
     id: row.id,
+    seasonId: row.season_id,
     faction: row.faction,
     playerId: row.player_id,
     username: row.username,
@@ -48,7 +52,7 @@ async function listFactionChatMessages(client, faction, limit = CHAT_RESPONSE_LI
   }));
 }
 
-async function getFactionChatMessagesForPlayer(client, player, limit = CHAT_RESPONSE_LIMIT) {
+async function getFactionChatMessagesForPlayer(client, player, seasonId, limit = CHAT_RESPONSE_LIMIT) {
   const playerStatus = assertFactionPlayer(player);
   if (!playerStatus.ok) {
     return playerStatus;
@@ -56,11 +60,12 @@ async function getFactionChatMessagesForPlayer(client, player, limit = CHAT_RESP
   return {
     ok: true,
     faction: player.faction,
-    messages: await listFactionChatMessages(client, player.faction, limit),
+    seasonId,
+    messages: await listFactionChatMessages(client, seasonId, player.faction, limit),
   };
 }
 
-async function createFactionChatMessage(client, { player, message }) {
+async function createFactionChatMessage(client, { player, seasonId, message }) {
   const playerStatus = assertFactionPlayer(player);
   if (!playerStatus.ok) {
     return playerStatus;
@@ -72,16 +77,17 @@ async function createFactionChatMessage(client, { player, message }) {
   }
 
   const result = await client.query(
-    `INSERT INTO faction_chat_messages (faction, player_id, message)
-     VALUES ($1, $2, $3)
-     RETURNING id, faction, player_id, message, created_at`,
-    [player.faction, player.id, normalized.message]
+    `INSERT INTO faction_chat_messages (season_id, faction, player_id, message)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, season_id, faction, player_id, message, created_at`,
+    [seasonId, player.faction, player.id, normalized.message]
   );
   const row = result.rows[0];
   return {
     ok: true,
     message: {
       id: row.id,
+      seasonId: row.season_id,
       faction: row.faction,
       playerId: row.player_id,
       username: player.username,

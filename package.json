@@ -9,7 +9,7 @@
     "dev": "node --watch backend/server.js",
     "db:init": "node backend/db.js --init",
     "test": "node --test tests/*.js",
-    "build": "node --check backend/server.js && node --check script.js && node --check world-topology.js && node --check backend/topology-sql.js && node --check backend/admin-bootstrap.js"
+    "build": "node --check backend/server.js && node --check script.js && node --check world-topology.js && node --check backend/topology-sql.js && node --check backend/admin-bootstrap.js && node --check backend/season.js && node --check backend/season-time.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
