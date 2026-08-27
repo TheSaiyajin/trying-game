@@ -141,18 +141,15 @@ function hideAuthScreen() {
   const authScreen = document.getElementById('auth-screen');
   if (authScreen) authScreen.style.display = 'none';
   setGameShellVisible(true);
-  document.querySelectorAll('.screen').forEach((screen) => {
-    screen.style.display = screen.id === 'screen-city' ? 'block' : 'none';
-  });
+  showScreen('city');
 }
 
 function showAuthScreen() {
   const authScreen = document.getElementById('auth-screen');
   if (authScreen) authScreen.style.display = 'flex';
   setGameShellVisible(false);
-  document.querySelectorAll('.screen').forEach((screen) => {
-    screen.style.display = 'none';
-  });
+  document.querySelectorAll('.screen').forEach((screen) => screen.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach((button) => button.classList.remove('active'));
 }
 
 async function submitAuth(event) {
@@ -344,7 +341,6 @@ async function upgradeBuilding(key) {
     };
     renderCity();
     renderMap();
-    renderFaction();
     updateResourceBar();
     showToast(`✅ ${key} upgraded on the server.`);
   } catch (error) {
@@ -369,7 +365,6 @@ async function trainSoldiers() {
       territories: mapTerritories(response.state.world.territories),
     };
     renderCity();
-    renderFaction();
     updateResourceBar();
     showToast(`✅ Trained ${response.trained} soldier(s) on the server.`);
   } catch (error) {
