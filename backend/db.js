@@ -1,22 +1,36 @@
-const { Client } = require('pg');
+const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-const client = new Client({
+// A connection pool (not a single shared Client) is required here: routes that run
+// explicit BEGIN/COMMIT/ROLLBACK transactions (attack, defend, recall, resolve-battle)
+// must run on a dedicated connection. Sharing one Client across concurrent requests lets
+// unrelated queries interleave inside another request's open transaction, which is what
+// caused attack requests to intermittently fail with a generic 500 in production.
+const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT || 5432),
   database: process.env.DB_NAME || 'trying_game',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
+  max: Number(process.env.DB_POOL_MAX || 10),
 });
 
+pool.on('error', (error) => {
+  console.error('Unexpected idle Postgres client error:', error);
+});
+
+// Returns the pool itself. Safe for one-off queries: pool.query() checks out and
+// releases a connection automatically. Not safe for multi-statement transactions.
 async function connect() {
-  if (!client._connected) {
-    await client.connect();
-    client._connected = true;
-  }
-  return client;
+  return pool;
+}
+
+// Returns a dedicated client checked out from the pool. Callers MUST call
+// client.release() when done (use try/finally). Required for any BEGIN/COMMIT/ROLLBACK.
+async function getClient() {
+  return pool.connect();
 }
 
 async function applySchemaMigrations(currentClient = client) {
@@ -57,20 +71,25 @@ async function applySchemaMigrations(currentClient = client) {
 }
 
 async function initializeDatabase() {
-  await connect();
   const schemaPath = path.join(__dirname, 'schema.sql');
   if (!fs.existsSync(schemaPath)) {
     throw new Error('Missing schema.sql');
   }
   const sql = fs.readFileSync(schemaPath, 'utf8');
-  await client.query(sql);
-  await applySchemaMigrations(client);
+  const setupClient = await pool.connect();
+  try {
+    await setupClient.query(sql);
+    await applySchemaMigrations(setupClient);
+  } finally {
+    setupClient.release();
+  }
   console.log('Database initialized');
 }
 
 module.exports = {
-  client,
+  pool,
   connect,
+  getClient,
   applySchemaMigrations,
   initializeDatabase,
 };

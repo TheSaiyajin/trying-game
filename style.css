@@ -451,6 +451,12 @@ html, body {
 .territory:hover { filter: brightness(1.4); }
 .territory.selected { stroke: #fff !important; stroke-width: 3 !important; filter: brightness(1.5); }
 
+.territory-link {
+  stroke: rgba(139, 148, 158, 0.45);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
 #map-svg text {
   pointer-events: none;
   user-select: none;

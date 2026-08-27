@@ -449,6 +449,30 @@ function renderMap() {
   const { layout, viewBox } = buildTerritoryLayout(G.territories);
   svg.setAttribute('viewBox', viewBox);
 
+  // Draw connection lines first so hex tiles render on top of them.
+  const drawnEdges = new Set();
+  Object.keys(G.territories).forEach((id) => {
+    const territory = G.territories[id];
+    const from = layout[id];
+    if (!territory || !from) return;
+
+    (territory.adj || []).forEach((neighborId) => {
+      const to = layout[neighborId];
+      if (!to) return;
+      const edgeKey = [id, neighborId].sort().join('|');
+      if (drawnEdges.has(edgeKey)) return;
+      drawnEdges.add(edgeKey);
+
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', from.cx);
+      line.setAttribute('y1', from.cy);
+      line.setAttribute('x2', to.cx);
+      line.setAttribute('y2', to.cy);
+      line.setAttribute('class', 'territory-link');
+      svg.appendChild(line);
+    });
+  });
+
   sortTerritoryIds(Object.keys(G.territories)).forEach((id) => {
     const territory = G.territories[id];
     const position = layout[id];
