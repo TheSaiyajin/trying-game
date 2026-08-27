@@ -47,13 +47,13 @@ test('older battle resolution cannot capture capitals', async () => {
 
 test('battle resolution also re-checks capital protection after locking', async () => {
   const client = createResolveBattleClient({
-    initialTerritory: { id: 'r1', owner_faction: 'red', defense_troops: 30, is_fortress: false, is_capital: false },
-    lockedTerritory: { id: 'r1', owner_faction: 'red', defense_troops: 30, is_fortress: false, is_capital: true },
+    initialTerritory: { id: 'n1', owner_faction: 'red', defense_troops: 30, is_fortress: false, is_capital: false },
+    lockedTerritory: { id: 'n1', owner_faction: 'red', defense_troops: 30, is_fortress: false, is_capital: true },
   });
 
   const result = await resolveBattle(client, {
     player: { id: 1, faction: 'blue' },
-    territoryId: 'r1',
+    territoryId: 'n1',
   });
 
   assert.deepEqual(result, {
