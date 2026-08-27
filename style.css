@@ -32,7 +32,9 @@ html, body {
   font-family: 'Segoe UI', system-ui, sans-serif;
   font-size: 15px;
   line-height: 1.5;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: auto;
 }
 
 .auth-screen {
@@ -299,6 +301,7 @@ html, body {
   left: 0; right: 0;
   bottom: var(--nav-h);
   overflow-y: auto;
+  overscroll-behavior-y: auto;
   padding: 10px 10px 6px;
   -webkit-overflow-scrolling: touch;
 }

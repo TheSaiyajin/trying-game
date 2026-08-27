@@ -589,8 +589,64 @@ function autoSave() {
   // no browser-owned game save; only auth token remains client-side
 }
 
+function enablePullToRefreshFallback() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+  let pullArmed = false;
+  let pullReady = false;
+  let startY = 0;
+  const triggerDistance = 120;
+
+  const getActiveScreen = () => document.querySelector('.screen.active');
+
+  document.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1) return;
+
+    const screen = getActiveScreen();
+    if (!screen) return;
+    if (screen.scrollTop > 0) return;
+
+    const touch = event.touches[0];
+    if (touch.clientY > 96) return;
+
+    startY = touch.clientY;
+    pullArmed = true;
+    pullReady = false;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (event) => {
+    if (!pullArmed || event.touches.length !== 1) return;
+
+    const screen = getActiveScreen();
+    if (!screen || screen.scrollTop > 0) {
+      pullArmed = false;
+      pullReady = false;
+      return;
+    }
+
+    const deltaY = event.touches[0].clientY - startY;
+    if (deltaY >= triggerDistance && !pullReady) {
+      pullReady = true;
+      showToast('↻ Release to refresh');
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', () => {
+    if (pullArmed && pullReady) {
+      showToast('↻ Refreshing...');
+      window.location.reload();
+      return;
+    }
+
+    pullArmed = false;
+    pullReady = false;
+  }, { passive: true });
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', async () => {
+    enablePullToRefreshFallback();
+
     const authForm = document.getElementById('auth-form');
     const authModeButtons = document.querySelectorAll('.auth-mode-btn');
 
