@@ -86,6 +86,8 @@ test('legacy databases get the required player migration columns before registra
   assert.ok(sqlCalls.some((sql) => sql.includes('UPDATE territories t') && sql.includes('GREATEST(t.defense_troops')));
   assert.ok(sqlCalls.some((sql) => sql.includes("UPDATE players SET role = 'admin' WHERE username = $1")));
   assert.ok(sqlCalls.some((sql) => sql.includes("UPDATE players SET role = 'member' WHERE username <> $1 AND role = 'admin'")));
+  assert.ok(sqlCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS faction_chat_messages')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time')));
 });
 
 test('training cost and idle earnings are consistent with server-authoritative rules', () => {

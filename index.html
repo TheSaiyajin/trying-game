@@ -103,8 +103,8 @@
     <div class="screen" id="screen-map">
       <h2 class="screen-title">🗺️ World Map</h2>
 
-      <div class="map-legend">
-        <span class="leg-blue">■ Blue (You)</span>
+      <div class="map-legend" id="map-legend">
+        <span class="leg-blue">■ Blue</span>
         <span class="leg-red">■ Red</span>
         <span class="leg-green">■ Green</span>
         <span class="leg-target">⬡ Target</span>
@@ -210,6 +210,27 @@
       </div>
     </div>
 
+    <!-- --- SCREEN 5: CHAT --- -->
+    <div class="screen" id="screen-chat">
+      <h2 class="screen-title">💬 Faction Chat</h2>
+      <div class="section-card chat-card">
+        <p class="info-text">Only your current faction can read these messages.</p>
+        <div class="chat-emoji-row">
+          <button class="btn-small" type="button" onclick="insertChatEmoji('⚔️')">⚔️</button>
+          <button class="btn-small" type="button" onclick="insertChatEmoji('🛡️')">🛡️</button>
+          <button class="btn-small" type="button" onclick="insertChatEmoji('🏰')">🏰</button>
+          <button class="btn-small" type="button" onclick="insertChatEmoji('✅')">✅</button>
+          <button class="btn-small" type="button" onclick="insertChatEmoji('❌')">❌</button>
+          <button class="btn-small" type="button" onclick="insertChatEmoji('🔥')">🔥</button>
+        </div>
+        <textarea id="chat-input" class="chat-input" maxlength="500" rows="3" placeholder="Send a message to your faction..."></textarea>
+        <button class="btn-primary wide" type="button" onclick="sendFactionChatMessage()">Send to Faction</button>
+        <div id="chat-messages" class="chat-messages">
+          <p class="info-text">Loading faction chat...</p>
+        </div>
+      </div>
+    </div>
+
     <!-- ===================== BOTTOM NAVIGATION ===================== -->
     <nav class="bottom-nav">
       <button class="nav-btn active" id="nav-city" onclick="showScreen('city')">
@@ -220,6 +241,9 @@
       </button>
       <button class="nav-btn" id="nav-activity" onclick="showScreen('activity')">
         <span class="nav-icon">⚔️</span><span class="nav-label">Activity</span>
+      </button>
+      <button class="nav-btn" id="nav-chat" onclick="showScreen('chat')">
+        <span class="nav-icon">💬</span><span class="nav-label">Chat</span>
       </button>
       <button class="nav-btn" id="nav-admin" style="display:none;" onclick="showScreen('admin')">
         <span class="nav-icon">🔑</span><span class="nav-label">Admin</span>

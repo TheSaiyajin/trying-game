@@ -448,6 +448,7 @@ html, body {
 .leg-red    { color: #ff7070; font-weight: 700; }
 .leg-green  { color: #66cc77; font-weight: 700; }
 .leg-target { color: var(--accent-gold); font-weight: 700; }
+.territory-capital-marker { font-size: 14px; }
 
 .map-container {
   background: #0a1628;
@@ -662,6 +663,54 @@ html, body {
   opacity: 0.7;
 }
 
+/* ---------- Chat ---------- */
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chat-emoji-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chat-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 92px;
+  max-height: 160px;
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-main);
+  padding: 10px 12px;
+  font: inherit;
+}
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 290px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.chat-entry {
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+}
+.chat-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.chat-message {
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ---------- Admin Panel ---------- */
 .admin-player-row, .admin-territory-row {
   background: var(--bg-card2);
@@ -684,6 +733,9 @@ html, body {
   font-size: 11px;
   color: var(--accent-gold);
   margin-left: 6px;
+}
+.admin-badge-protected {
+  color: var(--accent-gold);
 }
 .admin-player-stats {
   font-size: 12px;

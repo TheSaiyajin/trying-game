@@ -1,4 +1,5 @@
 const { isSaiUsername, normalizeRequestedRole } = require('./admin-policy');
+const { isCapitalTerritory } = require('./territory-protection');
 
 const POSTGRES_INT_MAX = 2147483647;
 
@@ -92,10 +93,11 @@ async function updatePlayerRole(client, { actorId, playerId, role }) {
 }
 
 async function updateTerritory(client, { actorId, territoryId, owner, defense, validFactions }) {
-  const existing = await client.query('SELECT id FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
+  const existing = await client.query('SELECT * FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
   if (!existing.rowCount) {
     return { ok: false, status: 404, error: 'Territory not found.' };
   }
+  const existingTerritory = existing.rows[0];
 
   const updates = [];
   const params = [];
@@ -105,6 +107,9 @@ async function updateTerritory(client, { actorId, territoryId, owner, defense, v
     const normalizedOwner = String(owner || '').trim().toLowerCase();
     if (!validFactions.includes(normalizedOwner) && normalizedOwner !== 'neutral') {
       return { ok: false, status: 400, error: 'Invalid owner faction.' };
+    }
+    if (isCapitalTerritory(existingTerritory) && normalizedOwner !== String(existingTerritory.owner_faction || '').toLowerCase()) {
+      return { ok: false, status: 400, error: 'Capital ownership cannot be changed.' };
     }
     params.push(normalizedOwner);
     updates.push(`owner_faction = $${params.length}`);

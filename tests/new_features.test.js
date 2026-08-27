@@ -4,6 +4,8 @@ const { getFactionTerritoryBonuses, getProductionFromBuildings } = require('../b
 const { seedWorldIfEmpty } = require('../backend/db');
 const {
   buildAuthPayload,
+  canAttack,
+  getFactionLegendEntries,
   mapTerritories,
   isAdminUser,
   setFactionChoice,
@@ -82,6 +84,24 @@ test('faction selector wiring updates active button and registration payload for
   } finally {
     global.document = previousDocument;
   }
+});
+
+test('map legend marks only blue as the current player for blue players', () => {
+  const entries = getFactionLegendEntries('blue');
+  assert.deepEqual(entries.map((entry) => entry.label), ['Blue (You)', 'Red', 'Green', 'Target']);
+  assert.equal(entries.filter((entry) => entry.label.includes('(You)')).length, 1);
+});
+
+test('map legend marks only red as the current player for red players', () => {
+  const entries = getFactionLegendEntries('red');
+  assert.deepEqual(entries.map((entry) => entry.label), ['Blue', 'Red (You)', 'Green', 'Target']);
+  assert.equal(entries.filter((entry) => entry.label.includes('(You)')).length, 1);
+});
+
+test('map legend marks only green as the current player for green players', () => {
+  const entries = getFactionLegendEntries('green');
+  assert.deepEqual(entries.map((entry) => entry.label), ['Blue', 'Red', 'Green (You)', 'Target']);
+  assert.equal(entries.filter((entry) => entry.label.includes('(You)')).length, 1);
 });
 
 test('username policy allows only safe usernames', () => {
@@ -228,6 +248,20 @@ test('defender casualties reduce stationed garrisons proportionally', () => {
 test('mapTerritories preserves bonusValue for territory detail rendering', () => {
   const mapped = mapTerritories([{ id: 'n1', name: 'Farmstead', owner: 'blue', defense: 12, bonus: 'food', bonusValue: 0.1, neighbors: [] }]);
   assert.equal(mapped.n1.bonusValue, 0.1);
+});
+
+test('canAttack returns false for capitals while normal adjacent enemy territories remain attackable', () => {
+  const gameState = {
+    player: { faction: 'blue' },
+    territories: {
+      b1: { id: 'b1', owner: 'blue', capital: true, adj: ['n1'] },
+      r1: { id: 'r1', owner: 'red', capital: true, adj: ['n1'] },
+      n1: { id: 'n1', owner: 'neutral', capital: false, adj: ['b1'] },
+    },
+  };
+
+  assert.equal(canAttack('r1', gameState), false);
+  assert.equal(canAttack('n1', gameState), true);
 });
 
 test('formatBonusLabel produces readable labels for all bonus types', () => {

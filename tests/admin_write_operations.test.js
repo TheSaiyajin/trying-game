@@ -32,9 +32,9 @@ function createAdminClient({ players, territories, factionLeaders }) {
         return { rows: player ? [{ id: player.id, username: player.username, faction: player.faction, role: player.role }] : [], rowCount: player ? 1 : 0 };
       }
 
-      if (text === 'SELECT id FROM territories WHERE id = $1 FOR UPDATE') {
+      if (text === 'SELECT * FROM territories WHERE id = $1 FOR UPDATE') {
         const territory = territories.get(params[0]);
-        return { rows: territory ? [{ id: territory.id }] : [], rowCount: territory ? 1 : 0 };
+        return { rows: territory ? [{ ...territory }] : [], rowCount: territory ? 1 : 0 };
       }
 
       if (text.startsWith('UPDATE players SET resource_')) {
@@ -210,4 +210,46 @@ test('invalid leader assignment returns 400 or 404 before database constraints c
 test('integer parser rejects blank and boolean admin values', () => {
   assert.deepEqual(parseNonNegativeInteger('', 'food'), { ok: false, status: 400, error: 'food must be a valid number.' });
   assert.deepEqual(parseNonNegativeInteger(true, 'food'), { ok: false, status: 400, error: 'food must be a valid number.' });
+});
+
+test('admin cannot change the owner of a capital territory', async () => {
+  const territories = new Map([
+    ['b1', { id: 'b1', owner_faction: 'blue', is_capital: true, defense_troops: 35 }],
+  ]);
+  const client = createAdminClient({ players: new Map(), territories, factionLeaders: new Map() });
+
+  const result = await updateTerritory(client, {
+    actorId: 1,
+    territoryId: 'b1',
+    owner: 'red',
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    status: 400,
+    error: 'Capital ownership cannot be changed.',
+  });
+  assert.equal(territories.get('b1').owner_faction, 'blue');
+  assert.equal(client.adminActions.length, 0);
+});
+
+test('admin can still change a capital defense amount without changing its owner', async () => {
+  const territories = new Map([
+    ['b1', { id: 'b1', owner_faction: 'blue', is_capital: true, defense_troops: 35 }],
+  ]);
+  const client = createAdminClient({ players: new Map(), territories, factionLeaders: new Map() });
+
+  const result = await updateTerritory(client, {
+    actorId: 99,
+    territoryId: 'b1',
+    owner: 'blue',
+    defense: 42,
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(territories.get('b1').owner_faction, 'blue');
+  assert.equal(territories.get('b1').defense_troops, 42);
+  assert.equal(client.adminActions.length, 1);
 });
