@@ -223,6 +223,7 @@ function hideAuthScreen() {
 function showAuthScreen() {
   const authScreen = document.getElementById('auth-screen');
   if (authScreen) authScreen.style.display = 'flex';
+  stopFactionChatPolling();
   setGameShellVisible(false);
   document.querySelectorAll('.screen').forEach((screen) => screen.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach((button) => button.classList.remove('active'));
@@ -310,6 +311,7 @@ async function loadGame() {
   }
 
   hideAuthScreen();
+  startFactionChatPolling();
 
   try {
     const payload = await apiFetch('/game/state');
@@ -982,6 +984,12 @@ function startFactionChatPolling() {
   }, 4000);
 }
 
+function stopFactionChatPolling() {
+  if (!factionChatPollHandle) return;
+  clearInterval(factionChatPollHandle);
+  factionChatPollHandle = null;
+}
+
 // ===================== ADMIN PANEL =====================
 
 async function renderAdminPanel() {
@@ -1326,8 +1334,6 @@ if (typeof document !== 'undefined') {
         }
       });
     }
-    startFactionChatPolling();
-
     const token = getToken();
     if (!token) {
       showAuthScreen();

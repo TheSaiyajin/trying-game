@@ -45,7 +45,6 @@ async function listFactionChatMessages(client, faction, limit = CHAT_RESPONSE_LI
     username: row.username,
     message: row.message,
     createdAt: row.created_at,
-    created_at: row.created_at,
   }));
 }
 
@@ -88,7 +87,6 @@ async function createFactionChatMessage(client, { player, message }) {
       username: player.username,
       message: row.message,
       createdAt: row.created_at,
-      created_at: row.created_at,
     },
   };
 }
