@@ -35,8 +35,17 @@ test('production uses faction-controlled territory bonuses from the backend', ()
 test('battle outcome is resolved server-side using backend calculations', () => {
   const attack = calculateBattleOutcome({ attackers: 120, fortBonus: 1.0 }, { defenders: 90, fortBonus: 1.0 });
   assert.equal(attack.victory, true);
-  assert.ok(attack.attackersRemaining >= 1);
-  assert.ok(attack.defendersLost >= 1);
+  assert.equal(attack.attackersRemaining, 30);
+  assert.equal(attack.defendersLost, 90);
+});
+
+test('attacking with fewer troops removes the same number of defenders and fails', () => {
+  const attack = calculateBattleOutcome({ attackers: 40 }, { defenders: 70 });
+  assert.equal(attack.victory, false);
+  assert.equal(attack.attackersRemaining, 0);
+  assert.equal(attack.attackersLost, 40);
+  assert.equal(attack.defendersLost, 40);
+  assert.equal(attack.defendersRemaining, 30);
 });
 
 test('legacy databases get the required player migration columns before registration runs', async () => {

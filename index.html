@@ -116,15 +116,15 @@
         <div class="tp-grid">
           <div class="tp-item"><span class="tp-label">Owner</span><span id="tp-owner">—</span></div>
           <div class="tp-item"><span class="tp-label">Troops</span><span id="tp-troops">—</span></div>
-          <div class="tp-item"><span class="tp-label">Your contribution</span><span id="tp-your-contribution">0</span></div>
-          <div class="tp-item"><span class="tp-label">Total attacking troops</span><span id="tp-total-attack">0</span></div>
+          <div class="tp-item"><span class="tp-label">Your city soldiers</span><span id="tp-city-soldiers">0</span></div>
+          <div class="tp-item"><span class="tp-label">Battle rule</span><span id="tp-battle-rule">More troops wins</span></div>
           <div class="tp-item tp-wide"><span class="tp-label">Bonus</span><span id="tp-bonus">—</span></div>
           <div class="tp-item tp-wide"><span class="tp-label">Neighbors</span><span id="tp-neighbors">—</span></div>
         </div>
 
         <div id="attack-section" style="display:none;">
           <hr class="divider"/>
-          <p class="attack-hint">⚔️ Contribute / Attack</p>
+          <p class="attack-hint">⚔️ Attack</p>
           <div class="row-center">
             <button class="btn-circle" onclick="changeAttack(-10)">−10</button>
             <button class="btn-circle" onclick="changeAttack(-1)">−</button>
@@ -133,7 +133,21 @@
             <button class="btn-circle" onclick="changeAttack(10)">+10</button>
             <button class="btn-small" onclick="changeAttack('max')">MAX</button>
           </div>
-          <button class="btn-primary wide btn-attack" onclick="launchAttack()">⚔️ Contribute Troops</button>
+          <button class="btn-primary wide btn-attack" onclick="launchAttack()">⚔️ Attack Territory</button>
+        </div>
+
+        <div id="defend-section" style="display:none;">
+          <hr class="divider"/>
+          <p class="attack-hint">🛡️ Defend Owned Territory</p>
+          <div class="row-center">
+            <button class="btn-circle" onclick="changeDefend(-10)">−10</button>
+            <button class="btn-circle" onclick="changeDefend(-1)">−</button>
+            <span class="train-count" id="defend-count">10</span>
+            <button class="btn-circle" onclick="changeDefend(1)">+</button>
+            <button class="btn-circle" onclick="changeDefend(10)">+10</button>
+            <button class="btn-small" onclick="changeDefend('max')">MAX</button>
+          </div>
+          <button class="btn-primary wide" onclick="sendDefenders()">🛡️ Send Defenders</button>
         </div>
       </div>
 

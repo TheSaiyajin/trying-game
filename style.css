@@ -440,11 +440,17 @@ html, body {
   background: #0a1628;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   margin-bottom: 10px;
   box-shadow: var(--shadow);
+  -webkit-overflow-scrolling: touch;
 }
-#map-svg { width: 100%; display: block; }
+#map-svg {
+  width: 100%;
+  min-width: 760px;
+  display: block;
+}
 
 .territory {
   cursor: pointer;
@@ -454,7 +460,7 @@ html, body {
 .territory.selected { stroke: #fff !important; stroke-width: 3 !important; filter: brightness(1.5); }
 
 .ter-label {
-  font-size: 8px; font-weight: 700;
+  font-size: 11px; font-weight: 700;
   fill: #fff;
   pointer-events: none;
   dominant-baseline: middle;

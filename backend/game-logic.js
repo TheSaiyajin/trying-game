@@ -110,22 +110,13 @@ function getOfflineResourceGain(production = {}, seconds = 0, capSeconds = 60 * 
 function calculateBattleOutcome(attackStats, defenseStats) {
   const attackers = clampInt(attackStats.attackers, 0);
   const defenderCount = clampInt(defenseStats.defenders, 0);
-  const attackBonus = Number(attackStats.attackBonus || 1);
-  const defenseBonus = Number(defenseStats.defenseBonus || defenseStats.fortBonus || 1);
-
-  const attackPower = attackers * 0.9 * attackBonus;
-  const defensePower = defenderCount * 0.8 * defenseBonus;
-  const victory = attackPower >= defensePower;
-
-  const defendersLost = victory
-    ? Math.max(1, Math.ceil(defenderCount * 0.5))
-    : Math.max(1, Math.ceil(Math.min(defenderCount, attackers * 0.35)));
-
-  const attackersLost = victory
-    ? Math.max(1, Math.ceil(attackers * 0.28))
-    : Math.max(1, Math.ceil(attackers * 0.45));
-
-  const attackersRemaining = Math.max(1, attackers - attackersLost);
+  const victory = attackers > defenderCount;
+  const defendersLost = victory ? defenderCount : Math.min(defenderCount, attackers);
+  const attackersLost = victory ? defenderCount : attackers;
+  const attackersRemaining = victory ? Math.max(1, attackers - defenderCount) : 0;
+  const defendersRemaining = victory ? 0 : Math.max(1, defenderCount - attackers);
+  const attackPower = attackers;
+  const defensePower = defenderCount;
 
   return {
     victory,
@@ -134,6 +125,7 @@ function calculateBattleOutcome(attackStats, defenseStats) {
     defendersLost,
     attackersLost,
     attackersRemaining,
+    defendersRemaining,
   };
 }
 

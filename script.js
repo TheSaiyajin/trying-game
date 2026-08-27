@@ -24,6 +24,7 @@ const DEFAULT_STATE = {
 let G = structuredClone(DEFAULT_STATE);
 let selectedTerritoryId = null;
 let attackSendCount = 10;
+let defendSendCount = 10;
 let trainAmount = 1;
 
 function showToast(msg) {
@@ -396,29 +397,37 @@ function sortTerritoryIds(ids) {
 
 function buildTerritoryLayout(territoriesById) {
   const ids = sortTerritoryIds(Object.keys(territoriesById));
-  const cols = 6;
-  const xStep = 56;
-  const yStep = 48;
-  const rowOffset = 28;
-  const padX = 36;
-  const padY = 34;
-  const layout = {};
+  const layout = {
+    b1: { cx: 110, cy: 100 },
+    r1: { cx: 650, cy: 100 },
+    g1: { cx: 380, cy: 590 },
+  };
 
-  ids.forEach((id, index) => {
-    const row = Math.floor(index / cols);
-    const col = index % cols;
-    const cx = padX + col * xStep + (row % 2 === 1 ? rowOffset : 0);
-    const cy = padY + row * yStep;
-    layout[id] = { cx, cy };
-  });
+  const neutralIds = ids.filter((id) => id.startsWith('n'));
+  const leftCluster = neutralIds.slice(0, 10);
+  const centerCluster = neutralIds.slice(10, 20);
+  const rightCluster = neutralIds.slice(20, 30);
 
-  const rows = Math.max(1, Math.ceil(ids.length / cols));
-  const width = padX * 2 + (cols - 1) * xStep + rowOffset + 44;
-  const height = padY * 2 + (rows - 1) * yStep + 40;
+  const placeCluster = (clusterIds, originX, originY, cols, xStep, yStep, rowOffset) => {
+    clusterIds.forEach((id, index) => {
+      const row = Math.floor(index / cols);
+      const col = index % cols;
+      const cx = originX + (col * xStep) + (row % 2 === 1 ? rowOffset : 0);
+      const cy = originY + (row * yStep);
+      layout[id] = { cx, cy };
+    });
+  };
+
+  placeCluster(leftCluster, 90, 220, 2, 95, 85, 45);
+  placeCluster(centerCluster, 285, 220, 3, 95, 85, 45);
+  placeCluster(rightCluster, 515, 220, 2, 95, 85, 45);
+
+  const width = 760;
+  const height = 700;
   return { layout, viewBox: `0 0 ${width} ${height}` };
 }
 
-function createHexPoints(cx, cy, radius = 21) {
+function createHexPoints(cx, cy, radius = 34) {
   const points = [];
   for (let i = 0; i < 6; i += 1) {
     const angle = ((60 * i) - 30) * (Math.PI / 180);
@@ -491,16 +500,26 @@ function selectTerritory(id) {
   document.getElementById('tp-name').textContent = territory.name;
   document.getElementById('tp-owner').textContent = ownerLabel(territory.owner);
   document.getElementById('tp-troops').textContent = territory.troops;
+  document.getElementById('tp-city-soldiers').textContent = Number(G.player.soldiers || 0);
+  document.getElementById('tp-battle-rule').textContent = 'Send more troops than defenders to capture';
   document.getElementById('tp-bonus').textContent = territory.bonus;
   document.getElementById('tp-neighbors').textContent = (territory.adj || []).map((neighborId) => G.territories[neighborId]?.name || neighborId).join(', ');
 
   const attackSection = document.getElementById('attack-section');
+  const defendSection = document.getElementById('defend-section');
   if (canAttack(id)) {
     attackSection.style.display = 'block';
+    defendSection.style.display = 'none';
     attackSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
     document.getElementById('attack-count').textContent = attackSendCount;
+  } else if (territory.owner === G.player.faction) {
+    attackSection.style.display = 'none';
+    defendSection.style.display = 'block';
+    defendSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
+    document.getElementById('defend-count').textContent = defendSendCount;
   } else {
     attackSection.style.display = 'none';
+    defendSection.style.display = 'none';
   }
 }
 
@@ -538,10 +557,60 @@ async function launchAttack() {
       player: response.state.player,
       territories: mapTerritories(response.state.world.territories),
     };
-    showToast(`✅ ${attackSendCount} soldiers sent to the server.`);
+    const result = response.outcome;
+    if (result) {
+      document.getElementById('battle-result-text').innerHTML = result.victory
+        ? `<span class="result-victory">⚔️ VICTORY!</span><br>Territory captured.<br>Attackers left: ${result.attackersRemaining}`
+        : `<span class="result-defeat">💀 HELD!</span><br>Attack failed.<br>Defenders left: ${result.defendersRemaining}`;
+      document.getElementById('battle-popup').style.display = 'block';
+    }
+    showToast(result?.victory ? '✅ Territory captured.' : '⚠️ Attack resolved by troop count.');
     renderCity();
     renderMap();
     updateResourceBar();
+    if (selectedTerritoryId) selectTerritory(selectedTerritoryId);
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+function changeDefend(delta) {
+  const maxAmount = Math.max(1, Number(G.player.soldiers) || 1);
+  if (delta === 'max') {
+    defendSendCount = maxAmount;
+  } else {
+    defendSendCount = Math.max(1, Math.min(maxAmount, defendSendCount + delta));
+  }
+  document.getElementById('defend-count').textContent = defendSendCount;
+}
+
+async function sendDefenders() {
+  if (!selectedTerritoryId) {
+    showToast('❌ Select a territory first.');
+    return;
+  }
+
+  const territory = G.territories[selectedTerritoryId];
+  if (!territory || territory.owner !== G.player.faction) {
+    showToast('❌ You can defend only your faction territory.');
+    return;
+  }
+
+  try {
+    const response = await apiFetch('/game/defend', {
+      method: 'POST',
+      body: JSON.stringify({ territoryId: selectedTerritoryId, troops: defendSendCount }),
+    });
+    G = {
+      ...G,
+      player: response.state.player,
+      territories: mapTerritories(response.state.world.territories),
+    };
+    showToast(`🛡️ ${defendSendCount} troops sent to defend ${territory.name}.`);
+    renderCity();
+    renderMap();
+    updateResourceBar();
+    if (selectedTerritoryId) selectTerritory(selectedTerritoryId);
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }

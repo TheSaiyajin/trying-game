@@ -439,6 +439,10 @@ app.post('/api/game/defend', requireAuth, asyncHandler(async (req, res) => {
     `UPDATE players SET soldiers = soldiers - $1, last_action_at = NOW() WHERE id = $2`,
     [troops, player.id]
   );
+  await db.query(
+    `UPDATE territories SET defense_troops = defense_troops + $1 WHERE id = $2`,
+    [troops, territoryId]
+  );
 
   const snapshot = await getPlayerWorldState(player.id);
   res.json({ ok: true, state: snapshot, stationed: troops, territoryId });
@@ -467,6 +471,10 @@ app.post('/api/game/recall-defenders', requireAuth, asyncHandler(async (req, res
   await db.query(
     `UPDATE players SET soldiers = soldiers + $1, last_action_at = NOW() WHERE id = $2`,
     [troops, player.id]
+  );
+  await db.query(
+    `UPDATE territories SET defense_troops = GREATEST(1, defense_troops - $1) WHERE id = $2`,
+    [troops, territoryId]
   );
 
   const snapshot = await getPlayerWorldState(player.id);
@@ -509,23 +517,65 @@ app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
     }
 
     await db.query(
-      `INSERT INTO attack_contributions (territory_id, player_id, contribution, faction)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (territory_id, player_id)
-       DO UPDATE SET contribution = attack_contributions.contribution + EXCLUDED.contribution,
-                    faction = EXCLUDED.faction,
-                    updated_at = NOW()`,
-      [territoryId, player.id, soldiers, player.faction]
-    );
-
-    await db.query(
       `UPDATE players SET soldiers = soldiers - $1, last_action_at = NOW() WHERE id = $2`,
       [soldiers, player.id]
     );
+
+    const lockedTarget = await db.query('SELECT * FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
+    const territory = lockedTarget.rows[0];
+    if (!territory) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Territory not found.' });
+    }
+
+    const defensePower = parsePositiveInt(territory.defense_troops || 0, 0, 1000000);
+    const outcome = calculateBattleOutcome({ attackers: soldiers }, { defenders: defensePower });
+    const ownerBefore = territory.owner_faction;
+    const attackerFaction = player.faction || 'neutral';
+    const defenderFaction = ownerBefore;
+
+    if (outcome.victory) {
+      await db.query(
+        `UPDATE territories SET owner_faction = $1, defense_troops = $2, last_battle_at = NOW() WHERE id = $3`,
+        [attackerFaction, outcome.attackersRemaining, territoryId]
+      );
+      await db.query('DELETE FROM territory_defenders WHERE territory_id = $1', [territoryId]);
+      await db.query(
+        `UPDATE players SET resource_food = resource_food + 25, resource_wood = resource_wood + 25, resource_iron = resource_iron + 25 WHERE id = $1`,
+        [player.id]
+      );
+    } else {
+      await db.query(
+        `UPDATE territories SET defense_troops = $1, last_battle_at = NOW() WHERE id = $2`,
+        [outcome.defendersRemaining, territoryId]
+      );
+    }
+
+    await db.query(
+      `INSERT INTO battle_history (attacker_faction, defender_faction, territory_id, attacker_player_id, troops_sent, defender_total, applied_bonuses, winner, attackers_lost, attackers_surviving, defenders_lost, defenders_surviving, owner_before, owner_after)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [
+        attackerFaction,
+        defenderFaction,
+        territoryId,
+        player.id,
+        soldiers,
+        defensePower,
+        JSON.stringify({ mode: 'troop_count_only' }),
+        outcome.victory ? attackerFaction : defenderFaction,
+        outcome.attackersLost,
+        outcome.attackersRemaining,
+        outcome.defendersLost,
+        outcome.defendersRemaining,
+        ownerBefore,
+        outcome.victory ? attackerFaction : ownerBefore,
+      ]
+    );
+
     await db.query('COMMIT');
 
     const snapshot = await getPlayerWorldState(player.id);
-    res.json({ ok: true, state: snapshot, sent: soldiers, territoryId });
+    res.json({ ok: true, state: snapshot, sent: soldiers, territoryId, outcome });
   } catch (error) {
     await db.query('ROLLBACK');
     throw error;
