@@ -397,37 +397,35 @@ function sortTerritoryIds(ids) {
 
 function buildTerritoryLayout(territoriesById) {
   const ids = sortTerritoryIds(Object.keys(territoriesById));
-  const layout = {
-    b1: { cx: 110, cy: 100 },
-    r1: { cx: 650, cy: 100 },
-    g1: { cx: 380, cy: 590 },
-  };
+  const layout = {};
+
+  // Keep faction capitals on opposite sides so they are never adjacent.
+  layout.b1 = { cx: 110, cy: 86 };
+  layout.r1 = { cx: 650, cy: 86 };
+  layout.g1 = { cx: 380, cy: 650 };
 
   const neutralIds = ids.filter((id) => id.startsWith('n'));
-  const leftCluster = neutralIds.slice(0, 10);
-  const centerCluster = neutralIds.slice(10, 20);
-  const rightCluster = neutralIds.slice(20, 30);
+  const cols = 6;
+  const xStep = 100;
+  const yStep = 92;
+  const rowOffset = 50;
+  const startX = 85;
+  const startY = 210;
 
-  const placeCluster = (clusterIds, originX, originY, cols, xStep, yStep, rowOffset) => {
-    clusterIds.forEach((id, index) => {
-      const row = Math.floor(index / cols);
-      const col = index % cols;
-      const cx = originX + (col * xStep) + (row % 2 === 1 ? rowOffset : 0);
-      const cy = originY + (row * yStep);
-      layout[id] = { cx, cy };
-    });
-  };
-
-  placeCluster(leftCluster, 90, 220, 2, 95, 85, 45);
-  placeCluster(centerCluster, 285, 220, 3, 95, 85, 45);
-  placeCluster(rightCluster, 515, 220, 2, 95, 85, 45);
+  neutralIds.forEach((id, index) => {
+    const row = Math.floor(index / cols);
+    const col = index % cols;
+    const cx = startX + (col * xStep) + (row % 2 === 1 ? rowOffset : 0);
+    const cy = startY + (row * yStep);
+    layout[id] = { cx, cy };
+  });
 
   const width = 760;
-  const height = 700;
+  const height = 740;
   return { layout, viewBox: `0 0 ${width} ${height}` };
 }
 
-function createHexPoints(cx, cy, radius = 34) {
+function createHexPoints(cx, cy, radius = 32) {
   const points = [];
   for (let i = 0; i < 6; i += 1) {
     const angle = ((60 * i) - 30) * (Math.PI / 180);
