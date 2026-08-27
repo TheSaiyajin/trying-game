@@ -229,6 +229,18 @@ async function loadGame() {
     const payload = await apiFetch('/game/state');
     const territories = mapTerritories(payload.world.territories || payload.territories || []);
 
+    if (!payload.player?.faction) {
+      showAuthScreen();
+      setAuthMode('register');
+      const message = document.getElementById('auth-message');
+      if (message) message.textContent = 'Choose your faction to begin playing.';
+      const panel = document.getElementById('auth-faction-panel');
+      if (panel) panel.style.display = 'block';
+      const confirm = document.getElementById('auth-confirm-password');
+      if (confirm) confirm.style.display = 'none';
+      return;
+    }
+
     G = {
       player: {
         ...(payload.player || {}),
@@ -243,7 +255,6 @@ async function loadGame() {
 
     renderCity();
     renderMap();
-    renderFaction();
     updateResourceBar();
   } catch (error) {
     console.error('Failed to load authoritative game state:', error);
@@ -268,11 +279,16 @@ function resetGame() {
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach((screen) => screen.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach((button) => button.classList.remove('active'));
-  document.getElementById('screen-' + name).classList.add('active');
-  document.getElementById('nav-' + name).classList.add('active');
+  const targetScreen = document.getElementById('screen-' + name);
+  if (!targetScreen) {
+    console.warn('Unknown screen requested:', name);
+    return;
+  }
+  targetScreen.classList.add('active');
+  const targetNav = document.getElementById('nav-' + name);
+  if (targetNav) targetNav.classList.add('active');
   if (name === 'city') renderCity();
   if (name === 'map') renderMap();
-  if (name === 'faction') renderFaction();
 }
 
 function updateResourceBar() {
@@ -494,7 +510,6 @@ async function launchAttack() {
     showToast(`✅ ${attackSendCount} soldiers sent to the server.`);
     renderCity();
     renderMap();
-    renderFaction();
     updateResourceBar();
   } catch (error) {
     showToast(`❌ ${error.message}`);
@@ -523,7 +538,6 @@ async function resolveSelectedTargetBattle() {
       : `<span class="result-defeat">💀 DEFEAT!</span><br>Attack failed.<br>Defenders lost: ${result.defendersLost}`;
     document.getElementById('battle-popup').style.display = 'block';
     renderMap();
-    renderFaction();
     renderCity();
     updateResourceBar();
     showToast(result.victory ? '✅ Victory resolved by the server.' : '⚠️ Battle resolved by the server.');
@@ -534,75 +548,6 @@ async function resolveSelectedTargetBattle() {
 
 function closeBattlePopup() {
   document.getElementById('battle-popup').style.display = 'none';
-}
-
-function renderFaction() {
-  const territories = Object.values(G.territories);
-  const blueTerritories = territories.filter((territory) => territory.owner === 'blue');
-  const enemyTerritories = territories.filter((territory) => territory.owner !== 'blue');
-
-  document.getElementById('fac-territories').textContent = blueTerritories.length;
-  document.getElementById('fac-soldiers').textContent = G.player.soldiers || 0;
-  document.getElementById('fac-target').textContent = selectedTerritoryId ? G.territories[selectedTerritoryId]?.name || 'None' : 'None';
-
-  const select = document.getElementById('target-select');
-  select.innerHTML = '<option value="">— Pick Territory —</option>';
-  enemyTerritories.forEach((territory) => {
-    if (!canAttack(territory.id)) return;
-    const option = document.createElement('option');
-    option.value = territory.id;
-    option.textContent = `${territory.name} (${territory.owner})`;
-    if (selectedTerritoryId === territory.id) option.selected = true;
-    select.appendChild(option);
-  });
-
-  const tbody = document.getElementById('leaderboard-body');
-  tbody.innerHTML = '';
-  const row = document.createElement('tr');
-  row.innerHTML = `<td>1</td><td>⭐ You</td><td>0</td><td>${blueTerritories.length}</td>`;
-  tbody.appendChild(row);
-
-  const blueList = document.getElementById('blue-territory-list');
-  blueList.innerHTML = '';
-  blueTerritories.forEach((territory) => {
-    const item = document.createElement('div');
-    item.style.cssText = 'font-size:13px;padding:3px 0;color:#7ab8ff;border-bottom:1px solid #30363d;';
-    item.textContent = `📍 ${territory.name} — ⚔${territory.troops}`;
-    blueList.appendChild(item);
-  });
-
-  const enemyInfo = document.getElementById('enemy-faction-info');
-  enemyInfo.innerHTML = '';
-  ['red', 'green'].forEach((faction) => {
-    const factionTerritories = territories.filter((t) => t.owner === faction);
-    const totalTroops = factionTerritories.reduce((sum, t) => sum + Number(t.troops || 0), 0);
-    const div = document.createElement('div');
-    div.style.cssText = 'margin-bottom:8px;font-size:14px;';
-    div.innerHTML = `<span class="faction-${faction}">${faction === 'red' ? '🔴 Red Empire' : '🟢 Green League'}</span> — <strong>${factionTerritories.length}</strong> territories | <strong>${totalTroops}</strong> troops`;
-    enemyInfo.appendChild(div);
-  });
-}
-
-function setAttackTarget() {
-  const value = document.getElementById('target-select').value;
-  if (!value || !G.territories[value] || !canAttack(value)) {
-    G.attackTarget = '';
-    showToast('❌ Choose a valid enemy territory.');
-    renderFaction();
-    return;
-  }
-  G.attackTarget = value;
-  selectedTerritoryId = value;
-  renderMap();
-  renderFaction();
-  showToast(`🎯 Target set: ${G.territories[value].name}`);
-}
-
-function cancelAttackTarget() {
-  G.attackTarget = '';
-  document.getElementById('target-select').value = '';
-  renderFaction();
-  showToast('Target cleared.');
 }
 
 function aiTick() {
@@ -647,7 +592,6 @@ if (typeof document !== 'undefined') {
             };
             renderCity();
             renderMap();
-            renderFaction();
             updateResourceBar();
           } catch (error) {
             console.warn('Background refresh failed:', error.message);

@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const {
   getUpgradeCost,
   getProductionFromBuildings,
+  getTrainingCost,
+  getOfflineResourceGain,
   calculateBattleOutcome,
 } = require('../backend/game-logic');
 const { applySchemaMigrations } = require('../backend/db');
@@ -59,4 +61,17 @@ test('legacy databases get the required player migration columns before registra
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS faction_locked')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS role')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS army_name')));
+});
+
+test('training cost and idle earnings are consistent with server-authoritative rules', () => {
+  const trainingCost = getTrainingCost(5, 1);
+  assert.equal(trainingCost.food, 250);
+  assert.equal(trainingCost.iron, 100);
+  assert.equal(trainingCost.manpower, 5);
+
+  const offlineGain = getOfflineResourceGain({ food: 8, wood: 6, iron: 4, manpower: 2 }, 300, 60 * 60 * 12);
+  assert.equal(offlineGain.food, 40);
+  assert.equal(offlineGain.wood, 30);
+  assert.equal(offlineGain.iron, 20);
+  assert.equal(offlineGain.manpower, 10);
 });

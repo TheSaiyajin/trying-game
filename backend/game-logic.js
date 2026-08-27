@@ -87,6 +87,26 @@ function getProductionFromBuildings(buildings = {}, territories = [], faction = 
   return { food, wood, iron, manpower };
 }
 
+function getTrainingCost(count = 0, multiplier = 1) {
+  const amount = clampInt(count, 0);
+  const factor = Number(multiplier) || 1;
+  return {
+    food: Math.max(0, Math.round(50 * amount * factor)),
+    iron: Math.max(0, Math.round(20 * amount * factor)),
+    manpower: Math.max(0, Math.round(1 * amount * factor)),
+  };
+}
+
+function getOfflineResourceGain(production = {}, seconds = 0, capSeconds = 60 * 60 * 12) {
+  const elapsed = Math.max(0, Math.min(Number(seconds) || 0, capSeconds));
+  return {
+    food: Math.max(0, Math.floor((Number(production.food || 0) / 60) * elapsed)),
+    wood: Math.max(0, Math.floor((Number(production.wood || 0) / 60) * elapsed)),
+    iron: Math.max(0, Math.floor((Number(production.iron || 0) / 60) * elapsed)),
+    manpower: Math.max(0, Math.floor((Number(production.manpower || 0) / 60) * elapsed)),
+  };
+}
+
 function calculateBattleOutcome(attackStats, defenseStats) {
   const attackers = clampInt(attackStats.attackers, 0);
   const defenderCount = clampInt(defenseStats.defenders, 0);
@@ -122,5 +142,7 @@ module.exports = {
   getUpgradeCost,
   getProductionFromBuildings,
   getFactionTerritoryBonuses,
+  getTrainingCost,
+  getOfflineResourceGain,
   calculateBattleOutcome,
 };

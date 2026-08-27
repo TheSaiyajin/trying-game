@@ -2,12 +2,13 @@ CREATE TABLE IF NOT EXISTS players (
   id SERIAL PRIMARY KEY,
   username VARCHAR(32) UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  faction VARCHAR(16) NOT NULL DEFAULT 'blue',
-  faction_locked BOOLEAN NOT NULL DEFAULT TRUE,
+  faction VARCHAR(16) NULL,
+  faction_locked BOOLEAN NOT NULL DEFAULT FALSE,
   role VARCHAR(16) NOT NULL DEFAULT 'member',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_login_at TIMESTAMPTZ,
   last_action_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resource_last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   resource_food INTEGER NOT NULL DEFAULT 500,
   resource_wood INTEGER NOT NULL DEFAULT 400,
   resource_iron INTEGER NOT NULL DEFAULT 300,
@@ -37,13 +38,24 @@ CREATE TABLE IF NOT EXISTS territories (
   is_capital BOOLEAN NOT NULL DEFAULT FALSE,
   resource_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0,
   storage_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_battle_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS territory_neighbors (
   territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
   neighbor_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
   PRIMARY KEY (territory_id, neighbor_id)
+);
+
+CREATE TABLE IF NOT EXISTS territory_defenders (
+  territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
+  player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  faction VARCHAR(16) NOT NULL,
+  troops INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (territory_id, player_id)
 );
 
 CREATE TABLE IF NOT EXISTS attack_contributions (
@@ -55,6 +67,25 @@ CREATE TABLE IF NOT EXISTS attack_contributions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (territory_id, player_id)
+);
+
+CREATE TABLE IF NOT EXISTS battle_history (
+  id SERIAL PRIMARY KEY,
+  attacker_faction VARCHAR(16) NOT NULL,
+  defender_faction VARCHAR(16) NOT NULL,
+  territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
+  attacker_player_id INTEGER REFERENCES players(id) ON DELETE SET NULL,
+  troops_sent INTEGER NOT NULL DEFAULT 0,
+  defender_total INTEGER NOT NULL DEFAULT 0,
+  applied_bonuses TEXT,
+  winner VARCHAR(16) NOT NULL,
+  attackers_lost INTEGER NOT NULL DEFAULT 0,
+  attackers_surviving INTEGER NOT NULL DEFAULT 0,
+  defenders_lost INTEGER NOT NULL DEFAULT 0,
+  defenders_surviving INTEGER NOT NULL DEFAULT 0,
+  owner_before VARCHAR(16) NOT NULL,
+  owner_after VARCHAR(16) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS attack_targets (
@@ -80,3 +111,4 @@ CREATE TABLE IF NOT EXISTS admin_actions (
 CREATE INDEX IF NOT EXISTS idx_players_username ON players(username);
 CREATE INDEX IF NOT EXISTS idx_buildings_player ON buildings(player_id);
 CREATE INDEX IF NOT EXISTS idx_attack_contrib_territory ON attack_contributions(territory_id);
+CREATE INDEX IF NOT EXISTS idx_defenders_territory ON territory_defenders(territory_id);
