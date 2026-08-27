@@ -105,23 +105,62 @@ async function ensureSession() {
   return null;
 }
 
+let selectedAuthFaction = 'blue';
+
 function setAuthMode(mode) {
   document.querySelectorAll('.auth-mode-btn').forEach((button) => {
     button.classList.toggle('active', button.dataset.mode === mode);
   });
 
-  const select = document.getElementById('auth-faction');
-  if (select) {
-    select.style.display = mode === 'register' ? 'block' : 'none';
-  }
+  const isRegister = mode === 'register';
+  const confirmInput = document.getElementById('auth-confirm-password');
+  const factionPanel = document.getElementById('auth-faction-panel');
+  const submitButton = document.getElementById('auth-submit-btn');
+
+  if (confirmInput) confirmInput.style.display = isRegister ? 'block' : 'none';
+  if (factionPanel) factionPanel.style.display = isRegister ? 'block' : 'none';
+  if (submitButton) submitButton.textContent = isRegister ? 'Create account' : 'Enter the war';
+
+  const message = document.getElementById('auth-message');
+  if (message) message.textContent = '';
+}
+
+function setFactionChoice(faction) {
+  selectedAuthFaction = faction;
+  document.querySelectorAll('.faction-choice-btn').forEach((button) => {
+    button.classList.toggle('active', button.dataset.faction === faction);
+  });
+}
+
+function setGameShellVisible(isVisible) {
+  const shell = document.getElementById('game-shell');
+  if (shell) shell.style.display = isVisible ? 'block' : 'none';
+}
+
+function hideAuthScreen() {
+  const authScreen = document.getElementById('auth-screen');
+  if (authScreen) authScreen.style.display = 'none';
+  setGameShellVisible(true);
+  document.querySelectorAll('.screen').forEach((screen) => {
+    screen.style.display = screen.id === 'screen-city' ? 'block' : 'none';
+  });
+}
+
+function showAuthScreen() {
+  const authScreen = document.getElementById('auth-screen');
+  if (authScreen) authScreen.style.display = 'flex';
+  setGameShellVisible(false);
+  document.querySelectorAll('.screen').forEach((screen) => {
+    screen.style.display = 'none';
+  });
 }
 
 async function submitAuth(event) {
   event.preventDefault();
   const username = document.getElementById('auth-username').value.trim();
   const password = document.getElementById('auth-password').value;
+  const confirmPassword = document.getElementById('auth-confirm-password').value;
   const isRegister = document.querySelector('.auth-mode-btn.active')?.dataset.mode === 'register';
-  const faction = document.getElementById('auth-faction').value;
   const message = document.getElementById('auth-message');
 
   if (!username || username.length < 3) {
@@ -133,48 +172,45 @@ async function submitAuth(event) {
     return;
   }
 
+  if (isRegister) {
+    if (password !== confirmPassword) {
+      message.textContent = 'Passwords do not match.';
+      return;
+    }
+    if (!['blue', 'red', 'green'].includes(selectedAuthFaction)) {
+      message.textContent = 'Please choose a faction.';
+      return;
+    }
+  }
+
   try {
     const path = isRegister ? '/register' : '/login';
     const payload = await apiFetch(path, {
       method: 'POST',
-      body: JSON.stringify(isRegister ? { username, password, faction } : { username, password }),
+      body: JSON.stringify(isRegister ? { username, password, faction: selectedAuthFaction } : { username, password }),
     });
 
     setToken(payload.token);
     message.textContent = isRegister ? 'Registration successful.' : 'Login successful.';
-    hideAuthScreen();
-    await loadGame();
+    setTimeout(() => {
+      hideAuthScreen();
+      loadGame();
+    }, 250);
   } catch (error) {
     message.textContent = error.message;
   }
 }
 
-function hideAuthScreen() {
-  const authScreen = document.getElementById('auth-screen');
-  if (authScreen) authScreen.style.display = 'none';
-  document.querySelector('.top-bar')?.style.setProperty('display', 'flex');
-  document.querySelector('.resource-bar')?.style.setProperty('display', 'flex');
-  document.querySelector('.bottom-nav')?.style.setProperty('display', 'flex');
-  document.querySelectorAll('.screen').forEach((screen) => {
-    screen.style.display = screen.id === 'screen-city' ? 'block' : 'none';
-  });
-}
-
-function showAuthScreen() {
-  const authScreen = document.getElementById('auth-screen');
-  if (authScreen) authScreen.style.display = 'flex';
-  document.querySelector('.top-bar')?.style.setProperty('display', 'none');
-  document.querySelector('.resource-bar')?.style.setProperty('display', 'none');
-  document.querySelector('.bottom-nav')?.style.setProperty('display', 'none');
-  document.querySelectorAll('.screen').forEach((screen) => {
-    screen.style.display = 'none';
-  });
-}
-
 function logoutPlayer() {
   localStorage.removeItem(AUTH_STORAGE_KEY);
+  const form = document.getElementById('auth-form');
+  if (form) form.reset();
   document.getElementById('auth-username').value = '';
   document.getElementById('auth-password').value = '';
+  document.getElementById('auth-confirm-password').value = '';
+  const message = document.getElementById('auth-message');
+  if (message) message.textContent = 'Logged out.';
+  setFactionChoice('blue');
   showAuthScreen();
   setAuthMode('login');
   showToast('🚪 Logged out.');
@@ -187,6 +223,8 @@ async function loadGame() {
       showAuthScreen();
       return;
     }
+
+    hideAuthScreen();
 
     const payload = await apiFetch('/game/state');
     const territories = mapTerritories(payload.world.territories || payload.territories || []);
@@ -596,23 +634,29 @@ if (typeof document !== 'undefined') {
     }
 
     try {
-      await loadGame();
-      setInterval(async () => {
-        try {
-          const payload = await apiFetch('/game/state');
-          G = {
-            ...G,
-            player: payload.player,
-            territories: mapTerritories(payload.world.territories),
-          };
-          renderCity();
-          renderMap();
-          renderFaction();
-          updateResourceBar();
-        } catch (error) {
-          console.warn('Background refresh failed:', error.message);
-        }
-      }, 5000);
+      const hasToken = Boolean(getToken());
+      if (hasToken) {
+        await loadGame();
+        setInterval(async () => {
+          try {
+            const payload = await apiFetch('/game/state');
+            G = {
+              ...G,
+              player: payload.player,
+              territories: mapTerritories(payload.world.territories),
+            };
+            renderCity();
+            renderMap();
+            renderFaction();
+            updateResourceBar();
+          } catch (error) {
+            console.warn('Background refresh failed:', error.message);
+          }
+        }, 5000);
+      } else {
+        showAuthScreen();
+        setAuthMode('login');
+      }
     } catch (error) {
       showAuthScreen();
       setAuthMode('login');

@@ -42,26 +42,36 @@ html, body {
   align-items: center;
   justify-content: center;
   background:
-    radial-gradient(circle at top, rgba(31, 111, 235, 0.22), transparent 35%),
-    linear-gradient(180deg, rgba(8, 12, 18, 0.96), rgba(13, 17, 23, 0.98));
-  backdrop-filter: blur(6px);
+    radial-gradient(circle at top, rgba(31, 111, 235, 0.22), transparent 34%),
+    linear-gradient(180deg, rgba(8, 12, 18, 0.96), rgba(13, 17, 23, 1));
   z-index: 200;
   padding: 18px;
 }
 
 .auth-card {
   width: min(100%, 380px);
-  background: rgba(17, 24, 39, 0.9);
-  border: 1px solid rgba(119, 139, 167, 0.28);
+  background: rgba(17, 24, 39, 0.94);
+  border: 1px solid rgba(125, 143, 166, 0.28);
   border-radius: 20px;
-  padding: 24px 18px 18px;
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
+  padding: 22px 18px 18px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+}
+
+.auth-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.auth-logo {
+  font-size: 1.8rem;
 }
 
 .auth-card h2 {
   text-align: center;
   font-size: clamp(1.8rem, 4vw, 2.4rem);
-  margin-bottom: 8px;
   letter-spacing: 0.04em;
   color: #f8d874;
 }
@@ -70,7 +80,7 @@ html, body {
   text-align: center;
   color: #a9b2c1;
   margin-bottom: 18px;
-  font-size: 0.95rem;
+  font-size: 0.96rem;
 }
 
 .auth-mode-row {
@@ -107,6 +117,12 @@ html, body {
   gap: 12px;
 }
 
+.auth-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .auth-form input,
 .auth-form select,
 .dropdown {
@@ -127,6 +143,50 @@ html, body {
 .dropdown:focus {
   border-color: rgba(88, 166, 255, 0.95);
   box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.2);
+}
+
+.auth-faction-panel {
+  margin-top: 2px;
+}
+
+.auth-section-label {
+  margin: 0 0 8px;
+  color: #b7c1d0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.auth-faction-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.faction-choice-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 74px;
+  background: rgba(28, 34, 48, 0.9);
+  border: 1px solid rgba(118, 131, 149, 0.35);
+  border-radius: 12px;
+  color: var(--text-main);
+  cursor: pointer;
+  font-weight: 700;
+  transition: border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.faction-choice-btn span {
+  font-size: 1.4rem;
+}
+
+.faction-choice-btn.active {
+  border-color: rgba(129, 185, 255, 0.9);
+  box-shadow: 0 0 0 2px rgba(56, 139, 253, 0.18);
+  background: rgba(25, 47, 77, 0.92);
 }
 
 .auth-message {
@@ -161,6 +221,10 @@ html, body {
   margin-top: 4px;
 }
 
+.game-shell {
+  display: none;
+}
+
 @media (max-width: 420px) {
   .auth-card {
     padding: 20px 14px 16px;
@@ -175,6 +239,10 @@ html, body {
   .auth-form select,
   .dropdown {
     min-height: 46px;
+  }
+
+  .auth-faction-grid {
+    gap: 6px;
   }
 }
 
