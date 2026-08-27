@@ -8,14 +8,28 @@ require('dotenv').config();
 // must run on a dedicated connection. Sharing one Client across concurrent requests lets
 // unrelated queries interleave inside another request's open transaction, which is what
 // caused attack requests to intermittently fail with a generic 500 in production.
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: Number(process.env.DB_PORT || 5432),
-  database: process.env.DB_NAME || 'trying_game',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
-  max: Number(process.env.DB_POOL_MAX || 10),
-});
+// Supports either discrete DB_* vars or a single DATABASE_URL (common on hosted
+// Postgres providers), and opts into SSL when required by the host.
+const useSsl = String(process.env.DB_SSL || '').toLowerCase() === 'true'
+  || /sslmode=require/i.test(process.env.DATABASE_URL || '');
+
+const pool = new Pool(
+  process.env.DATABASE_URL
+    ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: useSsl ? { rejectUnauthorized: false } : false,
+      max: Number(process.env.DB_POOL_MAX || 10),
+    }
+    : {
+      host: process.env.DB_HOST || 'localhost',
+      port: Number(process.env.DB_PORT || 5432),
+      database: process.env.DB_NAME || 'trying_game',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || 'postgres',
+      ssl: useSsl ? { rejectUnauthorized: false } : false,
+      max: Number(process.env.DB_POOL_MAX || 10),
+    }
+);
 
 pool.on('error', (error) => {
   console.error('Unexpected idle Postgres client error:', error);

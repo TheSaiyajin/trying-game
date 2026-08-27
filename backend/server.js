@@ -176,6 +176,40 @@ async function applyOfflineResourceEarnings(playerId) {
   return { ...player, resource_food: Number(player.resource_food) + gain.food, resource_wood: Number(player.resource_wood) + gain.wood, resource_iron: Number(player.resource_iron) + gain.iron, resource_manpower: Number(player.resource_manpower) + gain.manpower };
 }
 
+// Authoritative resource generation: runs on the server every minute for every
+// player, independent of whether anyone is actively making requests. The lazy
+// catch-up above only covers the gap after a server restart/downtime.
+async function runGlobalResourceTick() {
+  try {
+    const db = await connect();
+    const territories = await getTerritoriesSnapshot();
+    const playersResult = await db.query('SELECT id, faction FROM players');
+
+    for (const row of playersResult.rows) {
+      const buildings = await getPlayerBuildingLevels(row.id);
+      const production = getProductionFromBuildings(buildings, territories, row.faction || 'blue', true);
+      await db.query(
+        `UPDATE players
+         SET resource_food = resource_food + $1,
+             resource_wood = resource_wood + $2,
+             resource_iron = resource_iron + $3,
+             resource_manpower = resource_manpower + $4,
+             resource_last_updated = NOW()
+         WHERE id = $5`,
+        [production.food, production.wood, production.iron, production.manpower, row.id]
+      );
+    }
+  } catch (error) {
+    console.error('Resource tick failed:', error);
+  }
+}
+
+let resourceTickHandle = null;
+function startResourceTickLoop() {
+  if (resourceTickHandle) return;
+  resourceTickHandle = setInterval(runGlobalResourceTick, 60 * 1000);
+}
+
 async function getPlayerWorldState(playerId) {
   const player = await applyOfflineResourceEarnings(playerId) || await getPlayerById(playerId);
   if (!player) return null;
@@ -423,7 +457,8 @@ app.post('/api/game/defend', requireAuth, asyncHandler(async (req, res) => {
   if (troops <= 0) return res.status(400).json({ error: 'Defender count must be positive.' });
 
   const player = await getPlayerById(req.user.userId);
-  if (!player || !player.faction) return res.status(400).json({ error: 'Choose a faction before defending a territory.' });
+  if (!player) return res.status(404).json({ error: 'Player not found.' });
+  if (!player.faction) return res.status(403).json({ error: 'Choose a faction before defending a territory.' });
 
   const client = await getClient();
   try {
@@ -478,6 +513,7 @@ app.post('/api/game/recall-defenders', requireAuth, asyncHandler(async (req, res
   if (troops <= 0) return res.status(400).json({ error: 'Recall count must be positive.' });
 
   const player = await getPlayerById(req.user.userId);
+  if (!player) return res.status(404).json({ error: 'Player not found.' });
 
   const client = await getClient();
   try {
@@ -688,6 +724,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, async () => {
   try {
     await initializeDatabase();
+    startResourceTickLoop();
     console.log(`Server ready on http://localhost:${PORT}`);
   } catch (error) {
     console.error('Database initialization failed:', error.message);
