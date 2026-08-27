@@ -138,11 +138,17 @@ function setGameShellVisible(isVisible) {
   if (shell) shell.style.display = isVisible ? 'block' : 'none';
 }
 
+function hideBootLoading() {
+  const bootLoading = document.getElementById('boot-loading');
+  if (bootLoading) bootLoading.style.display = 'none';
+}
+
 function hideAuthScreen() {
   const authScreen = document.getElementById('auth-screen');
   if (authScreen) authScreen.style.display = 'none';
   setGameShellVisible(true);
   showScreen('city');
+  hideBootLoading();
 }
 
 function showAuthScreen() {
@@ -151,6 +157,7 @@ function showAuthScreen() {
   setGameShellVisible(false);
   document.querySelectorAll('.screen').forEach((screen) => screen.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach((button) => button.classList.remove('active'));
+  hideBootLoading();
 }
 
 async function submitAuth(event) {
@@ -215,15 +222,23 @@ function logoutPlayer() {
 }
 
 async function loadGame() {
+  let user;
   try {
-    const user = await ensureSession();
-    if (!user) {
-      showAuthScreen();
-      return;
-    }
+    user = await ensureSession();
+  } catch (error) {
+    console.error('Session check failed:', error);
+    showAuthScreen();
+    return;
+  }
 
-    hideAuthScreen();
+  if (!user) {
+    showAuthScreen();
+    return;
+  }
 
+  hideAuthScreen();
+
+  try {
     const payload = await apiFetch('/game/state');
     const territories = mapTerritories(payload.world.territories || payload.territories || []);
 
