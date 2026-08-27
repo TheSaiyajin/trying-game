@@ -1063,9 +1063,13 @@ async function adminSetFaction(playerId) {
 }
 
 async function adminSetSoldiers(playerId) {
-  const soldiers = document.getElementById(`admin-soldiers-${playerId}`)?.value;
+  const soldiers = Number(document.getElementById(`admin-soldiers-${playerId}`)?.value);
+  if (!Number.isFinite(soldiers) || soldiers < 0) {
+    showToast('❌ Soldiers must be a non-negative number.');
+    return;
+  }
   try {
-    const res = await apiFetch(`/admin/player/${playerId}/soldiers`, { method: 'POST', body: JSON.stringify({ soldiers: Number(soldiers) }) });
+    const res = await apiFetch(`/admin/player/${playerId}/soldiers`, { method: 'POST', body: JSON.stringify({ soldiers }) });
     showToast(`✅ ${res.message}`);
     renderAdminPlayers();
   } catch (error) {
@@ -1074,18 +1078,22 @@ async function adminSetSoldiers(playerId) {
 }
 
 async function adminSetResources(playerId) {
-  const food = document.getElementById(`admin-food-${playerId}`)?.value;
-  const wood = document.getElementById(`admin-wood-${playerId}`)?.value;
-  const iron = document.getElementById(`admin-iron-${playerId}`)?.value;
-  const manpower = document.getElementById(`admin-manpower-${playerId}`)?.value;
+  const food = Number(document.getElementById(`admin-food-${playerId}`)?.value);
+  const wood = Number(document.getElementById(`admin-wood-${playerId}`)?.value);
+  const iron = Number(document.getElementById(`admin-iron-${playerId}`)?.value);
+  const manpower = Number(document.getElementById(`admin-manpower-${playerId}`)?.value);
+  if (![food, wood, iron, manpower].every((value) => Number.isFinite(value) && value >= 0)) {
+    showToast('❌ Resources must be non-negative numbers.');
+    return;
+  }
   try {
     const res = await apiFetch(`/admin/player/${playerId}/resources`, {
       method: 'POST',
       body: JSON.stringify({
-        food: Number(food),
-        wood: Number(wood),
-        iron: Number(iron),
-        manpower: Number(manpower),
+        food,
+        wood,
+        iron,
+        manpower,
       }),
     });
     showToast(`✅ ${res.message}`);

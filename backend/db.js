@@ -89,8 +89,6 @@ async function applySchemaMigrations(currentClient) {
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
     `CREATE UNIQUE INDEX IF NOT EXISTS attack_contributions_territory_player_idx ON attack_contributions (territory_id, player_id)`,
     `ALTER TABLE admin_actions ADD COLUMN IF NOT EXISTS action_detail TEXT`,
-    `UPDATE players SET role = 'admin' WHERE username = '${ADMIN_USERNAME}'`,
-    `UPDATE players SET role = 'member' WHERE username <> '${ADMIN_USERNAME}' AND role = 'admin'`,
   ];
 
 
@@ -103,6 +101,8 @@ async function applySchemaMigrations(currentClient) {
       }
     }
   }
+  await currentClient.query(`UPDATE players SET role = 'admin' WHERE username = $1`, [ADMIN_USERNAME]);
+  await currentClient.query(`UPDATE players SET role = 'member' WHERE username <> $1 AND role = 'admin'`, [ADMIN_USERNAME]);
 }
 
 async function initializeDatabase() {
