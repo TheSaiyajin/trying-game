@@ -2,8 +2,6 @@ const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
-const fs = require('fs');
-const path = require('path');
 const { connect, getClient, initializeDatabase } = require('./db');
 const { issueToken, verifyToken, hashPassword, verifyPassword } = require('./auth');
 const {
@@ -20,6 +18,13 @@ const {
   normalizeRequestedRole,
 } = require('./admin-policy');
 const { buildArmyName, changePlayerFaction } = require('./admin-faction-change');
+const {
+  getSeasonResetPlan,
+  resetAllPlayerResources,
+  resetPlayerProgress,
+  resetWorldState,
+  runAdminTransaction,
+} = require('./admin-resets');
 const {
   applyDefenderCasualties,
   getLockedTerritoryDefenders,
@@ -776,52 +781,10 @@ app.post('/api/admin/reset-world', requireAuth, requireAdmin, asyncHandler(async
   const adminId = req.user.userId;
   const client = await getClient();
   try {
-    await client.query('BEGIN');
-
-    // Reset gameplay state but keep user accounts
-    await client.query('DELETE FROM attack_contributions');
-    await client.query('DELETE FROM attack_targets');
-    await client.query('DELETE FROM territory_defenders');
-    await client.query('DELETE FROM battle_history');
-    await client.query('DELETE FROM territory_neighbors');
-    await client.query('DELETE FROM territories');
-
-    // Reset all player gameplay state (keep accounts, credentials, ids)
-    await client.query(`
-      UPDATE players
-      SET resource_food = 500, resource_wood = 400, resource_iron = 300, resource_manpower = 250,
-          soldiers = 100, last_action_at = NOW(), resource_last_updated = NOW()
-    `);
-    await client.query(`
-      UPDATE buildings
-      SET farm = 1, lumbermill = 1, ironmine = 1, barracks = 1, updated_at = NOW()
-    `);
-
-    // Re-seed the world using idempotent inserts (not DELETE on players)
-    const rawSeed = fs.readFileSync(path.join(__dirname, 'world-seed.sql'), 'utf8');
-    // Strip any DELETE FROM players/buildings/attack_contributions/attack_targets lines from seed
-    const seedLines = rawSeed.split('\n').filter((line) => {
-      const trimmed = line.trim().toUpperCase();
-      return !(trimmed.startsWith('DELETE FROM PLAYERS') ||
-               trimmed.startsWith('DELETE FROM BUILDINGS') ||
-               trimmed.startsWith('DELETE FROM ATTACK_CONTRIBUTIONS') ||
-               trimmed.startsWith('DELETE FROM ATTACK_TARGETS') ||
-               trimmed.startsWith('DELETE FROM TERRITORY_NEIGHBORS') ||
-               trimmed.startsWith('DELETE FROM TERRITORIES'));
+    await runAdminTransaction(client, async () => {
+      await resetWorldState(client, { actorId: adminId });
     });
-    await client.query(seedLines.join('\n'));
-
-    // Log the action (admin account still exists, so actor_id is valid)
-    await client.query(
-      'INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)',
-      [adminId, 'reset_world', 'Admin reset world gameplay state']
-    );
-
-    await client.query('COMMIT');
     res.json({ message: 'World reset. Player accounts preserved.' });
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw error;
   } finally {
     client.release();
   }
@@ -831,34 +794,28 @@ app.post('/api/admin/reset-player', requireAuth, requireAdmin, asyncHandler(asyn
   const playerId = parsePositiveInt(req.body.playerId || 0, 0, 100000);
   if (!playerId) return res.status(400).json({ error: 'playerId required.' });
 
-  const db = await connect();
-  const existing = await db.query('SELECT id FROM players WHERE id = $1', [playerId]);
-  if (!existing.rowCount) return res.status(404).json({ error: 'Player not found.' });
-
-  await db.query(`
-    UPDATE players
-    SET resource_food = 500, resource_wood = 400, resource_iron = 300, resource_manpower = 250,
-        soldiers = 100, last_action_at = NOW()
-    WHERE id = $1
-  `, [playerId]);
-  await db.query(`
-    UPDATE buildings
-    SET farm = 1, lumbermill = 1, ironmine = 1, barracks = 1, updated_at = NOW()
-    WHERE player_id = $1
-  `, [playerId]);
-  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'reset_player', `playerId=${playerId}`]);
+  const client = await getClient();
+  try {
+    const result = await runAdminTransaction(client, async () => resetPlayerProgress(client, {
+      actorId: req.user.userId,
+      playerId,
+    }));
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+  } finally {
+    client.release();
+  }
   res.json({ message: 'Player reset.' });
 }));
 
 app.post('/api/admin/reset-all-resources', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  const db = await connect();
-  await db.query(`
-    UPDATE players
-    SET resource_food = 500, resource_wood = 400, resource_iron = 300, resource_manpower = 250,
-        soldiers = 100, last_action_at = NOW()
-  `);
-  await db.query(`UPDATE buildings SET farm = 1, lumbermill = 1, ironmine = 1, barracks = 1, updated_at = NOW()`);
-  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'reset_all_resources', 'Admin reset all player resources']);
+  const client = await getClient();
+  try {
+    await runAdminTransaction(client, async () => resetAllPlayerResources(client, { actorId: req.user.userId }));
+  } finally {
+    client.release();
+  }
   res.json({ message: 'All player resources reset.' });
 }));
 
@@ -1026,6 +983,10 @@ app.post('/api/admin/change-leader', requireAuth, requireAdmin, asyncHandler(asy
   await db.query('UPDATE players SET role = $1 WHERE id = $2', ['leader', playerId]);
   await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'change_leader', JSON.stringify({ faction, playerId })]);
   res.json({ message: 'Leader updated.' });
+}));
+
+app.get('/api/admin/season-reset-plan', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  res.json({ plan: getSeasonResetPlan() });
 }));
 
 // Must be registered last, before listen. Logs the real exception server-side (never
