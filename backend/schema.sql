@@ -108,7 +108,16 @@ CREATE TABLE IF NOT EXISTS admin_actions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS faction_chat_messages (
+  id SERIAL PRIMARY KEY,
+  faction VARCHAR(16) NOT NULL,
+  player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_players_username ON players(username);
 CREATE INDEX IF NOT EXISTS idx_buildings_player ON buildings(player_id);
 CREATE INDEX IF NOT EXISTS idx_attack_contrib_territory ON attack_contributions(territory_id);
 CREATE INDEX IF NOT EXISTS idx_defenders_territory ON territory_defenders(territory_id);
+CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time ON faction_chat_messages(faction, created_at DESC, id DESC);

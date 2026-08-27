@@ -10,7 +10,6 @@ const {
   getUpgradeCost,
   getProductionFromBuildings,
   getFactionTerritoryBonuses,
-  calculateBattleOutcome,
 } = require('./game-logic');
 const { AttackError, performAttack } = require('./attack-logic');
 const {
@@ -21,18 +20,22 @@ const {
 } = require('./admin-policy');
 const { buildArmyName, changePlayerFaction } = require('./admin-faction-change');
 const {
-  applyDefenderCasualties,
   getLockedTerritoryDefenders,
   getTerritoryDefenseState,
-  replaceTerritoryDefenders,
 } = require('./defender-garrisons');
+const { updateAdminTerritory } = require('./admin-write-operations');
+const { resolveBattle } = require('./resolve-battle');
+const {
+ CHAT_RESPONSE_LIMIT,
+ createFactionChatMessage,
+ getFactionChatMessagesForPlayer,
+} = require('./faction-chat');
 
 dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const validFactions = ['blue', 'red', 'green'];
-const validRoles = ['member', 'leader', 'admin'];
 const buildingNames = ['farm', 'lumbermill', 'ironmine', 'barracks'];
 
 app.use(helmet());
@@ -44,6 +47,15 @@ app.use(rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many requests, please slow down.' },
 }));
+
+const factionChatSendRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => String(req.user?.userId || req.ip),
+  message: { error: 'Too many faction chat messages. Please wait a moment.' },
+});
 
 function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -691,82 +703,37 @@ app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
   res.json({ ok: true, state: snapshot, sent: result.sent, territoryId: result.territoryId, outcome: result.outcome });
 }));
 
+app.get('/api/game/faction-chat', requireAuth, asyncHandler(async (req, res) => {
+  const player = await getCurrentAuthedPlayer(req);
+  const db = await connect();
+  const result = await getFactionChatMessagesForPlayer(db, player, CHAT_RESPONSE_LIMIT);
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  res.json({ faction: result.faction, messages: result.messages });
+}));
+
+app.post('/api/game/faction-chat', requireAuth, factionChatSendRateLimit, asyncHandler(async (req, res) => {
+  const player = await getCurrentAuthedPlayer(req);
+  const db = await connect();
+  const result = await createFactionChatMessage(db, { player, message: req.body.message });
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+
+  res.status(201).json({ faction: player.faction, message: result.message });
+}));
+
 app.post('/api/game/resolve-battle', requireAuth, asyncHandler(async (req, res) => {
   const territoryId = String(req.body.territoryId || '').trim();
   if (!territoryId) return res.status(400).json({ error: 'No territory selected.' });
 
   const player = await getPlayerById(req.user.userId);
+  if (!player) return res.status(404).json({ error: 'Player not found.' });
   const db = await getClient();
   try {
-    const target = await db.query('SELECT * FROM territories WHERE id = $1', [territoryId]);
-    if (!target.rows[0]) return res.status(404).json({ error: 'Territory not found.' });
-
-    await db.query('BEGIN');
-    try {
-      const totalContribution = await db.query(
-        `SELECT COALESCE(SUM(contribution), 0) AS total FROM attack_contributions WHERE territory_id = $1 FOR UPDATE`,
-        [territoryId]
-      );
-      const attackTotal = parsePositiveInt(totalContribution.rows[0]?.total || 0, 0, 100000);
-      if (attackTotal <= 0) {
-        await db.query('ROLLBACK');
-        return res.status(400).json({ error: 'No attack contribution recorded for this target.' });
-      }
-
-      const lockedDefenders = await getLockedTerritoryDefenders(db, territoryId);
-      const defenseState = getTerritoryDefenseState(target.rows[0].defense_troops, lockedDefenders);
-      const defensePower = defenseState.totalDefenseTroops;
-      const fortBonus = target.rows[0].is_fortress ? 1.2 : 1;
-      const outcome = calculateBattleOutcome({ attackers: attackTotal, attackBonus: 1.1 }, { defenders: defensePower, defenseBonus: fortBonus });
-
-      const ownerBefore = target.rows[0].owner_faction;
-      const attackerFaction = player.faction || 'neutral';
-      const defenderFaction = ownerBefore;
-      const survivingAttackers = outcome.victory ? Math.max(1, outcome.attackersRemaining) : 0;
-      const allocation = await applyDefenderCasualties(db, territoryId, defensePower, outcome.defendersLost, lockedDefenders);
-      const remainingDefenders = outcome.victory ? 0 : allocation.defendersRemaining;
-
-      if (outcome.victory) {
-        await db.query(
-          `UPDATE territories SET owner_faction = $1, defense_troops = $2, last_battle_at = NOW() WHERE id = $3`,
-          [attackerFaction, survivingAttackers, territoryId]
-        );
-        await replaceTerritoryDefenders(db, territoryId, [{
-          territory_id: territoryId,
-          player_id: player.id,
-          faction: attackerFaction,
-          troops: survivingAttackers,
-        }]);
-        await db.query(
-          `UPDATE players SET resource_food = resource_food + 25, resource_wood = resource_wood + 25, resource_iron = resource_iron + 25 WHERE id = $1`,
-          [player.id]
-        );
-      } else {
-        await db.query(
-          `UPDATE territories SET defense_troops = $1, last_battle_at = NOW() WHERE id = $2`,
-          [Math.max(1, remainingDefenders), territoryId]
-        );
-      }
-
-      await db.query(
-        `INSERT INTO battle_history (attacker_faction, defender_faction, territory_id, attacker_player_id, troops_sent, defender_total, applied_bonuses, winner, attackers_lost, attackers_surviving, defenders_lost, defenders_surviving, owner_before, owner_after)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-        [attackerFaction, defenderFaction, territoryId, player.id, attackTotal, defensePower, JSON.stringify({ fortBonus, attackBonus: 1.1 }), outcome.victory ? attackerFaction : defenderFaction, outcome.attackersLost, survivingAttackers, outcome.defendersLost, remainingDefenders, ownerBefore, outcome.victory ? attackerFaction : ownerBefore]
-      );
-
-      await db.query('DELETE FROM attack_contributions WHERE territory_id = $1', [territoryId]);
-      await db.query(
-        `INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)`,
-        [player.id, 'battle_resolution', JSON.stringify({ territoryId, outcome })]
-      );
-      await db.query('COMMIT');
-
-      const snapshot = await getPlayerWorldState(player.id);
-      res.json({ ok: true, outcome, state: snapshot });
-    } catch (error) {
-      await db.query('ROLLBACK').catch(() => {});
-      throw error;
+    const result = await resolveBattle(db, { player, territoryId });
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
     }
+    const snapshot = await getPlayerWorldState(player.id);
+    res.json({ ok: true, outcome: result.outcome, state: snapshot });
   } finally {
     db.release();
   }
@@ -986,28 +953,13 @@ app.post('/api/admin/territory/:id', requireAuth, requireAdmin, asyncHandler(asy
   if (!territoryId) return res.status(400).json({ error: 'Territory ID required.' });
 
   const db = await connect();
-  const existing = await db.query('SELECT id FROM territories WHERE id = $1', [territoryId]);
-  if (!existing.rowCount) return res.status(404).json({ error: 'Territory not found.' });
-
-  const updates = [];
-  const params = [];
-
-  if (req.body.owner !== undefined) {
-    const owner = String(req.body.owner || '').trim().toLowerCase();
-    if (!validFactions.includes(owner) && owner !== 'neutral') return res.status(400).json({ error: 'Invalid owner faction.' });
-    params.push(owner);
-    updates.push(`owner_faction = $${params.length}`);
-  }
-  if (req.body.defense !== undefined) {
-    const defense = Math.max(0, Math.floor(Number(req.body.defense) || 0));
-    params.push(defense);
-    updates.push(`defense_troops = $${params.length}`);
-  }
-  if (!updates.length) return res.status(400).json({ error: 'No fields to update.' });
-
-  params.push(territoryId);
-  await db.query(`UPDATE territories SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
-  await db.query('INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)', [req.user.userId, 'edit_territory', JSON.stringify({ territoryId, ...req.body })]);
+  const result = await updateAdminTerritory(db, {
+    territoryId,
+    body: req.body,
+    validFactions,
+    actorId: req.user.userId,
+  });
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
   res.json({ message: 'Territory updated.' });
 }));
 

@@ -288,6 +288,35 @@ test('capturing a territory with only player-garrison defenders replaces them wi
   assert.equal(client.defenders.has('n3:2'), false);
 });
 
+test('capital attacks return 403 and do not modify troops, defenders, rewards, or ownership', async () => {
+  const { players, territories, neighbors } = buildWorld();
+  territories.set('r1', cloneTerritory({ id: 'r1', owner_faction: 'red', defense_troops: 30, is_fortress: false, is_capital: true }));
+  const client = createFakeClient({
+    players,
+    territories,
+    neighbors,
+    initialDefenders: [
+      { territory_id: 'r1', player_id: 2, faction: 'red', troops: 30 },
+    ],
+  });
+
+  await assert.rejects(
+    () => performAttack(client, { playerId: 1, territoryId: 'r1', soldiers: 10 }),
+    (error) => error instanceof AttackError
+      && error.status === 403
+      && error.message === 'Capital territories cannot be attacked or occupied.'
+  );
+
+  assert.equal(players.get(1).soldiers, 50);
+  assert.equal(territories.get('r1').owner_faction, 'red');
+  assert.equal(territories.get('r1').defense_troops, 30);
+  assert.deepEqual(client.defenders.get('r1:2'), { faction: 'red', troops: 30 });
+  assert.equal(client.battleHistory.length, 0);
+  assert.equal(players.get(1).resource_food, 0);
+  assert.equal(players.get(1).resource_wood, 0);
+  assert.equal(players.get(1).resource_iron, 0);
+});
+
 test('rejects invalid troop counts with 400', async () => {
   const { players, territories, neighbors } = buildWorld();
   const client = createFakeClient({ players, territories, neighbors });

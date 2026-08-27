@@ -20,6 +20,7 @@ const DEFAULT_STATE = {
   territories: {},
   attackTarget: '',
   attackContributions: {},
+  chatMessages: [],
 };
 
 let G = structuredClone(DEFAULT_STATE);
@@ -27,6 +28,7 @@ let selectedTerritoryId = null;
 let attackSendCount = 10;
 let defendSendCount = 10;
 let trainAmount = 1;
+let factionChatPollHandle = null;
 
 function showToast(msg) {
   const old = document.querySelector('.toast');
@@ -65,6 +67,57 @@ function mapTerritories(rawTerritories) {
 
 function isAdminUser(user) {
   return user?.username === 'Sai' && user?.role === 'admin';
+}
+
+function getFactionLegendEntries(playerFaction) {
+  const currentFaction = String(playerFaction || '').toLowerCase();
+  return [
+    { key: 'blue', label: currentFaction === 'blue' ? 'Blue (You)' : 'Blue' },
+    { key: 'red', label: currentFaction === 'red' ? 'Red (You)' : 'Red' },
+    { key: 'green', label: currentFaction === 'green' ? 'Green (You)' : 'Green' },
+    { key: 'target', label: 'Target' },
+  ];
+}
+
+function renderMapLegend(playerFaction, root = document) {
+  if (!root?.getElementById) return;
+  const container = root.getElementById('map-legend');
+  if (!container) return;
+  container.replaceChildren();
+  getFactionLegendEntries(playerFaction).forEach((entry) => {
+    const item = root.createElement ? root.createElement('span') : document.createElement('span');
+    item.className = `leg-${entry.key}`;
+    item.textContent = entry.key === 'target' ? `⬡ ${entry.label}` : `■ ${entry.label}`;
+    container.appendChild(item);
+  });
+}
+
+function updateAdminVisibility(player) {
+  const adminNav = document.getElementById('nav-admin');
+  const adminScreen = document.getElementById('screen-admin');
+  if (!adminNav || !adminScreen) return;
+  const isAdmin = isAdminUser(player);
+  adminNav.style.display = isAdmin ? '' : 'none';
+  adminScreen.style.display = '';
+}
+
+function setGameStateFromSnapshot(snapshot) {
+  G = {
+    player: {
+      ...(snapshot.player || {}),
+      resources: snapshot.player?.resources || { food: 0, wood: 0, iron: 0, manpower: 0 },
+      buildings: snapshot.player?.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
+      production: snapshot.player?.production || { food: 0, wood: 0, iron: 0, manpower: 0 },
+      factionBonuses: snapshot.player?.factionBonuses || { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 },
+      stationedTroops: snapshot.player?.stationedTroops || {},
+    },
+    territories: mapTerritories(snapshot.world?.territories || snapshot.territories || []),
+    attackTarget: '',
+    attackContributions: {},
+    chatMessages: G.chatMessages || [],
+  };
+  renderMapLegend(G.player.faction);
+  updateAdminVisibility(G.player);
 }
 
 function getToken() {
@@ -260,8 +313,6 @@ async function loadGame() {
 
   try {
     const payload = await apiFetch('/game/state');
-    const territories = mapTerritories(payload.world.territories || payload.territories || []);
-
     if (!payload.player?.faction) {
       showAuthScreen();
       setAuthMode('register');
@@ -274,28 +325,7 @@ async function loadGame() {
       return;
     }
 
-    G = {
-      player: {
-        ...(payload.player || {}),
-        resources: payload.player?.resources || { food: 0, wood: 0, iron: 0, manpower: 0 },
-        buildings: payload.player?.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
-        production: payload.player?.production || { food: 0, wood: 0, iron: 0, manpower: 0 },
-        factionBonuses: payload.player?.factionBonuses || { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 },
-        stationedTroops: payload.player?.stationedTroops || {},
-      },
-      territories,
-      attackTarget: '',
-      attackContributions: {},
-    };
-
-    // Show admin nav tab only for admins
-    const adminNav = document.getElementById('nav-admin');
-    const adminScreen = document.getElementById('screen-admin');
-    if (adminNav && adminScreen) {
-      const isAdmin = isAdminUser(payload.player);
-      adminNav.style.display = isAdmin ? '' : 'none';
-      adminScreen.style.display = '';
-    }
+    setGameStateFromSnapshot(payload);
 
     renderCity();
     renderMap();
@@ -334,6 +364,7 @@ function showScreen(name) {
   if (name === 'city') renderCity();
   if (name === 'map') renderMap();
   if (name === 'activity') renderActivity();
+  if (name === 'chat') renderFactionChat({ scrollToNewest: true });
   if (name === 'admin') renderAdminPanel();
 }
 
@@ -404,11 +435,7 @@ async function upgradeBuilding(key) {
       method: 'POST',
       body: JSON.stringify({ building: key }),
     });
-    G = {
-      ...G,
-      player: { ...response.state.player, factionBonuses: response.state.player.factionBonuses || G.player.factionBonuses },
-      territories: mapTerritories(response.state.world.territories),
-    };
+    setGameStateFromSnapshot(response.state);
     renderCity();
     renderMap();
     updateResourceBar();
@@ -429,11 +456,7 @@ async function trainSoldiers() {
       method: 'POST',
       body: JSON.stringify({ amount: trainAmount }),
     });
-    G = {
-      ...G,
-      player: { ...response.state.player, factionBonuses: response.state.player.factionBonuses || G.player.factionBonuses },
-      territories: mapTerritories(response.state.world.territories),
-    };
+    setGameStateFromSnapshot(response.state);
     renderCity();
     updateResourceBar();
     showToast(`✅ Trained ${response.trained} soldier(s) on the server.`);
@@ -505,10 +528,10 @@ function createHexPoints(cx, cy, radius = 32) {
   return points.join(' ');
 }
 
-function canAttack(id) {
-  const territory = G.territories[id];
-  if (!territory || territory.owner === G.player.faction) return false;
-  return territory.adj.some((neighborId) => G.territories[neighborId] && G.territories[neighborId].owner === G.player.faction);
+function canAttack(id, gameState = G) {
+  const territory = gameState.territories[id];
+  if (!territory || territory.capital || territory.owner === gameState.player.faction) return false;
+  return territory.adj.some((neighborId) => gameState.territories[neighborId] && gameState.territories[neighborId].owner === gameState.player.faction);
 }
 
 function renderMap() {
@@ -570,6 +593,16 @@ function renderMap() {
     label.textContent = String(id).toUpperCase();
     svg.appendChild(label);
 
+    if (territory.capital) {
+      const capitalMarker = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      capitalMarker.setAttribute('x', x);
+      capitalMarker.setAttribute('y', y - 20);
+      capitalMarker.setAttribute('text-anchor', 'middle');
+      capitalMarker.setAttribute('class', 'territory-capital-marker');
+      capitalMarker.textContent = '👑';
+      svg.appendChild(capitalMarker);
+    }
+
     const troops = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     troops.setAttribute('x', x);
     troops.setAttribute('y', y + 10);
@@ -596,7 +629,9 @@ function selectTerritory(id) {
   document.getElementById('tp-city-soldiers').textContent = Number(G.player.soldiers || 0);
   const stationed = Number((G.player.stationedTroops || {})[id] || 0);
   document.getElementById('tp-stationed').textContent = stationed;
-  document.getElementById('tp-battle-rule').textContent = 'Send more troops than defenders to capture';
+  document.getElementById('tp-battle-rule').textContent = territory.capital
+    ? 'Protected capital — cannot be attacked or occupied.'
+    : 'Send more troops than defenders to capture';
   document.getElementById('tp-bonus').textContent = formatBonusLabel(territory.bonus, territory.bonusValue);
   document.getElementById('tp-neighbors').textContent = (territory.adj || []).map((neighborId) => G.territories[neighborId]?.name || neighborId).join(', ');
 
@@ -664,6 +699,10 @@ async function launchAttack() {
     showToast('❌ Select a territory first.');
     return;
   }
+  if (G.territories[selectedTerritoryId]?.capital) {
+    showToast('❌ Capital territories cannot be attacked or occupied.');
+    return;
+  }
   if (!canAttack(selectedTerritoryId)) {
     showToast('❌ This target cannot be attacked from your faction.');
     return;
@@ -674,11 +713,7 @@ async function launchAttack() {
       method: 'POST',
       body: JSON.stringify({ territoryId: selectedTerritoryId, soldiers: attackSendCount }),
     });
-    G = {
-      ...G,
-      player: { ...response.state.player, factionBonuses: response.state.player.factionBonuses || G.player.factionBonuses },
-      territories: mapTerritories(response.state.world.territories),
-    };
+    setGameStateFromSnapshot(response.state);
     const result = response.outcome;
     if (result) {
       document.getElementById('battle-result-text').innerHTML = result.victory
@@ -723,11 +758,7 @@ async function sendDefenders() {
       method: 'POST',
       body: JSON.stringify({ territoryId: selectedTerritoryId, troops: defendSendCount }),
     });
-    G = {
-      ...G,
-      player: { ...response.state.player, factionBonuses: response.state.player.factionBonuses || G.player.factionBonuses },
-      territories: mapTerritories(response.state.world.territories),
-    };
+    setGameStateFromSnapshot(response.state);
     showToast(`🛡️ ${defendSendCount} troops sent to defend ${territory.name}.`);
     renderCity();
     renderMap();
@@ -760,11 +791,7 @@ async function recallDefenders() {
       method: 'POST',
       body: JSON.stringify({ territoryId: selectedTerritoryId, troops: recallSendCount }),
     });
-    G = {
-      ...G,
-      player: { ...response.state.player, factionBonuses: response.state.player.factionBonuses || G.player.factionBonuses },
-      territories: mapTerritories(response.state.world.territories),
-    };
+    setGameStateFromSnapshot(response.state);
     showToast(`↩️ ${recallSendCount} troops recalled.`);
     renderCity();
     renderMap();
@@ -785,11 +812,7 @@ async function resolveSelectedTargetBattle() {
       method: 'POST',
       body: JSON.stringify({ territoryId: selectedTerritoryId }),
     });
-    G = {
-      ...G,
-      player: response.state.player,
-      territories: mapTerritories(response.state.world.territories),
-    };
+    setGameStateFromSnapshot(response.state);
 
     const result = response.outcome;
     document.getElementById('battle-result-text').innerHTML = result.victory
@@ -866,6 +889,89 @@ async function renderActivity() {
     msg.textContent = `Could not load activity: ${error.message}`;
     container.replaceChildren(msg);
   }
+}
+
+// ===================== FACTION CHAT =====================
+
+function insertChatEmoji(emoji) {
+  const input = document.getElementById('chat-input');
+  if (!input) return;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  input.value = input.value.slice(0, start) + emoji + input.value.slice(end);
+  const nextPosition = start + emoji.length;
+  input.focus();
+  input.setSelectionRange(nextPosition, nextPosition);
+}
+
+function scrollFactionChatToNewest() {
+  const container = document.getElementById('chat-messages');
+  if (!container) return;
+  container.scrollTop = container.scrollHeight;
+}
+
+async function renderFactionChat({ scrollToNewest = false } = {}) {
+  const container = document.getElementById('chat-messages');
+  if (!container) return;
+  try {
+    const data = await apiFetch('/game/faction-chat');
+    G.chatMessages = data.messages || [];
+    container.replaceChildren();
+    if (!G.chatMessages.length) {
+      const empty = document.createElement('p');
+      empty.className = 'info-text';
+      empty.textContent = 'No faction messages yet.';
+      container.appendChild(empty);
+    } else {
+      G.chatMessages.forEach((entry) => {
+        const row = document.createElement('div');
+        row.className = 'chat-entry';
+
+        const meta = document.createElement('div');
+        meta.className = 'chat-meta';
+        const timestamp = entry.created_at ? new Date(entry.created_at).toLocaleString() : '';
+        meta.textContent = `${entry.username} · ${timestamp}`;
+
+        const message = document.createElement('div');
+        message.className = 'chat-message';
+        message.textContent = entry.message;
+
+        row.append(meta, message);
+        container.append(row);
+      });
+    }
+    if (scrollToNewest) scrollFactionChatToNewest();
+  } catch (error) {
+    const msg = document.createElement('p');
+    msg.className = 'info-text';
+    msg.textContent = `Could not load faction chat: ${error.message}`;
+    container.replaceChildren(msg);
+  }
+}
+
+async function sendFactionChatMessage() {
+  const input = document.getElementById('chat-input');
+  if (!input) return;
+  try {
+    await apiFetch('/game/faction-chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: input.value }),
+    });
+    input.value = '';
+    await renderFactionChat({ scrollToNewest: true });
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+function startFactionChatPolling() {
+  if (factionChatPollHandle) return;
+  factionChatPollHandle = setInterval(() => {
+    const chatScreen = document.getElementById('screen-chat');
+    if (chatScreen && chatScreen.classList.contains('active')) {
+      renderFactionChat({ scrollToNewest: true });
+    }
+  }, 4000);
 }
 
 // ===================== ADMIN PANEL =====================
@@ -986,8 +1092,9 @@ async function renderAdminTerritories() {
         <strong>${t.id}</strong> ${t.name}
         <span class="admin-badge">${t.owner_faction} · ${t.defense_troops}⚔️</span>
         <span class="admin-badge-bonus">${formatBonusLabel(t.bonus_type, t.bonus_value)}</span>
+        ${t.is_capital ? '<span class="admin-badge admin-badge-protected">Protected capital</span>' : ''}
         <div class="admin-territory-actions">
-          <select id="admin-owner-${t.id}">
+          <select id="admin-owner-${t.id}" ${t.is_capital ? 'disabled' : ''}>
             <option value="blue" ${t.owner_faction === 'blue' ? 'selected' : ''}>blue</option>
             <option value="red" ${t.owner_faction === 'red' ? 'selected' : ''}>red</option>
             <option value="green" ${t.owner_faction === 'green' ? 'selected' : ''}>green</option>
@@ -1202,6 +1309,16 @@ if (typeof document !== 'undefined') {
     if (authForm) {
       authForm.addEventListener('submit', submitAuth);
     }
+    const chatInput = document.getElementById('chat-input');
+    if (chatInput) {
+      chatInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          sendFactionChatMessage();
+        }
+      });
+    }
+    startFactionChatPolling();
 
     const token = getToken();
     if (!token) {
@@ -1217,15 +1334,7 @@ if (typeof document !== 'undefined') {
         setInterval(async () => {
           try {
             const payload = await apiFetch('/game/state');
-            G = {
-              ...G,
-              player: {
-                ...payload.player,
-                factionBonuses: payload.player.factionBonuses || G.player.factionBonuses || {},
-                stationedTroops: payload.player.stationedTroops || {},
-              },
-              territories: mapTerritories(payload.world.territories),
-            };
+            setGameStateFromSnapshot(payload);
             renderCity();
             renderMap();
             updateResourceBar();
@@ -1255,12 +1364,18 @@ if (typeof document !== 'undefined') {
 if (typeof module !== 'undefined') {
   module.exports = {
     buildAuthPayload,
+    getFactionLegendEntries,
+    renderMapLegend,
     mapTerritories,
     canAttack,
     ownerLabel,
     formatBonusLabel,
     isAdminUser,
+    insertChatEmoji,
     setFactionChoice,
+    setGameStateFromSnapshot,
+    sendFactionChatMessage,
+    startFactionChatPolling,
     wireFactionChoiceButtons,
   };
 }

@@ -89,6 +89,14 @@ async function applySchemaMigrations(currentClient) {
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
     `CREATE UNIQUE INDEX IF NOT EXISTS attack_contributions_territory_player_idx ON attack_contributions (territory_id, player_id)`,
     `ALTER TABLE admin_actions ADD COLUMN IF NOT EXISTS action_detail TEXT`,
+    `CREATE TABLE IF NOT EXISTS faction_chat_messages (
+      id SERIAL PRIMARY KEY,
+      faction VARCHAR(16) NOT NULL,
+      player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      message TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time ON faction_chat_messages (faction, created_at DESC, id DESC)`,
   ];
 
 

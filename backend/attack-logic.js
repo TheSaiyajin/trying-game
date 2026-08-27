@@ -5,6 +5,7 @@ const {
   getTerritoryDefenseState,
   replaceTerritoryDefenders,
 } = require('./defender-garrisons');
+const { CAPITAL_ATTACK_ERROR, isCapitalTerritory } = require('./territory-protection');
 
 // Thrown for any expected/validated failure so the route can map it to the right
 // HTTP status (400/403/404/409) instead of falling through to a generic 500.
@@ -46,6 +47,9 @@ async function performAttack(client, { playerId, territoryId, soldiers }) {
   const targetResult = await client.query('SELECT * FROM territories WHERE id = $1', [cleanTerritoryId]);
   const target = targetResult.rows[0];
   if (!target) throw new AttackError(404, 'Territory not found.');
+  if (isCapitalTerritory(target)) {
+    throw new AttackError(403, CAPITAL_ATTACK_ERROR);
+  }
   if ((target.owner_faction || 'neutral') === player.faction) {
     throw new AttackError(403, 'You cannot attack your own territory.');
   }
@@ -86,6 +90,9 @@ async function performAttack(client, { playerId, territoryId, soldiers }) {
     const lockedTargetResult = await client.query('SELECT * FROM territories WHERE id = $1 FOR UPDATE', [cleanTerritoryId]);
     const lockedTarget = lockedTargetResult.rows[0];
     if (!lockedTarget) throw new AttackError(404, 'Territory not found.');
+    if (isCapitalTerritory(lockedTarget)) {
+      throw new AttackError(403, CAPITAL_ATTACK_ERROR);
+    }
     if ((lockedTarget.owner_faction || 'neutral') === player.faction) {
       throw new AttackError(403, 'You cannot attack your own territory.');
     }
