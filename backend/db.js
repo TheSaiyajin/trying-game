@@ -38,8 +38,10 @@ async function applySchemaMigrations(currentClient = client) {
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS troops INTEGER NOT NULL DEFAULT 0`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS territory_defenders_territory_player_idx ON territory_defenders (territory_id, player_id)`,
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS attack_contributions_territory_player_idx ON attack_contributions (territory_id, player_id)`,
     `ALTER TABLE admin_actions ADD COLUMN IF NOT EXISTS action_detail TEXT`,
   ];
 
