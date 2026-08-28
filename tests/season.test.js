@@ -97,7 +97,7 @@ test('rollover happens exactly once: calling ensureCurrentSeason again mid-seaso
   assert.equal(client.state.seasons.length, 1);
 });
 
-test('server startup safely completes a missed rollover (server was offline at midnight)', async () => {
+test('server startup safely completes a missed rollover after a season ends', async () => {
   const players = buildPlayers([{ id: 1 }]);
   const territories = buildTerritories({ n1: 'blue' });
   const client = createSeasonTestClient({ players, territories });
@@ -106,9 +106,9 @@ test('server startup safely completes a missed rollover (server was offline at m
   await ensureCurrentSeason(client, { now: day1 });
   await ensurePlayerFactionAssignment(client, { seasonId: client.state.seasons[0].id, playerId: 1 });
 
-  // Server comes back online two days later, well past the missed midnight rollover(s).
-  const day3 = new Date('2026-02-03T09:00:00.000Z');
-  const season = await ensureCurrentSeason(client, { now: day3 });
+  // Server comes back online after the seven-day season has ended.
+  const afterSeasonEnd = new Date('2026-02-08T10:00:01.000Z');
+  const season = await ensureCurrentSeason(client, { now: afterSeasonEnd });
 
   assert.equal(client.state.seasons.filter((s) => s.status === 'completed').length, 1);
   assert.equal(season.status, 'active');
@@ -120,7 +120,7 @@ test('two rollover attempts for the same expired season cannot create two season
   const day1 = new Date('2026-02-01T10:00:00.000Z');
   await ensureCurrentSeason(client, { now: day1 });
 
-  const day2 = new Date('2026-02-02T05:00:00.000Z');
+  const day2 = new Date('2026-02-08T05:00:00.000Z');
   // Two "simultaneous" callers both observe the expired season and both attempt to rotate.
   const [a, b] = await Promise.all([
     runSeasonRollover(client, { now: day2 }),
@@ -136,9 +136,9 @@ test('only one active season exists at any time', async () => {
   const client = createSeasonTestClient({ players: buildPlayers([]), territories: buildTerritories() });
   let now = new Date('2026-02-01T00:00:01.000Z');
   await ensureCurrentSeason(client, { now });
-  now = new Date('2026-02-02T00:00:01.000Z');
+  now = new Date('2026-02-08T00:00:01.000Z');
   await ensureCurrentSeason(client, { now });
-  now = new Date('2026-02-03T00:00:01.000Z');
+  now = new Date('2026-02-15T00:00:01.000Z');
   await ensureCurrentSeason(client, { now });
 
   assert.equal(client.state.seasons.filter((s) => s.status === 'active').length, 1);
@@ -155,7 +155,7 @@ test('automatic rollover and forced rollover use the exact same finalize/reset i
   await ensurePlayerFactionAssignment(clientAuto, { seasonId: clientAuto.state.seasons[0].id, playerId: 1 });
   await ensurePlayerFactionAssignment(clientForced, { seasonId: clientForced.state.seasons[0].id, playerId: 1 });
 
-  const day2 = new Date('2026-04-02T00:00:01.000Z');
+  const day2 = new Date('2026-04-08T00:00:01.000Z');
   await ensureCurrentSeason(clientAuto, { now: day2 }); // automatic path (expired)
   await forceFinishCurrentSeason(clientForced, { actorId: 99, now: day1.valueOf() < day2.valueOf() ? day1 : day2 }); // forced path
 
@@ -274,7 +274,7 @@ test('players can receive a different faction next season, and previous membersh
   client.state.seasonMemberships.push({ season_id: seasonOneId, player_id: 200, faction: 'green' });
   client.state.seasonMemberships.push({ season_id: seasonOneId, player_id: 201, faction: 'green' });
 
-  await ensureCurrentSeason(client, { now: new Date('2026-06-02T00:00:01.000Z') }); // rolls over
+  await ensureCurrentSeason(client, { now: new Date('2026-06-08T00:00:01.000Z') }); // rolls over
   const seasonTwoId = client.state.seasons.find((s) => s.status === 'active').id;
   assert.notEqual(seasonTwoId, seasonOneId);
 
@@ -283,7 +283,7 @@ test('players can receive a different faction next season, and previous membersh
   assert.equal(secondAssignment, 'blue');
 });
 
-test('a still-authenticated player is reassigned after midnight instead of keeping a stale faction', async () => {
+test('a still-authenticated player is reassigned after a season ends instead of keeping a stale faction', async () => {
   const players = buildPlayers([{ id: 1 }]);
   const client = createSeasonTestClient({ players, territories: buildTerritories() });
   await ensureCurrentSeason(client, { now: new Date('2026-06-01T00:00:01.000Z') });
@@ -291,8 +291,8 @@ test('a still-authenticated player is reassigned after midnight instead of keepi
   const factionSeasonOne = await ensurePlayerFactionAssignment(client, { seasonId: seasonOneId, playerId: 1 });
   assert.equal(players.get(1).faction, factionSeasonOne);
 
-  // Player never logs out; their next request happens after the midnight rollover.
-  const seasonTwo = await ensureCurrentSeason(client, { now: new Date('2026-06-02T00:00:01.000Z') });
+  // Player never logs out; their next request happens after the season rollover.
+  const seasonTwo = await ensureCurrentSeason(client, { now: new Date('2026-06-08T00:00:01.000Z') });
   assert.equal(players.get(1).faction, null); // reset seasonal gameplay clears the cached faction
   const factionSeasonTwo = await ensurePlayerFactionAssignment(client, { seasonId: seasonTwo.id, playerId: 1 });
   assert.equal(players.get(1).faction, factionSeasonTwo);
@@ -444,20 +444,31 @@ test('the seasons table enforces a real unique constraint on season_number (defe
   );
 });
 
-test('automatic midnight rollover creates the next season ending at the following 00:00 UTC', async () => {
+test('automatic rollover creates each new season with a seven-day duration', async () => {
   const client = createSeasonTestClient({ players: buildPlayers([]), territories: buildTerritories() });
   const midnight = new Date('2026-09-10T00:00:00.000Z');
 
   const first = await ensureCurrentSeason(client, { now: midnight });
-  assert.equal(new Date(first.ends_at).toISOString(), '2026-09-11T00:00:00.000Z');
+  assert.equal(new Date(first.ends_at).toISOString(), '2026-09-17T00:00:00.000Z');
 
-  const nextMidnight = new Date('2026-09-11T00:00:00.000Z');
-  const second = await ensureCurrentSeason(client, { now: nextMidnight });
+  const nextStart = new Date('2026-09-17T00:00:00.000Z');
+  const second = await ensureCurrentSeason(client, { now: nextStart });
 
   assert.notEqual(second.id, first.id);
   assert.equal(second.season_number, first.season_number + 1);
-  assert.equal(new Date(second.ends_at).toISOString(), '2026-09-12T00:00:00.000Z');
+  assert.equal(new Date(second.ends_at).toISOString(), '2026-09-24T00:00:00.000Z');
   assert.equal(client.state.seasons.filter((s) => s.status === 'active').length, 1);
+});
+
+test('force-finished seasons create a new seven-day season from the finish time', async () => {
+  const client = createSeasonTestClient({ players: buildPlayers([]), territories: buildTerritories() });
+  await ensureCurrentSeason(client, { now: new Date('2026-09-10T00:00:00.000Z') });
+
+  const finishedAt = new Date('2026-09-12T15:30:00.000Z');
+  const { season } = await forceFinishCurrentSeason(client, { actorId: 1, now: finishedAt });
+
+  assert.equal(new Date(season.starts_at).toISOString(), '2026-09-12T15:30:00.000Z');
+  assert.equal(new Date(season.ends_at).toISOString(), '2026-09-19T15:30:00.000Z');
 });
 
 // ===================== Registration cannot choose a faction =====================

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DAY_MS, getUtcDayNumber, getUtcDayBounds, getCurrentUtcDayBounds } = require('../backend/season-time');
 
-test('a season runs from 00:00 UTC until the next 00:00 UTC', () => {
+test('UTC day bounds run from 00:00 UTC until the next 00:00 UTC', () => {
   const now = new Date('2026-03-15T13:45:00.000Z');
   const { startsAt, endsAt } = getCurrentUtcDayBounds(now);
 

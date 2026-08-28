@@ -1,8 +1,7 @@
-// Core daily-season logic: rollover (finalize + reseed + start next), balanced faction
+// Core season logic: rollover (finalize + reseed + start next), balanced faction
 // assignment, and scoring. Every function here takes a caller-supplied `client` (pool or a
 // dedicated checked-out connection) so it stays unit-testable with a fake client, matching
 // the rest of this codebase (admin-write-operations.js, admin-resets.js, etc.).
-const { getCurrentUtcDayBounds } = require('./season-time');
 const topology = require('../world-topology');
 const topologySql = require('./topology-sql');
 const { STARTING_PLAYER_RESOURCES, STARTING_BUILDING_LEVELS } = require('./admin-resets');
@@ -14,6 +13,7 @@ const { buildArmyName } = require('./admin-faction-change');
 // connection ran the query -- safe to use with a pool, unlike session-scoped advisory locks.
 const ROLLOVER_LOCK_KEY = 837221001;
 const ASSIGNMENT_LOCK_KEY = 837221002;
+const SEASON_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const VALID_FACTIONS = ['blue', 'red', 'green'];
 const CORE_ID_SET = new Set(topology.CORE_IDS);
@@ -138,10 +138,9 @@ async function runSeasonRollover(client, { actorId = null, now = new Date(), for
 
     const activeResult = await client.query(`SELECT * FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1 FOR UPDATE`);
     const current = activeResult.rows[0] || null;
-    // The new season always starts right now and ends at the next 00:00 UTC boundary after
-    // now. For a real midnight rollover "now" already IS ~00:00 UTC; for a forced mid-day
-    // finish this correctly starts the new season immediately instead of at today's midnight.
-    const { endsAt } = getCurrentUtcDayBounds(now);
+    // Existing active seasons retain their scheduled end time. Only a newly created season
+    // receives the seven-day duration, including after a forced finish.
+    const endsAt = new Date(now.getTime() + SEASON_DURATION_MS);
 
     if (current && !force && new Date(current.ends_at) > now) {
       await client.query('COMMIT');
