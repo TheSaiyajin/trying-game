@@ -5,6 +5,9 @@ const path = require('path');
 const {
   getUpgradeCost,
   getProductionFromBuildings,
+  getFactionStorageCaps,
+  limitResourceGain,
+  getFactionTerritoryBonuses,
   getTrainingCost,
   getOfflineResourceGain,
   calculateBattleOutcome,
@@ -30,6 +33,27 @@ test('production uses faction-controlled territory bonuses from the backend', ()
   assert.equal(result.wood, 12);
   assert.equal(result.iron, 3);
   assert.equal(result.manpower, 4);
+});
+
+test('storage bonuses cap new gains without removing resources earned above a lost buff cap', () => {
+  const buffedTerritories = [{ owner_faction: 'blue', bonus_type: 'storage', bonus_value: 0.20 }];
+  assert.deepEqual(getFactionStorageCaps(buffedTerritories, 'blue'), {
+    food: 12000, wood: 12000, iron: 12000, manpower: 12000,
+  });
+  assert.deepEqual(limitResourceGain(
+    { food: 11500, wood: 9999, iron: 12000, manpower: 10000 },
+    { food: 100, wood: 100, iron: 100, manpower: 100 },
+    getFactionStorageCaps([], 'blue')
+  ), { food: 0, wood: 1, iron: 0, manpower: 0 });
+});
+
+test('controlled Fortresses add one troop per minute each', () => {
+  const bonuses = getFactionTerritoryBonuses([
+    { owner_faction: 'blue', is_fortress: true },
+    { owner_faction: 'blue', bonus_type: 'fortress' },
+    { owner_faction: 'red', is_fortress: true },
+  ], 'blue');
+  assert.equal(bonuses.fortressTroops, 2);
 });
 
 test('battle outcome is resolved server-side using backend calculations', () => {

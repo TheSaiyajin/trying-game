@@ -25,6 +25,9 @@ const BUILDING_DEFS = {
   },
 };
 
+const BASE_STORAGE_CAP = 10000;
+const RESOURCE_KEYS = ['food', 'wood', 'iron', 'manpower'];
+
 function clampInt(value, minimum = 0) {
   const numeric = Number(value) || 0;
   return Math.max(minimum, Math.floor(numeric));
@@ -52,7 +55,7 @@ function getUpgradeCost(buildingKey, level) {
 }
 
 function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
-  const bonuses = { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 };
+  const bonuses = { food: 0, wood: 0, iron: 0, manpower: 0, training: 0, storage: 0, fortressTroops: 0 };
 
   for (const territory of territories) {
     const ownerFaction = territory.owner_faction || territory.owner;
@@ -65,15 +68,30 @@ function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
     if (bonusType === 'iron') bonuses.iron += bonusValue;
     if (bonusType === 'manpower') bonuses.manpower += bonusValue;
     if (bonusType === 'training') bonuses.training += bonusValue;
+    if (bonusType === 'storage') bonuses.storage += bonusValue;
     if (bonusType === 'resource') {
       bonuses.food += bonusValue;
       bonuses.wood += bonusValue;
       bonuses.iron += bonusValue;
       bonuses.manpower += bonusValue;
     }
+    if (territory.is_fortress || territory.fortress || bonusType === 'fortress') bonuses.fortressTroops += 1;
   }
 
   return bonuses;
+}
+
+function getFactionStorageCaps(territories = [], faction = 'blue') {
+  const multiplier = Math.max(0, 1 + getFactionTerritoryBonuses(territories, faction).storage);
+  return Object.fromEntries(RESOURCE_KEYS.map((resource) => [resource, Math.floor(BASE_STORAGE_CAP * multiplier)]));
+}
+
+function limitResourceGain(resources = {}, gain = {}, caps = {}) {
+  return Object.fromEntries(RESOURCE_KEYS.map((resource) => {
+    const current = Number(resources[resource]) || 0;
+    const available = Math.max(0, Math.floor(Number(caps[resource]) || BASE_STORAGE_CAP) - current);
+    return [resource, Math.min(Math.max(0, Math.floor(Number(gain[resource]) || 0)), available)];
+  }));
 }
 
 function getProductionFromBuildings(buildings = {}, territories = [], faction = 'blue', includeBonuses = false) {
@@ -132,9 +150,12 @@ function calculateBattleOutcome(attackStats, defenseStats) {
 
 module.exports = {
   BUILDING_DEFS,
+  BASE_STORAGE_CAP,
   getUpgradeCost,
   getProductionFromBuildings,
   getFactionTerritoryBonuses,
+  getFactionStorageCaps,
+  limitResourceGain,
   getTrainingCost,
   getOfflineResourceGain,
   calculateBattleOutcome,

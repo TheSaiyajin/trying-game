@@ -8,6 +8,8 @@ const {
   getUpgradeCost,
   getProductionFromBuildings,
   getFactionTerritoryBonuses,
+  getFactionStorageCaps,
+  limitResourceGain,
 } = require('./game-logic');
 const { AttackError, performAttack } = require('./attack-logic');
 const {
@@ -266,12 +268,18 @@ async function applyOfflineResourceEarnings(playerId) {
   const buildings = await getPlayerBuildingLevels(playerId);
   const territories = await getTerritoriesSnapshot();
   const production = getProductionFromBuildings(buildings, territories, faction, true);
-  const gain = {
+  const gain = limitResourceGain({
+    food: player.resource_food,
+    wood: player.resource_wood,
+    iron: player.resource_iron,
+    manpower: player.resource_manpower,
+  }, {
     food: Math.max(0, Math.floor(production.food * wholeMinutes)),
     wood: Math.max(0, Math.floor(production.wood * wholeMinutes)),
     iron: Math.max(0, Math.floor(production.iron * wholeMinutes)),
     manpower: Math.max(0, Math.floor(production.manpower * wholeMinutes)),
-  };
+  }, getFactionStorageCaps(territories, faction));
+  const fortressTroops = getFactionTerritoryBonuses(territories, faction).fortressTroops * wholeMinutes;
 
   await db.query(
     `UPDATE players
@@ -279,13 +287,21 @@ async function applyOfflineResourceEarnings(playerId) {
          resource_wood = resource_wood + $2,
          resource_iron = resource_iron + $3,
          resource_manpower = resource_manpower + $4,
-         resource_last_updated = resource_last_updated + ($5 * INTERVAL '1 minute'),
+         soldiers = soldiers + $5,
+         resource_last_updated = resource_last_updated + ($6 * INTERVAL '1 minute'),
          last_action_at = NOW()
-     WHERE id = $6`,
-    [gain.food, gain.wood, gain.iron, gain.manpower, wholeMinutes, playerId]
+     WHERE id = $7`,
+    [gain.food, gain.wood, gain.iron, gain.manpower, fortressTroops, wholeMinutes, playerId]
   );
 
-  return { ...player, resource_food: Number(player.resource_food) + gain.food, resource_wood: Number(player.resource_wood) + gain.wood, resource_iron: Number(player.resource_iron) + gain.iron, resource_manpower: Number(player.resource_manpower) + gain.manpower };
+  return {
+    ...player,
+    resource_food: Number(player.resource_food) + gain.food,
+    resource_wood: Number(player.resource_wood) + gain.wood,
+    resource_iron: Number(player.resource_iron) + gain.iron,
+    resource_manpower: Number(player.resource_manpower) + gain.manpower,
+    soldiers: Number(player.soldiers) + fortressTroops,
+  };
 }
 
 // Authoritative resource generation: runs on the server every minute for every
@@ -296,20 +312,29 @@ async function runGlobalResourceTick(db = null, options = {}) {
   try {
     const queryable = db || await connect();
     const territories = await getTerritoriesSnapshot(queryable);
-    const playersResult = await queryable.query('SELECT id, faction FROM players');
+    const playersResult = await queryable.query('SELECT id, faction, resource_food, resource_wood, resource_iron, resource_manpower FROM players');
 
     for (const row of playersResult.rows) {
       const buildings = await getPlayerBuildingLevels(row.id, queryable);
-      const production = getProductionFromBuildings(buildings, territories, row.faction || 'blue', true);
+      const faction = row.faction || 'blue';
+      const production = getProductionFromBuildings(buildings, territories, faction, true);
+      const gain = limitResourceGain({
+        food: row.resource_food,
+        wood: row.resource_wood,
+        iron: row.resource_iron,
+        manpower: row.resource_manpower,
+      }, production, getFactionStorageCaps(territories, faction));
+      const fortressTroops = getFactionTerritoryBonuses(territories, faction).fortressTroops;
       await queryable.query(
         `UPDATE players
          SET resource_food = resource_food + $1,
              resource_wood = resource_wood + $2,
              resource_iron = resource_iron + $3,
              resource_manpower = resource_manpower + $4,
+             soldiers = soldiers + $5,
              resource_last_updated = NOW()
-         WHERE id = $5`,
-        [production.food, production.wood, production.iron, production.manpower, row.id]
+         WHERE id = $6`,
+        [gain.food, gain.wood, gain.iron, gain.manpower, fortressTroops, row.id]
       );
     }
   } catch (error) {
