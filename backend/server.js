@@ -46,6 +46,7 @@ const {
   computeScores,
 } = require('./season');
 const { getCurrentUtcDayBounds } = require('./season-time');
+const { resolveTrustProxySetting } = require('./trust-proxy');
 const {
  CHAT_RESPONSE_LIMIT,
  createFactionChatMessage,
@@ -58,6 +59,11 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const validFactions = ['blue', 'red', 'green'];
 const buildingNames = ['farm', 'lumbermill', 'ironmine', 'barracks'];
+
+// Must be set before any express-rate-limit middleware: SaiWars sits behind
+// Cloudflare -> Nginx -> Express (2 hops), and rate limiting needs the real client IP, not
+// the proxy's, to key limits correctly. See trust-proxy.js for the validated resolution.
+app.set('trust proxy', resolveTrustProxySetting());
 
 app.use(helmet());
 app.use(express.json({ limit: '1mb' }));
