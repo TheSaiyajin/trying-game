@@ -109,6 +109,11 @@ function formatCountdown(msRemaining) {
   return `${hours}:${minutes}:${seconds}`;
 }
 
+function formatScoreboardFaction(faction, territoryCount, score, memberCount) {
+  const icon = { blue: '🔵', red: '🔴', green: '🟢' }[faction];
+  return `${icon} ${territoryCount} territories · ${score} pts · ${memberCount} players`;
+}
+
 function renderScoreboard() {
   const season = G.season;
   const seasonEl = document.getElementById('scoreboard-season');
@@ -125,13 +130,19 @@ function renderScoreboard() {
   countdownEl.textContent = formatCountdown(new Date(season.endsAt).getTime() - Date.now());
 
   const scores = season.scores || { blue: 0, red: 0, green: 0 };
-  const counts = season.memberCounts || { blue: 0, red: 0, green: 0 };
-  document.getElementById('scoreboard-blue-score').textContent = scores.blue ?? 0;
-  document.getElementById('scoreboard-red-score').textContent = scores.red ?? 0;
-  document.getElementById('scoreboard-green-score').textContent = scores.green ?? 0;
-  document.getElementById('scoreboard-blue-count').textContent = `(${counts.blue ?? 0})`;
-  document.getElementById('scoreboard-red-count').textContent = `(${counts.red ?? 0})`;
-  document.getElementById('scoreboard-green-count').textContent = `(${counts.green ?? 0})`;
+  const memberCounts = season.memberCounts || { blue: 0, red: 0, green: 0 };
+  const territoryCounts = { blue: 0, red: 0, green: 0 };
+  Object.values(G.territories).forEach((territory) => {
+    if (territoryCounts[territory.owner] !== undefined) territoryCounts[territory.owner] += 1;
+  });
+  ['blue', 'red', 'green'].forEach((faction) => {
+    document.getElementById(`scoreboard-${faction}-score`).textContent = formatScoreboardFaction(
+      faction,
+      territoryCounts[faction],
+      scores[faction] ?? 0,
+      memberCounts[faction] ?? 0
+    );
+  });
 }
 
 function tickScoreboardCountdown() {
@@ -1774,6 +1785,7 @@ if (typeof module !== 'undefined') {
     startFactionChatPolling,
     buildTerritoryLayout,
     formatCountdown,
+    formatScoreboardFaction,
     renderScoreboard,
     apiFetch,
     ensureSession,
