@@ -61,6 +61,7 @@ jobs:
 
             git fetch origin main
             git reset --hard origin/main
+            sed -i "s/__BUILD_VERSION__/$(git rev-parse --short HEAD)/g" index.html
             npm ci
             sudo systemctl restart saiwars
 
