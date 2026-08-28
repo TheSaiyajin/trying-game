@@ -90,13 +90,10 @@ async function changePlayerFaction(client, { actorId, playerId, faction }) {
     [faction, buildArmyName(faction), nextRole, cleanup.recalledTroops, playerId]
   );
   await client.query(
-    `UPDATE season_memberships sm
-     SET faction = $1
-     FROM seasons s
-     WHERE sm.season_id = s.id
-       AND sm.player_id = $2
-       AND s.status = 'active'`,
-    [faction, playerId]
+    `INSERT INTO season_memberships (season_id, player_id, faction)
+     SELECT id, $1, $2 FROM seasons WHERE status = 'active'
+     ON CONFLICT (season_id, player_id) DO UPDATE SET faction = EXCLUDED.faction`,
+    [playerId, faction]
   );
   await client.query('UPDATE faction_leaders SET player_id = NULL WHERE player_id = $1', [playerId]);
   await client.query(

@@ -94,6 +94,16 @@ async function updatePlayerRole(client, { actorId, playerId, role }) {
   if (!normalized.ok) return { ...normalized, status: 400 };
 
   if (normalized.role === 'leader') {
+    const currentMembership = await client.query(
+      `SELECT 1 FROM season_memberships sm
+       INNER JOIN seasons s ON s.id = sm.season_id
+       WHERE sm.player_id = $1 AND sm.faction = $2 AND s.status = 'active'
+       FOR UPDATE`,
+      [playerId, player.faction]
+    );
+    if (!currentMembership.rowCount) {
+      return { ok: false, status: 400, error: 'Player must belong to their faction this season.' };
+    }
     const currentLeader = await client.query(
       'SELECT player_id FROM faction_leaders WHERE faction = $1 FOR UPDATE',
       [player.faction]
@@ -193,6 +203,16 @@ async function assignFactionLeader(client, { actorId, playerId, faction, validFa
   }
   if (player.faction !== normalizedFaction) {
     return { ok: false, status: 400, error: 'Player must belong to the selected faction.' };
+  }
+  const currentMembership = await client.query(
+    `SELECT 1 FROM season_memberships sm
+     INNER JOIN seasons s ON s.id = sm.season_id
+     WHERE sm.player_id = $1 AND sm.faction = $2 AND s.status = 'active'
+     FOR UPDATE`,
+    [playerId, normalizedFaction]
+  );
+  if (!currentMembership.rowCount) {
+    return { ok: false, status: 400, error: 'Player must belong to the selected faction this season.' };
   }
 
   const currentLeader = await client.query(

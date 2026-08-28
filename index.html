@@ -84,7 +84,7 @@
         <div class="row-center">
           <button class="btn-circle" onclick="changeTrain(-10)">−10</button>
           <button class="btn-circle" onclick="changeTrain(-1)">−</button>
-          <span class="train-count" id="train-count">1</span>
+          <input class="train-count troop-count-input" id="train-count" type="number" inputmode="numeric" min="1" step="1" value="1" aria-label="Soldiers to train" />
           <button class="btn-circle" onclick="changeTrain(1)">+</button>
           <button class="btn-circle" onclick="changeTrain(10)">+10</button>
         </div>
@@ -119,6 +119,11 @@
 
       <div class="map-container">
         <svg id="map-svg" viewBox="0 0 360 370" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="map-controls" aria-label="Map zoom controls">
+          <button class="btn-circle" type="button" onclick="changeMapZoom(-1)" aria-label="Zoom out">−</button>
+          <button class="btn-circle" type="button" onclick="changeMapZoom(1)" aria-label="Zoom in">+</button>
+          <button class="btn-small" type="button" onclick="resetMapView()">Reset</button>
+        </div>
       </div>
 
       <div class="section-card" id="season-history-card">
@@ -145,7 +150,7 @@
           <div class="row-center">
             <button class="btn-circle" onclick="changeAttack(-10)">−10</button>
             <button class="btn-circle" onclick="changeAttack(-1)">−</button>
-            <span class="train-count" id="attack-count">10</span>
+            <input class="train-count troop-count-input" id="attack-count" type="number" inputmode="numeric" min="1" step="1" value="10" aria-label="Soldiers to attack with" />
             <button class="btn-circle" onclick="changeAttack(1)">+</button>
             <button class="btn-circle" onclick="changeAttack(10)">+10</button>
             <button class="btn-small" onclick="changeAttack('max')">MAX</button>
@@ -159,7 +164,7 @@
           <div class="row-center">
             <button class="btn-circle" onclick="changeDefend(-10)">−10</button>
             <button class="btn-circle" onclick="changeDefend(-1)">−</button>
-            <span class="train-count" id="defend-count">10</span>
+            <input class="train-count troop-count-input" id="defend-count" type="number" inputmode="numeric" min="1" step="1" value="10" aria-label="Soldiers to send as defenders" />
             <button class="btn-circle" onclick="changeDefend(1)">+</button>
             <button class="btn-circle" onclick="changeDefend(10)">+10</button>
             <button class="btn-small" onclick="changeDefend('max')">MAX</button>
@@ -172,7 +177,7 @@
             <div class="row-center">
               <button class="btn-circle" onclick="changeRecall(-10)">−10</button>
               <button class="btn-circle" onclick="changeRecall(-1)">−</button>
-              <span class="train-count" id="recall-count">1</span>
+              <input class="train-count troop-count-input" id="recall-count" type="number" inputmode="numeric" min="1" step="1" value="1" aria-label="Soldiers to recall" />
               <button class="btn-circle" onclick="changeRecall(1)">+</button>
               <button class="btn-circle" onclick="changeRecall(10)">+10</button>
               <button class="btn-small" onclick="changeRecall('max')">MAX</button>

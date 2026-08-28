@@ -30,6 +30,7 @@ let attackSendCount = 10;
 let defendSendCount = 10;
 let trainAmount = 1;
 let factionChatPollHandle = null;
+const mapView = { scale: 1, x: 0, y: 0, pointers: new Map(), dragStart: null, pinchStart: null, dragged: false, initialized: false };
 
 // Canonical topology module (world-topology.js): required directly under Node (tests),
 // exposed as window.WORLD_TOPOLOGY when loaded via <script> in the browser.
@@ -617,15 +618,18 @@ async function upgradeBuilding(key) {
 }
 
 function changeTrain(delta) {
-  trainAmount = Math.max(1, trainAmount + delta);
-  document.getElementById('train-count').textContent = trainAmount;
+  trainAmount = Math.max(1, Math.min(getAffordableTrainingAmount(), trainAmount + delta));
+  setTroopInput('train-count', trainAmount);
 }
 
 async function trainSoldiers() {
+  const amount = readTroopInput('train-count', getAffordableTrainingAmount(), 'Training amount');
+  if (!amount) return;
+  trainAmount = amount;
   try {
     const response = await apiFetch('/game/train-soldiers', {
       method: 'POST',
-      body: JSON.stringify({ amount: trainAmount }),
+      body: JSON.stringify({ amount }),
     });
     setGameStateFromSnapshot(response.state);
     renderCity();
@@ -634,6 +638,37 @@ async function trainSoldiers() {
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }
+}
+
+function setTroopInput(inputId, amount) {
+  const input = document.getElementById(inputId);
+  if (input) input.value = String(amount);
+}
+
+function readTroopInput(inputId, maxAmount, label) {
+  const value = document.getElementById(inputId)?.value;
+  if (!/^[1-9]\d*$/.test(String(value || '')) || !Number.isSafeInteger(Number(value)) || Number(value) > maxAmount) {
+    showToast(`❌ ${label} must be a whole number from 1 to ${maxAmount}.`);
+    return 0;
+  }
+  return Number(value);
+}
+
+function getAffordableTrainingAmount() {
+  const resources = G.player.resources || {};
+  const trainingBonus = Object.values(G.territories).reduce((total, territory) => (
+    territory.owner === G.player.faction && String(territory.bonus).toLowerCase() === 'training'
+      ? total + Number(territory.bonusValue || 0)
+      : total
+  ), 0);
+  const multiplier = Math.max(0.4, 1 - trainingBonus);
+  const maximum = Math.min(5000, Math.floor(Number(resources.food || 0) / (50 * multiplier)), Math.floor(Number(resources.iron || 0) / (20 * multiplier)), Math.floor(Number(resources.manpower || 0) / multiplier));
+  for (let amount = Math.max(0, maximum); amount > 0; amount -= 1) {
+    if (Math.round(50 * amount * multiplier) <= Number(resources.food || 0)
+      && Math.round(20 * amount * multiplier) <= Number(resources.iron || 0)
+      && Math.round(amount * multiplier) <= Number(resources.manpower || 0)) return amount;
+  }
+  return 0;
 }
 
 const FACTION_FILL = { blue: '#1a4d8f', red: '#7a1a1a', green: '#1a5c2a' };
@@ -705,6 +740,7 @@ function renderMap() {
   svg.innerHTML = '';
   const { layout, viewBox } = buildTerritoryLayout(G.territories);
   svg.setAttribute('viewBox', viewBox);
+  initializeMobileMap(svg);
 
   // Draw connection lines first so hex tiles render on top of them.
   const drawnEdges = new Set();
@@ -787,6 +823,80 @@ function renderMap() {
   });
 }
 
+function applyMapView(svg) {
+  const container = svg.parentElement;
+  if (!container) return;
+  const bounds = container.getBoundingClientRect();
+  const maxX = ((mapView.scale - 1) * bounds.width) / 2;
+  const maxY = ((mapView.scale - 1) * bounds.height) / 2;
+  mapView.x = Math.max(-maxX, Math.min(maxX, mapView.x));
+  mapView.y = Math.max(-maxY, Math.min(maxY, mapView.y));
+  svg.style.transformOrigin = 'center';
+  svg.style.transform = `translate(${mapView.x}px, ${mapView.y}px) scale(${mapView.scale})`;
+}
+
+function resetMapView() {
+  mapView.scale = 1;
+  mapView.x = 0;
+  mapView.y = 0;
+  const svg = document.getElementById('map-svg');
+  if (svg) applyMapView(svg);
+}
+
+function changeMapZoom(delta) {
+  if (!window.matchMedia('(max-width: 520px)').matches) return;
+  mapView.scale = Math.max(1, Math.min(3, mapView.scale + delta));
+  const svg = document.getElementById('map-svg');
+  if (svg) applyMapView(svg);
+}
+
+function initializeMobileMap(svg) {
+  if (mapView.initialized) return;
+  mapView.initialized = true;
+  svg.addEventListener('pointerdown', (event) => {
+    if (!window.matchMedia('(max-width: 520px)').matches) return;
+    svg.setPointerCapture(event.pointerId);
+    mapView.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    mapView.dragStart = { x: event.clientX, y: event.clientY, mapX: mapView.x, mapY: mapView.y };
+    if (mapView.pointers.size === 2) {
+      const [first, second] = [...mapView.pointers.values()];
+      mapView.pinchStart = { distance: Math.hypot(first.x - second.x, first.y - second.y), scale: mapView.scale };
+    }
+  });
+  svg.addEventListener('pointermove', (event) => {
+    if (!mapView.pointers.has(event.pointerId)) return;
+    mapView.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (mapView.pointers.size === 2 && mapView.pinchStart) {
+      const [first, second] = [...mapView.pointers.values()];
+      mapView.scale = Math.max(1, Math.min(3, mapView.pinchStart.scale * (Math.hypot(first.x - second.x, first.y - second.y) / mapView.pinchStart.distance)));
+      mapView.dragged = true;
+    } else if (mapView.dragStart) {
+      const deltaX = event.clientX - mapView.dragStart.x;
+      const deltaY = event.clientY - mapView.dragStart.y;
+      if (Math.hypot(deltaX, deltaY) > 5) mapView.dragged = true;
+      if (mapView.dragged) {
+        mapView.x = mapView.dragStart.mapX + deltaX;
+        mapView.y = mapView.dragStart.mapY + deltaY;
+      }
+    }
+    if (mapView.dragged) applyMapView(svg);
+  });
+  svg.addEventListener('pointerup', (event) => {
+    mapView.pointers.delete(event.pointerId);
+    mapView.pinchStart = null;
+    mapView.dragStart = null;
+    if (mapView.dragged) {
+      svg.addEventListener('click', (clickEvent) => clickEvent.stopPropagation(), { once: true, capture: true });
+      mapView.dragged = false;
+    }
+  });
+  svg.addEventListener('pointercancel', () => {
+    mapView.pointers.clear();
+    mapView.pinchStart = null;
+    mapView.dragStart = null;
+  });
+}
+
 let recallSendCount = 1;
 
 function selectTerritory(id) {
@@ -815,17 +925,17 @@ function selectTerritory(id) {
     attackSection.style.display = 'block';
     defendSection.style.display = 'none';
     attackSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
-    document.getElementById('attack-count').textContent = attackSendCount;
+    setTroopInput('attack-count', attackSendCount);
   } else if (territory.owner === G.player.faction) {
     attackSection.style.display = 'none';
     defendSection.style.display = 'block';
     defendSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
-    document.getElementById('defend-count').textContent = defendSendCount;
+    setTroopInput('defend-count', defendSendCount);
     if (recallSection) {
       if (stationed > 0) {
         recallSection.style.display = 'block';
         recallSendCount = Math.max(1, Math.min(1, stationed));
-        document.getElementById('recall-count').textContent = recallSendCount;
+        setTroopInput('recall-count', recallSendCount);
       } else {
         recallSection.style.display = 'none';
       }
@@ -870,7 +980,7 @@ function changeAttack(delta) {
   } else {
     attackSendCount = Math.max(1, Math.min(maxAmount, attackSendCount + delta));
   }
-  document.getElementById('attack-count').textContent = attackSendCount;
+  setTroopInput('attack-count', attackSendCount);
 }
 
 async function launchAttack() {
@@ -886,11 +996,14 @@ async function launchAttack() {
     showToast('❌ This target cannot be attacked from your faction.');
     return;
   }
+  const soldiers = readTroopInput('attack-count', Number(G.player.soldiers || 0), 'Attack amount');
+  if (!soldiers) return;
+  attackSendCount = soldiers;
 
   try {
     const response = await apiFetch('/game/attack', {
       method: 'POST',
-      body: JSON.stringify({ territoryId: selectedTerritoryId, soldiers: attackSendCount }),
+      body: JSON.stringify({ territoryId: selectedTerritoryId, soldiers }),
     });
     setGameStateFromSnapshot(response.state);
     const result = response.outcome;
@@ -917,7 +1030,7 @@ function changeDefend(delta) {
   } else {
     defendSendCount = Math.max(1, Math.min(maxAmount, defendSendCount + delta));
   }
-  document.getElementById('defend-count').textContent = defendSendCount;
+  setTroopInput('defend-count', defendSendCount);
 }
 
 async function sendDefenders() {
@@ -931,11 +1044,14 @@ async function sendDefenders() {
     showToast('❌ You can defend only your faction territory.');
     return;
   }
+  const troops = readTroopInput('defend-count', Number(G.player.soldiers || 0), 'Defender amount');
+  if (!troops) return;
+  defendSendCount = troops;
 
   try {
     const response = await apiFetch('/game/defend', {
       method: 'POST',
-      body: JSON.stringify({ territoryId: selectedTerritoryId, troops: defendSendCount }),
+      body: JSON.stringify({ territoryId: selectedTerritoryId, troops }),
     });
     setGameStateFromSnapshot(response.state);
     showToast(`🛡️ ${defendSendCount} troops sent to defend ${territory.name}.`);
@@ -956,7 +1072,7 @@ function changeRecall(delta) {
   } else {
     recallSendCount = Math.max(1, Math.min(maxAmount, recallSendCount + delta));
   }
-  document.getElementById('recall-count').textContent = recallSendCount;
+  setTroopInput('recall-count', recallSendCount);
 }
 
 async function recallDefenders() {
@@ -964,11 +1080,15 @@ async function recallDefenders() {
     showToast('❌ Select a territory first.');
     return;
   }
+  const stationed = Number((G.player.stationedTroops || {})[selectedTerritoryId] || 0);
+  const troops = readTroopInput('recall-count', stationed, 'Recall amount');
+  if (!troops) return;
+  recallSendCount = troops;
 
   try {
     const response = await apiFetch('/game/recall-defenders', {
       method: 'POST',
-      body: JSON.stringify({ territoryId: selectedTerritoryId, troops: recallSendCount }),
+      body: JSON.stringify({ territoryId: selectedTerritoryId, troops }),
     });
     setGameStateFromSnapshot(response.state);
     showToast(`↩️ ${recallSendCount} troops recalled.`);

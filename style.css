@@ -438,6 +438,14 @@ html, body {
   font-size: 22px; font-weight: 700;
   min-width: 40px; text-align: center;
 }
+.troop-count-input {
+  width: 68px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card2);
+  color: var(--text-main);
+  padding: 3px 5px;
+}
 
 /* ---------- Map Screen ---------- */
 .scoreboard {
@@ -511,6 +519,7 @@ html, body {
 .territory-capital-marker { font-size: 14px; }
 
 .map-container {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow-x: auto;
@@ -528,6 +537,7 @@ html, body {
   display: block;
   margin: 0 auto;
 }
+.map-controls { display: none; }
 
 .territory {
   cursor: pointer;
@@ -943,7 +953,7 @@ html, body {
   .faction-bonuses span { font-size: 12px; }
 }
 
-@media (max-width: 420px) {
+@media (max-width: 520px) {
   .top-bar { padding: 0 8px; }
   .game-title { font-size: 14px; }
   .res-item { gap: 2px; font-size: 11px; }
@@ -951,5 +961,15 @@ html, body {
   .screen { padding-left: 8px; padding-right: 8px; }
   .faction-bonuses span { font-size: 10px; }
   #map-svg { min-width: 0; }
-  .map-container { overflow: hidden; }
+  .map-container { overflow: hidden; touch-action: none; }
+  .map-controls {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .map-controls .btn-circle { width: 32px; height: 32px; min-height: 32px; }
+  .map-controls .btn-small { min-height: 32px; padding: 5px 8px; }
 }

@@ -10,7 +10,7 @@ const {
   updateCapital,
 } = require('../backend/admin-write-operations');
 
-function createAdminClient({ players, territories, factionLeaders, territoryDefenders = new Map() }) {
+function createAdminClient({ players, territories, factionLeaders, territoryDefenders = new Map(), seasonMemberships = new Map([...players.values()].map((player) => [player.id, player.faction])) }) {
   const adminActions = [];
 
   return {
@@ -32,6 +32,11 @@ function createAdminClient({ players, territories, factionLeaders, territoryDefe
       if (text === 'SELECT id, username, faction, role FROM players WHERE id = $1 FOR UPDATE') {
         const player = players.get(params[0]);
         return { rows: player ? [{ id: player.id, username: player.username, faction: player.faction, role: player.role }] : [], rowCount: player ? 1 : 0 };
+      }
+
+      if (text === 'SELECT 1 FROM season_memberships sm INNER JOIN seasons s ON s.id = sm.season_id WHERE sm.player_id = $1 AND sm.faction = $2 AND s.status = \'active\' FOR UPDATE') {
+        const matches = seasonMemberships.get(params[0]) === params[1];
+        return { rows: matches ? [{ '?column?': 1 }] : [], rowCount: matches ? 1 : 0 };
       }
 
       if (text === 'SELECT player_id FROM faction_leaders WHERE faction = $1 FOR UPDATE') {
@@ -266,6 +271,25 @@ test('dedicated leader assignment also replaces the previous faction leader', as
   assert.equal(players.get(2).role, 'member');
   assert.equal(players.get(3).role, 'leader');
   assert.equal(factionLeaders.get('red'), 3);
+});
+
+test('leader assignment requires a current-season faction membership', async () => {
+  const players = new Map([[2, { id: 2, username: 'Rook', faction: 'red', role: 'member' }]]);
+  const client = createAdminClient({
+    players,
+    territories: new Map(),
+    factionLeaders: new Map(),
+    seasonMemberships: new Map(),
+  });
+
+  const result = await assignFactionLeader(client, {
+    actorId: 1,
+    playerId: 2,
+    faction: 'red',
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.deepEqual(result, { ok: false, status: 400, error: 'Player must belong to the selected faction this season.' });
 });
 
 test('territory admin updates validate owner and floor defense values', async () => {

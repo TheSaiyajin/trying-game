@@ -81,11 +81,13 @@ function createFakeClient({ players, territories, defenders, factionLeaders, sea
         return { rows: [] };
       }
 
-      if (text.startsWith('UPDATE season_memberships sm')) {
-        for (const membership of seasonMemberships.values()) {
-          if (Number(membership.player_id) === Number(params[1]) && membership.active) {
-            membership.faction = params[0];
-          }
+      if (text.startsWith('INSERT INTO season_memberships')) {
+        const [playerId, faction] = params;
+        const membership = [...seasonMemberships.values()].find((entry) => Number(entry.player_id) === Number(playerId) && entry.active);
+        if (membership) {
+          membership.faction = faction;
+        } else {
+          seasonMemberships.set(`active:${playerId}`, { season_id: 1, player_id: playerId, faction, active: true });
         }
         return { rows: [] };
       }
@@ -206,6 +208,22 @@ test('changing faction updates the active-season membership for every faction', 
     assert.equal(players.get(2).faction, newFaction, `${oldFaction} -> ${newFaction} player`);
     assert.equal(seasonMemberships.get('active:2').faction, newFaction, `${oldFaction} -> ${newFaction} membership`);
   }
+});
+
+test('changing faction creates an active-season membership when the player has none', async () => {
+  const seasonMemberships = new Map();
+  const client = createFakeClient({
+    players: new Map([[2, { id: 2, username: 'Rook', faction: 'blue', role: 'member', soldiers: 10 }]]),
+    territories: new Map(),
+    defenders: new Map(),
+    factionLeaders: new Map(),
+    seasonMemberships,
+  });
+
+  const result = await changePlayerFaction(client, { actorId: 1, playerId: 2, faction: 'red' });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(seasonMemberships.get('active:2'), { season_id: 1, player_id: 2, faction: 'red', active: true });
 });
 
 test('changing faction returns 404 for a missing player', async () => {
