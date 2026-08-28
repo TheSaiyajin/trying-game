@@ -167,9 +167,11 @@ async function requireLeaderOrAdmin(req, res, next) {
 }
 
 function parsePositiveInt(value, fallback = 0, maxValue = 1000000) {
-  if (typeof value === 'string' && !/^[1-9]\d*$/.test(value.trim())) return fallback;
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) return fallback;
-  return Math.min(value, maxValue);
+  const numberValue = typeof value === 'string' && /^[1-9]\d*$/.test(value.trim())
+    ? Number(value)
+    : value;
+  if (typeof numberValue !== 'number' || !Number.isSafeInteger(numberValue) || numberValue <= 0) return fallback;
+  return Math.min(numberValue, maxValue);
 }
 
 async function getPlayerById(playerId, db = null) {

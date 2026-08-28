@@ -14,6 +14,15 @@ const {
 } = require('../backend/game-logic');
 const { applySchemaMigrations } = require('../backend/db');
 
+test('admin route parser accepts positive digit-string IDs', () => {
+  const serverSource = fs.readFileSync(path.join(__dirname, '../backend/server.js'), 'utf8');
+  const match = serverSource.match(/function parsePositiveInt\(value, fallback = 0, maxValue = 1000000\) \{([\s\S]*?)\n\}/);
+  assert.ok(match, 'parsePositiveInt should be present');
+  const parsePositiveInt = new Function(`return function parsePositiveInt(value, fallback = 0, maxValue = 1000000) {${match[1]}\n};`)();
+
+  assert.equal(parsePositiveInt('2', 0, 100000), 2);
+});
+
 test('upgrade cost grows with level using backend rules', () => {
   assert.deepEqual(getUpgradeCost('farm', 1), { food: 50, wood: 80, iron: 0 });
   assert.deepEqual(getUpgradeCost('farm', 2), { food: 100, wood: 160, iron: 0 });
