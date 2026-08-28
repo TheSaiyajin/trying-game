@@ -191,9 +191,10 @@ test('defender casualties reduce stationed garrisons proportionally', () => {
 
 // ===================== Territory bonus formatting =====================
 
-test('mapTerritories preserves bonusValue for territory detail rendering', () => {
-  const mapped = mapTerritories([{ id: 'n1', name: 'Farmstead', owner: 'blue', defense: 12, bonus: 'food', bonusValue: 0.1, neighbors: [] }]);
+test('mapTerritories preserves territory bonus fields for rendering', () => {
+  const mapped = mapTerritories([{ id: 'n1', name: 'Farmstead', owner: 'blue', defense: 12, bonus: 'food', bonusValue: 0.1, storageBonus: 0.2, neighbors: [] }]);
   assert.equal(mapped.n1.bonusValue, 0.1);
+  assert.equal(mapped.n1.storageBonus, 0.2);
 });
 
 test('canAttack returns false for capitals while normal adjacent enemy territories remain attackable', () => {

@@ -64,6 +64,7 @@ function mapTerritories(rawTerritories) {
       troops: Number(territory.defense || territory.defense_troops || 0),
       bonus: territory.bonus || territory.bonus_type || 'None',
       bonusValue: Number(territory.bonusValue ?? territory.bonus_value ?? 0),
+      storageBonus: Number(territory.storageBonus ?? territory.storage_bonus ?? 0),
       adj: Array.isArray(territory.neighbors) ? territory.neighbors : [],
       fortress: !!(territory.fortress ?? territory.is_fortress),
       capital: !!(territory.capital ?? territory.is_capital),
@@ -198,7 +199,9 @@ function setGameStateFromSnapshot(snapshot) {
   updateFactionTheme();
   renderFactionBonuses();
   renderScoreboard();
-  if (previousFaction && snapshot.player && previousFaction !== snapshot.player.faction) {
+  if (previousFaction && previousFaction !== snapshot.player?.faction) {
+    G.chatMessages = [];
+    document.getElementById('chat-messages')?.replaceChildren();
     renderFactionChat({ scrollToNewest: true });
   }
 }

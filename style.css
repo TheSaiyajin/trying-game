@@ -511,7 +511,6 @@ html, body {
 .territory-capital-marker { font-size: 14px; }
 
 .map-container {
-  background: #0a1628;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow-x: auto;
@@ -887,17 +886,21 @@ html, body {
   --faction-accent: var(--accent-blue);
   --faction-accent-bright: var(--accent-blue2);
   --faction-glow: rgba(31, 111, 235, 0.16);
+  --faction-map-bg: #0a1628;
+  min-height: 100vh;
   background: radial-gradient(circle at 50% 0, var(--faction-glow), transparent 38%), var(--bg-dark);
 }
 .game-shell[data-faction="red"] {
   --faction-accent: var(--accent-red);
   --faction-accent-bright: #ff7972;
   --faction-glow: rgba(248, 81, 73, 0.16);
+  --faction-map-bg: #280d12;
 }
 .game-shell[data-faction="green"] {
   --faction-accent: var(--accent-green);
   --faction-accent-bright: #65d879;
   --faction-glow: rgba(63, 185, 80, 0.16);
+  --faction-map-bg: #0b2415;
 }
 .game-shell .top-bar { border-bottom-color: color-mix(in srgb, var(--faction-accent) 45%, var(--border)); }
 .game-shell .game-title, .game-shell .screen-title { color: var(--faction-accent-bright); }
@@ -906,6 +909,7 @@ html, body {
 .game-shell .btn-primary:hover { background: var(--faction-accent-bright); }
 .game-shell .nav-btn.active { color: var(--faction-accent-bright); border-top-color: var(--faction-accent-bright); }
 .game-shell .section-card h3 { color: var(--faction-accent-bright); }
+.game-shell .map-container { background: var(--faction-map-bg); }
 
 .faction-bonuses-card { padding-bottom: 10px; }
 .faction-bonuses { display: flex; flex-wrap: wrap; gap: 6px; }

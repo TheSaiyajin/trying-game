@@ -47,6 +47,23 @@ test('storage bonuses cap new gains without removing resources earned above a lo
   ), { food: 0, wood: 1, iron: 0, manpower: 0 });
 });
 
+test('storage bonus prefers dedicated storage fields and stacks with fortress and resource bonuses', () => {
+  const territories = [
+    { owner_faction: 'blue', bonus_type: 'storage', bonus_value: 0.20, storage_bonus: 0.15 },
+    { owner: 'blue', bonus: 'storage', bonusValue: 0.10 },
+    { owner: 'blue', bonus: 'resource', bonusValue: 0.05, fortress: true },
+  ];
+  const bonuses = getFactionTerritoryBonuses(territories, 'blue');
+
+  assert.equal(bonuses.storage, 0.25);
+  assert.equal(bonuses.fortressTroops, 1);
+  assert.equal(bonuses.allResources, 0.05);
+  assert.equal(bonuses.food, 0.05);
+  assert.deepEqual(getFactionStorageCaps(territories, 'blue'), {
+    food: 12500, wood: 12500, iron: 12500, manpower: 12500,
+  });
+});
+
 test('controlled Fortresses add one troop per minute each', () => {
   const bonuses = getFactionTerritoryBonuses([
     { owner_faction: 'blue', is_fortress: true },

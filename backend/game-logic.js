@@ -62,13 +62,15 @@ function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
     if (ownerFaction !== faction) continue;
     const bonusType = String(territory.bonus_type || territory.bonus || '').toLowerCase();
     const bonusValue = Number(territory.bonus_value ?? territory.bonusValue ?? 0);
+    const storageBonus = territory.storage_bonus ?? territory.storageBonus;
 
     if (bonusType === 'food') bonuses.food += bonusValue;
     if (bonusType === 'wood') bonuses.wood += bonusValue;
     if (bonusType === 'iron') bonuses.iron += bonusValue;
     if (bonusType === 'manpower') bonuses.manpower += bonusValue;
     if (bonusType === 'training') bonuses.training += bonusValue;
-    if (bonusType === 'storage') bonuses.storage += bonusValue;
+    if (storageBonus !== undefined && storageBonus !== null) bonuses.storage += Number(storageBonus) || 0;
+    else if (bonusType === 'storage') bonuses.storage += bonusValue;
     if (bonusType === 'resource') {
       bonuses.food += bonusValue;
       bonuses.wood += bonusValue;
