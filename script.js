@@ -200,6 +200,10 @@ function setGameStateFromSnapshot(snapshot) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function getToken() {
   return localStorage.getItem(AUTH_STORAGE_KEY) || '';
 }
@@ -216,16 +220,36 @@ async function apiFetch(path, options = {}) {
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`/api${path}`, {
-    ...options,
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(`/api${path}`, {
+      ...options,
+      headers,
+    });
+  } catch (networkError) {
+    // No response at all (offline, DNS failure, proxy hiccup during a rollover, etc). This
+    // is never a reason to log the player out -- status 0 marks it as temporary/retryable.
+    const error = new Error('Network error. Please check your connection.');
+    error.status = 0;
+    error.isNetworkError = true;
+    throw error;
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || `Request failed: ${response.status}`);
+    // Preserve the HTTP status so callers (ensureSession, loadGame) can tell a real
+    // authentication failure (401) apart from a temporary server/network hiccup (429, 5xx,
+    // or a dropped connection) instead of treating every non-2xx response the same way.
+    const error = new Error(payload.error || `Request failed: ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
+}
+
+async function fetchCurrentUser() {
+  const user = await apiFetch('/me');
+  return user && user.username ? user : null;
 }
 
 async function ensureSession() {
@@ -235,14 +259,28 @@ async function ensureSession() {
   }
 
   try {
-    const user = await apiFetch('/me');
-    if (user && user.username) return user;
+    return await fetchCurrentUser();
   } catch (error) {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-    throw new Error('Session expired. Please log in again.');
-  }
+    if (error.status === 401) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      throw new Error('Session expired. Please log in again.');
+    }
 
-  return null;
+    // 429, 5xx, or a network error (e.g. mid-rollover, brief outage): never delete the
+    // token for these. Retry once briefly before surfacing a "reconnecting" state.
+    await sleep(500);
+    try {
+      return await fetchCurrentUser();
+    } catch (retryError) {
+      if (retryError.status === 401) {
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+        throw new Error('Session expired. Please log in again.');
+      }
+      const temporaryError = new Error('Could not reach the server. Retrying…');
+      temporaryError.isTemporary = true;
+      throw temporaryError;
+    }
+  }
 }
 
 function buildAuthPayload({ username, password }) {
@@ -362,6 +400,14 @@ async function loadGame() {
   try {
     user = await ensureSession();
   } catch (error) {
+    if (error.isTemporary) {
+      // A transient 429/5xx/network error (e.g. mid season-rollover): keep the token and
+      // the current screen, and just try again shortly instead of bouncing to login.
+      console.warn('Session check temporarily unavailable, retrying:', error.message);
+      showToast('⚠️ Reconnecting…');
+      setTimeout(loadGame, 1500);
+      return;
+    }
     console.error('Session check failed:', error);
     showAuthScreen();
     return;
@@ -378,14 +424,10 @@ async function loadGame() {
   try {
     const payload = await apiFetch('/game/state');
     if (!payload.player?.faction) {
-      showAuthScreen();
-      setAuthMode('register');
-      const message = document.getElementById('auth-message');
-      if (message) message.textContent = 'Choose your faction to begin playing.';
-      const panel = document.getElementById('auth-faction-panel');
-      if (panel) panel.style.display = 'block';
-      const confirm = document.getElementById('auth-confirm-password');
-      if (confirm) confirm.style.display = 'none';
+      // Faction is assigned automatically on the server (see season.js); this only ever
+      // shows up as a brief gap right after registration or during a season rollover. Retry
+      // shortly instead of sending the player to a manual "choose your faction" screen.
+      setTimeout(loadGame, 750);
       return;
     }
 
@@ -395,8 +437,36 @@ async function loadGame() {
     renderMap();
     updateResourceBar();
   } catch (error) {
+    if (error.status === 401) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      showAuthScreen();
+      return;
+    }
     console.error('Failed to load authoritative game state:', error);
-    showToast('⚠️ Could not load the server state.');
+    showToast('⚠️ Could not load the server state. Retrying…');
+    setTimeout(loadGame, 1500);
+  }
+}
+
+// Periodic 60s poll while logged in. This is what picks up a season rollover/faction
+// reassignment that happened while the player stayed on the page (setGameStateFromSnapshot
+// already refreshes the map legend, scoreboard, and chat when the faction changes). Only a
+// real 401 logs the player out; every other error (mid-rollover 5xx, rate limiting, a dropped
+// connection) is left for the next poll to retry.
+async function refreshGameStateInBackground() {
+  try {
+    const payload = await apiFetch('/game/state');
+    setGameStateFromSnapshot(payload);
+    renderCity();
+    renderMap();
+    updateResourceBar();
+  } catch (error) {
+    if (error.status === 401) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      showAuthScreen();
+      return;
+    }
+    console.warn('Background refresh failed:', error.message);
   }
 }
 
@@ -1461,17 +1531,7 @@ if (typeof document !== 'undefined') {
       const hasToken = Boolean(getToken());
       if (hasToken) {
         await loadGame();
-        setInterval(async () => {
-          try {
-            const payload = await apiFetch('/game/state');
-            setGameStateFromSnapshot(payload);
-            renderCity();
-            renderMap();
-            updateResourceBar();
-          } catch (error) {
-            console.warn('Background refresh failed:', error.message);
-          }
-        }, 60000);
+        setInterval(refreshGameStateInBackground, 60000);
         // Refresh activity feed every 30 seconds
         setInterval(() => {
           const activityScreen = document.getElementById('screen-activity');
@@ -1512,5 +1572,12 @@ if (typeof module !== 'undefined') {
     buildTerritoryLayout,
     formatCountdown,
     renderScoreboard,
+    apiFetch,
+    ensureSession,
+    fetchCurrentUser,
+    loadGame,
+    refreshGameStateInBackground,
+    getToken,
+    setToken,
   };
 }
