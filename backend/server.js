@@ -51,6 +51,7 @@ const {
  CHAT_RESPONSE_LIMIT,
  createFactionChatMessage,
  getFactionChatMessagesForPlayer,
+ listFactionMembersForPlayer,
 } = require('./faction-chat');
 
 dotenv.config();
@@ -759,6 +760,14 @@ app.get('/api/game/faction-chat', requireAuth, asyncHandler(async (req, res) => 
   const result = await getFactionChatMessagesForPlayer(db, player, req.currentSeason.id);
   if (!result.ok) return res.status(result.status).json({ error: result.error });
   res.json({ faction: result.faction, seasonId: result.seasonId, messages: result.messages });
+}));
+
+app.get('/api/game/faction-members', requireAuth, asyncHandler(async (req, res) => {
+  const player = await getCurrentAuthedPlayer(req);
+  const db = await connect();
+  const result = await listFactionMembersForPlayer(db, player);
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  res.json({ faction: result.faction, total: result.total, members: result.members });
 }));
 
 app.post('/api/game/faction-chat', requireAuth, factionChatSendRateLimit, asyncHandler(async (req, res) => {

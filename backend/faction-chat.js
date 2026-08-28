@@ -65,6 +65,21 @@ async function getFactionChatMessagesForPlayer(client, player, seasonId, limit =
   };
 }
 
+// Membership is read from the authenticated player's own faction column; a faction supplied
+// by the client is never used, so enemy faction rosters can't be requested.
+async function listFactionMembersForPlayer(client, player) {
+  const playerStatus = assertFactionPlayer(player);
+  if (!playerStatus.ok) {
+    return playerStatus;
+  }
+  const result = await client.query(
+    `SELECT id, username FROM players WHERE faction = $1 ORDER BY username ASC`,
+    [player.faction]
+  );
+  const members = result.rows.map((row) => ({ id: row.id, username: row.username }));
+  return { ok: true, faction: player.faction, members, total: members.length };
+}
+
 async function createFactionChatMessage(client, { player, seasonId, message }) {
   const playerStatus = assertFactionPlayer(player);
   if (!playerStatus.ok) {
@@ -104,5 +119,6 @@ module.exports = {
   assertFactionPlayer,
   listFactionChatMessages,
   getFactionChatMessagesForPlayer,
+  listFactionMembersForPlayer,
   createFactionChatMessage,
 };

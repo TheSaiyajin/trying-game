@@ -498,7 +498,7 @@ function showScreen(name) {
   if (name === 'city') renderCity();
   if (name === 'map') { renderMap(); renderScoreboard(); renderSeasonHistory(); }
   if (name === 'activity') renderActivity();
-  if (name === 'chat') renderFactionChat({ scrollToNewest: true });
+  if (name === 'chat') { renderFactionChat({ scrollToNewest: true }); renderFactionMembers(); }
   if (name === 'admin') renderAdminPanel();
 }
 
@@ -1085,6 +1085,36 @@ async function renderFactionChat({ scrollToNewest = false } = {}) {
   }
 }
 
+async function renderFactionMembers() {
+  const container = document.getElementById('faction-member-list');
+  const countLabel = document.getElementById('faction-member-count');
+  if (!container) return;
+  try {
+    const data = await apiFetch('/game/faction-members');
+    const members = data.members || [];
+    if (countLabel) countLabel.textContent = String(data.total ?? members.length);
+    container.replaceChildren();
+    if (!members.length) {
+      const empty = document.createElement('p');
+      empty.className = 'info-text';
+      empty.textContent = 'No faction members yet.';
+      container.appendChild(empty);
+      return;
+    }
+    members.forEach((member) => {
+      const row = document.createElement('div');
+      row.className = 'chat-meta';
+      row.textContent = member.username;
+      container.appendChild(row);
+    });
+  } catch (error) {
+    const msg = document.createElement('p');
+    msg.className = 'info-text';
+    msg.textContent = `Could not load faction members: ${error.message}`;
+    container.replaceChildren(msg);
+  }
+}
+
 async function sendFactionChatMessage() {
   const input = document.getElementById('chat-input');
   if (!input) return;
@@ -1568,6 +1598,7 @@ if (typeof module !== 'undefined') {
     isFactionChatNearBottom,
     setGameStateFromSnapshot,
     sendFactionChatMessage,
+    renderFactionMembers,
     startFactionChatPolling,
     buildTerritoryLayout,
     formatCountdown,

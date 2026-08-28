@@ -4,6 +4,7 @@ const {
   CHAT_RESPONSE_LIMIT,
   createFactionChatMessage,
   getFactionChatMessagesForPlayer,
+  listFactionMembersForPlayer,
   normalizeFactionChatMessage,
 } = require('../backend/faction-chat');
 
@@ -120,5 +121,56 @@ test('chat is scoped per faction within the same season: a reassigned player can
   // Same player, same season, but now on a different faction (e.g. after a manual re-check).
   const asRed = await getFactionChatMessagesForPlayer(client, { id: 1, username: 'BlueUser', faction: 'red' }, 1);
   assert.deepEqual(asRed.messages, []);
+});
+
+function createFakePlayersClient() {
+  const players = [
+    { id: 1, username: 'BlueUser', faction: 'blue' },
+    { id: 2, username: 'AnotherBlue', faction: 'blue' },
+    { id: 3, username: 'RedUser', faction: 'red' },
+    { id: 4, username: 'GreenUser', faction: 'green' },
+  ];
+  return {
+    async query(sql, params = []) {
+      const text = sql.trim();
+      if (text.startsWith('SELECT id, username FROM players WHERE faction')) {
+        const [faction] = params;
+        const rows = players
+          .filter((row) => row.faction === faction)
+          .sort((left, right) => left.username.localeCompare(right.username))
+          .map((row) => ({ id: row.id, username: row.username }));
+        return { rows };
+      }
+      throw new Error(`Unexpected query: ${text}`);
+    },
+  };
+}
+
+test('faction member list only returns the authenticated player\'s own faction', async () => {
+  const client = createFakePlayersClient();
+
+  const blue = await listFactionMembersForPlayer(client, { id: 1, username: 'BlueUser', faction: 'blue' });
+  assert.equal(blue.ok, true);
+  assert.equal(blue.total, 2);
+  assert.deepEqual(blue.members.map((row) => row.username), ['AnotherBlue', 'BlueUser']);
+
+  const red = await listFactionMembersForPlayer(client, { id: 3, username: 'RedUser', faction: 'red' });
+  assert.deepEqual(red.members.map((row) => row.username), ['RedUser']);
+});
+
+test('faction member list ignores a client-supplied faction and never leaks enemy members', async () => {
+  const client = createFakePlayersClient();
+
+  const result = await listFactionMembersForPlayer(client, { id: 1, username: 'BlueUser', faction: 'blue' }, { faction: 'red' });
+
+  assert.equal(result.faction, 'blue');
+  assert.ok(result.members.every((row) => row.username !== 'RedUser' && row.username !== 'GreenUser'));
+});
+
+test('factionless players cannot retrieve any member list', async () => {
+  const client = createFakePlayersClient();
+  const result = await listFactionMembersForPlayer(client, { id: 9, username: 'NoFaction', faction: null });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 403);
 });
 
