@@ -55,7 +55,7 @@ function getUpgradeCost(buildingKey, level) {
 }
 
 function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
-  const bonuses = { food: 0, wood: 0, iron: 0, manpower: 0, training: 0, storage: 0, fortressTroops: 0 };
+  const bonuses = { food: 0, wood: 0, iron: 0, manpower: 0, training: 0, storage: 0, fortressTroops: 0, allResources: 0 };
 
   for (const territory of territories) {
     const ownerFaction = territory.owner_faction || territory.owner;
@@ -74,6 +74,7 @@ function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
       bonuses.wood += bonusValue;
       bonuses.iron += bonusValue;
       bonuses.manpower += bonusValue;
+      bonuses.allResources += bonusValue;
     }
     if (territory.is_fortress || territory.fortress || bonusType === 'fortress') bonuses.fortressTroops += 1;
   }

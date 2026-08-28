@@ -362,6 +362,7 @@ async function getPlayerWorldState(playerId, season = null) {
   const buildings = await getPlayerBuildingLevels(playerId);
   const production = getProductionFromBuildings(buildings, territories, player.faction || 'blue', true);
   const factionBonuses = getFactionTerritoryBonuses(territories, player.faction || 'blue');
+  const storageCaps = getFactionStorageCaps(territories, player.faction || 'blue');
 
   const stationedResult = await db.query(
     `SELECT territory_id, troops FROM territory_defenders WHERE player_id = $1`,
@@ -389,6 +390,7 @@ async function getPlayerWorldState(playerId, season = null) {
       buildings,
       production,
       factionBonuses,
+      storageCaps,
       stationedTroops,
     },
     world: {

@@ -218,7 +218,7 @@ test('formatBonusLabel produces readable labels for all bonus types', () => {
   assert.equal(formatBonusLabel('iron', 0.10), '⚙️ +10% Iron Production');
   assert.equal(formatBonusLabel('manpower', 0.10), '👥 +10% Manpower Production');
   assert.equal(formatBonusLabel('training', 0.05), '⚔️ -5% Training Cost');
-  assert.equal(formatBonusLabel('fortress', 0), '🏰 Fortress');
+  assert.equal(formatBonusLabel('fortress', 0), '🏰 Fortress — +1 Troop/min');
   assert.equal(formatBonusLabel('storage', 0.20), '📦 +20% Storage');
   assert.equal(formatBonusLabel('resource', 0.10), '✨ +10% All Resources');
   assert.equal(formatBonusLabel('none', 0), '—');
@@ -259,6 +259,7 @@ test('getFactionTerritoryBonuses handles raw DB-shaped territory objects (owner_
   assert.equal(bonuses.food, 0.10);  // from resource bonus
   assert.equal(bonuses.wood, 0.10);
   assert.equal(bonuses.iron, 0.10);
+  assert.equal(bonuses.allResources, 0.10);
 });
 
 test('production correctly uses territory bonuses from snapshot-shaped objects', () => {

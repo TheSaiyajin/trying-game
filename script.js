@@ -194,6 +194,9 @@ function setGameStateFromSnapshot(snapshot) {
   };
   renderMapLegend(G.player.faction);
   updateAdminVisibility(G.player);
+  updatePlayerIdentity();
+  updateFactionTheme();
+  renderFactionBonuses();
   renderScoreboard();
   if (previousFaction && snapshot.player && previousFaction !== snapshot.player.faction) {
     renderFactionChat({ scrollToNewest: true });
@@ -504,10 +507,41 @@ function showScreen(name) {
 
 function updateResourceBar() {
   const resources = G.player.resources || { food: 0, wood: 0, iron: 0, manpower: 0 };
-  document.getElementById('res-food').textContent = fmt(resources.food);
-  document.getElementById('res-wood').textContent = fmt(resources.wood);
-  document.getElementById('res-iron').textContent = fmt(resources.iron);
-  document.getElementById('res-manpower').textContent = fmt(resources.manpower);
+  const caps = G.player.storageCaps || {};
+  ['food', 'wood', 'iron', 'manpower'].forEach((resource) => {
+    const element = document.getElementById(`res-${resource}`);
+    if (element) element.textContent = `${fmt(resources[resource])} / ${fmt(caps[resource] || 10000)}`;
+  });
+}
+
+function updatePlayerIdentity() {
+  const element = document.getElementById('player-identity');
+  if (!element) return;
+  const faction = String(G.player.faction || '').toLowerCase();
+  element.textContent = G.player.username && faction ? `${G.player.username} · ${faction.charAt(0).toUpperCase()}${faction.slice(1)} Faction` : '—';
+}
+
+function updateFactionTheme() {
+  const shell = document.getElementById('game-shell');
+  if (!shell) return;
+  shell.dataset.faction = ['blue', 'red', 'green'].includes(G.player.faction) ? G.player.faction : '';
+}
+
+function renderFactionBonuses() {
+  const container = document.getElementById('faction-bonuses');
+  if (!container) return;
+  const bonuses = G.player.factionBonuses || {};
+  const entries = [
+    ['food', '🌾 Food Production', '+', '%'], ['wood', '🪵 Wood Production', '+', '%'],
+    ['iron', '⚙️ Iron Production', '+', '%'], ['manpower', '👥 Manpower Production', '+', '%'],
+    ['training', '⚔️ Training Cost', '-', '%'], ['storage', '📦 Storage', '+', '%'],
+    ['fortressTroops', '⚔️ Fortress Troops', '+', '/min'], ['allResources', '✨ All Resources', '+', '%'],
+  ].map(([key, label, prefix, suffix]) => {
+    const value = Number(bonuses[key] || 0);
+    if (value <= 0) return null;
+    return `<span>${label} ${prefix}${suffix === '%' ? Math.round(value * 100) : value}${suffix}</span>`;
+  }).filter(Boolean);
+  container.innerHTML = entries.length ? entries.join('') : '<span>No active bonuses.</span>';
 }
 
 function renderCity() {
@@ -707,7 +741,7 @@ function renderMap() {
     poly.setAttribute('fill', fill);
     poly.setAttribute('stroke', selectedTerritoryId === id ? '#fff' : stroke);
     poly.setAttribute('stroke-width', selectedTerritoryId === id ? '3' : '1.5');
-    poly.setAttribute('class', 'territory');
+    poly.setAttribute('class', `territory${selectedTerritoryId === id ? ' selected' : ''}${canAttack(id) ? ' attackable' : ''}`);
     poly.setAttribute('data-id', id);
     poly.addEventListener('click', () => selectTerritory(id));
     svg.appendChild(poly);
@@ -720,6 +754,14 @@ function renderMap() {
     label.setAttribute('text-anchor', 'middle');
     label.textContent = String(id).toUpperCase();
     svg.appendChild(label);
+
+    const bonusIcon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    bonusIcon.setAttribute('x', x + 18);
+    bonusIcon.setAttribute('y', y - 14);
+    bonusIcon.setAttribute('text-anchor', 'middle');
+    bonusIcon.setAttribute('class', 'territory-bonus-icon');
+    bonusIcon.textContent = getBonusIcon(territory.bonus);
+    svg.appendChild(bonusIcon);
 
     if (territory.capital) {
       const capitalMarker = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -804,12 +846,18 @@ function formatBonusLabel(bonusType, bonusValue) {
     iron: `⚙️ +${pct}% Iron Production`,
     manpower: `👥 +${pct}% Manpower Production`,
     training: `⚔️ -${pct}% Training Cost`,
-    fortress: '🏰 Fortress',
+    fortress: '🏰 Fortress — +1 Troop/min',
     storage: `📦 +${pct}% Storage`,
     resource: `✨ +${pct}% All Resources`,
     none: '—',
   };
   return map[type] || (type ? type : '—');
+}
+
+function getBonusIcon(bonusType) {
+  return {
+    food: '🌾', wood: '🪵', iron: '⚙️', manpower: '👥', training: '⚔️', storage: '📦', fortress: '🏰', resource: '✨',
+  }[String(bonusType || '').toLowerCase()] || '';
 }
 
 function changeAttack(delta) {
@@ -1180,7 +1228,7 @@ async function renderAdminSeasonInfo() {
 }
 
 async function adminForceFinishSeason() {
-  if (!confirm('Force-finish the current season right now?\n\nThis finalizes scores, awards prestige to the winning faction, and immediately starts the next season using the same reset as an automatic midnight rollover.')) return;
+  if (!confirm('Force-finish the current season right now?\n\nThis finalizes scores, awards prestige to the winning faction, and immediately starts the next season using the same reset as automatic season rollover.')) return;
   try {
     const res = await apiFetch('/admin/season/force-finish', {
       method: 'POST',
@@ -1569,7 +1617,7 @@ if (typeof document !== 'undefined') {
             renderActivity();
           }
         }, 30000);
-        // Smooth HH:MM:SS countdown to the next daily 00:00 UTC reset; the season data
+        // Smooth HH:MM:SS countdown to the current season end; the season data
         // itself only refreshes with the 60s background poll above.
         setInterval(tickScoreboardCountdown, 1000);
       } else {

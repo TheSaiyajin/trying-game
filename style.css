@@ -881,3 +881,71 @@ html, body {
   font-size: 11px;
   color: var(--accent-gold);
 }
+
+/* ---------- SaiWars game-shell polish ---------- */
+.game-shell {
+  --faction-accent: var(--accent-blue);
+  --faction-accent-bright: var(--accent-blue2);
+  --faction-glow: rgba(31, 111, 235, 0.16);
+  background: radial-gradient(circle at 50% 0, var(--faction-glow), transparent 38%), var(--bg-dark);
+}
+.game-shell[data-faction="red"] {
+  --faction-accent: var(--accent-red);
+  --faction-accent-bright: #ff7972;
+  --faction-glow: rgba(248, 81, 73, 0.16);
+}
+.game-shell[data-faction="green"] {
+  --faction-accent: var(--accent-green);
+  --faction-accent-bright: #65d879;
+  --faction-glow: rgba(63, 185, 80, 0.16);
+}
+.game-shell .top-bar { border-bottom-color: color-mix(in srgb, var(--faction-accent) 45%, var(--border)); }
+.game-shell .game-title, .game-shell .screen-title { color: var(--faction-accent-bright); }
+.player-identity { display: block; color: var(--text-dim); font-size: 11px; line-height: 1.1; }
+.game-shell .btn-primary { background: var(--faction-accent); box-shadow: 0 8px 18px var(--faction-glow); }
+.game-shell .btn-primary:hover { background: var(--faction-accent-bright); }
+.game-shell .nav-btn.active { color: var(--faction-accent-bright); border-top-color: var(--faction-accent-bright); }
+.game-shell .section-card h3 { color: var(--faction-accent-bright); }
+
+.faction-bonuses-card { padding-bottom: 10px; }
+.faction-bonuses { display: flex; flex-wrap: wrap; gap: 6px; }
+.faction-bonuses span { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; color: var(--text-main); font-size: 11px; font-weight: 600; }
+
+.territory.attackable { stroke: var(--accent-gold) !important; stroke-width: 2.5 !important; filter: drop-shadow(0 0 4px rgba(227, 179, 65, 0.8)); }
+.territory.selected { stroke: #fff !important; stroke-width: 3.5 !important; filter: brightness(1.35); }
+.territory-bonus-icon { font-size: 11px; }
+
+#screen-chat.active { display: flex; flex-direction: column; gap: 10px; }
+#screen-chat .screen-title { flex: none; margin-bottom: 0; }
+#screen-chat > .section-card { margin-bottom: 0; }
+#screen-chat > .section-card:first-of-type { flex: none; }
+#screen-chat .chat-card { flex: 1; min-height: 0; }
+.chat-messages { flex: 1; max-height: none; min-height: 120px; }
+.chat-composer { position: sticky; bottom: -6px; padding: 8px 0 2px; background: var(--bg-card); border-top: 1px solid var(--border); }
+.chat-input { min-height: 64px; max-height: 110px; }
+
+@media (min-width: 760px) {
+  :root { --top-h: 56px; --res-h: 44px; }
+  .top-bar, .resource-bar, .bottom-nav { padding-left: max(20px, calc((100vw - 1120px) / 2)); padding-right: max(20px, calc((100vw - 1120px) / 2)); }
+  .screen { padding: 20px max(20px, calc((100vw - 1120px) / 2)) 14px; }
+  .screen-title { font-size: 22px; }
+  .bottom-nav { height: 54px; justify-content: center; gap: 4px; }
+  .nav-btn { flex: 0 1 130px; }
+  .building-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .building-card { margin-bottom: 0; }
+  .map-container { padding: 12px; }
+  #map-svg { min-width: 0; max-width: 980px; }
+  .faction-bonuses { gap: 8px; }
+  .faction-bonuses span { font-size: 12px; }
+}
+
+@media (max-width: 420px) {
+  .top-bar { padding: 0 8px; }
+  .game-title { font-size: 14px; }
+  .res-item { gap: 2px; font-size: 11px; }
+  .res-icon { font-size: 13px; }
+  .screen { padding-left: 8px; padding-right: 8px; }
+  .faction-bonuses span { font-size: 10px; }
+  #map-svg { min-width: 0; }
+  .map-container { overflow: hidden; }
+}
