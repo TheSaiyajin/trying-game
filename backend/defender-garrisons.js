@@ -174,6 +174,45 @@ async function reconcileTerritoryDefendersForNewOwner(client, territoryId, newOw
   };
 }
 
+async function clearPlayerStationedDefenders(client, playerId) {
+  const territoryResult = await client.query(
+    `SELECT t.id, t.defense_troops
+     FROM territories t
+     WHERE EXISTS (
+       SELECT 1
+       FROM territory_defenders td
+       WHERE td.territory_id = t.id
+         AND td.player_id = $1
+     )
+     ORDER BY t.id
+     FOR UPDATE OF t`,
+    [playerId]
+  );
+
+  let clearedTroops = 0;
+  for (const territory of territoryResult.rows) {
+    const defenders = await getLockedTerritoryDefenders(client, territory.id);
+    const stationed = defenders.find((defender) => Number(defender.player_id) === Number(playerId));
+    if (!stationed) continue;
+
+    const defenseState = getTerritoryDefenseState(territory.defense_troops, defenders);
+    const remainingStationed = sumStationedDefenders(
+      defenders.filter((defender) => Number(defender.player_id) !== Number(playerId))
+    );
+    await client.query(
+      'DELETE FROM territory_defenders WHERE territory_id = $1 AND player_id = $2',
+      [territory.id, playerId]
+    );
+    await client.query(
+      'UPDATE territories SET defense_troops = $1 WHERE id = $2',
+      [defenseState.baseDefenseTroops + remainingStationed, territory.id]
+    );
+    clearedTroops += Number(stationed.troops);
+  }
+
+  return { clearedTroops };
+}
+
 module.exports = {
   sumStationedDefenders,
   getTerritoryDefenseState,
@@ -183,4 +222,5 @@ module.exports = {
   replaceTerritoryDefenders,
   applyDefenderCasualties,
   reconcileTerritoryDefendersForNewOwner,
+  clearPlayerStationedDefenders,
 };

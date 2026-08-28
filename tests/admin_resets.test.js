@@ -70,6 +70,39 @@ function createResetClient(initialState, options = {}) {
         return { rows: player ? [{ id: player.id }] : [], rowCount: player ? 1 : 0 };
       }
 
+      if (text === 'SELECT id FROM players FOR UPDATE') {
+        const rows = [...state.players.values()].map((player) => ({ id: player.id }));
+        return { rows, rowCount: rows.length };
+      }
+
+      if (text.startsWith('SELECT t.id, t.defense_troops')) {
+        const playerId = params[0];
+        const rows = [...state.territoryDefenders.values()]
+          .filter((defender) => Number(defender.player_id) === Number(playerId))
+          .map((defender) => state.territories.get(defender.territory_id))
+          .filter(Boolean)
+          .map((territory) => ({ id: territory.id, defense_troops: territory.defense_troops }));
+        return { rows, rowCount: rows.length };
+      }
+
+      if (text.startsWith('SELECT territory_id, player_id, faction, troops')) {
+        const rows = [...state.territoryDefenders.values()]
+          .filter((defender) => defender.territory_id === params[0])
+          .map((defender) => ({ ...defender }));
+        return { rows, rowCount: rows.length };
+      }
+
+      if (text === 'DELETE FROM territory_defenders WHERE territory_id = $1 AND player_id = $2') {
+        state.territoryDefenders.delete(`${params[0]}:${params[1]}`);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (text === 'UPDATE territories SET defense_troops = $1 WHERE id = $2') {
+        const territory = state.territories.get(params[1]);
+        if (territory) territory.defense_troops = params[0];
+        return { rows: [], rowCount: territory ? 1 : 0 };
+      }
+
       if (text.startsWith('UPDATE players') && text.includes('WHERE id = $6')) {
         const [food, wood, iron, manpower, soldiers, playerId] = params;
         const player = state.players.get(playerId);
@@ -204,6 +237,7 @@ test('reset world preserves accounts while restoring the seeded world state', as
   assert.equal(client.state.players.get(1).resource_food, STARTING_PLAYER_RESOURCES.food);
   assert.equal(client.state.players.get(2).soldiers, STARTING_PLAYER_RESOURCES.soldiers);
   assert.deepEqual(client.state.buildings.get(2), { player_id: 2, ...STARTING_BUILDING_LEVELS });
+  assert.equal(client.state.territoryDefenders.size, 0);
   assert.deepEqual([...client.state.territories.values()], [
     { id: 'b1', owner_faction: 'blue', defense_troops: 35 },
     { id: 'n1', owner_faction: 'neutral', defense_troops: 18 },
@@ -225,22 +259,29 @@ test('reset player only affects the selected player progress', async () => {
   assert.equal(client.state.players.get(1).soldiers, 555);
   assert.equal(client.state.players.get(2).resource_food, STARTING_PLAYER_RESOURCES.food);
   assert.equal(client.state.players.get(2).soldiers, STARTING_PLAYER_RESOURCES.soldiers);
+  assert.equal(client.state.territoryDefenders.size, 0);
+  assert.equal(client.state.territories.get('b1').defense_troops, 89);
   assert.deepEqual(client.state.buildings.get(1), { player_id: 1, farm: 9, lumbermill: 8, ironmine: 7, barracks: 6 });
   assert.deepEqual(client.state.buildings.get(2), { player_id: 2, ...STARTING_BUILDING_LEVELS });
   assert.equal(client.state.adminActions.at(-1).actionName, 'reset_player');
 });
 
-test('reset all player resources leaves territory ownership unchanged', async () => {
+test('reset all player resources clears stationed defenders while keeping territory ownership unchanged', async () => {
   const client = createResetClient(buildResetState());
-  const territoriesBefore = [...client.state.territories.values()].map((territory) => ({ ...territory }));
+  const ownersBefore = [...client.state.territories.values()].map((territory) => ({ id: territory.id, owner_faction: territory.owner_faction }));
   const buildingsBefore = [...client.state.buildings.values()].map((building) => ({ ...building }));
 
   await runAdminTransaction(client, async () => resetAllPlayerResources(client, { actorId: 1 }));
 
-  assert.deepEqual([...client.state.territories.values()], territoriesBefore);
+  assert.deepEqual(
+    [...client.state.territories.values()].map((territory) => ({ id: territory.id, owner_faction: territory.owner_faction })),
+    ownersBefore
+  );
   assert.deepEqual([...client.state.buildings.values()], buildingsBefore);
   assert.equal(client.state.players.get(1).resource_food, STARTING_PLAYER_RESOURCES.food);
   assert.equal(client.state.players.get(2).soldiers, STARTING_PLAYER_RESOURCES.soldiers);
+  assert.equal(client.state.territoryDefenders.size, 0);
+  assert.equal(client.state.territories.get('b1').defense_troops, 89);
   assert.equal(client.state.adminActions.at(-1).actionName, 'reset_all_resources');
 });
 

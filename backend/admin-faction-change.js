@@ -89,6 +89,15 @@ async function changePlayerFaction(client, { actorId, playerId, faction }) {
      WHERE id = $5`,
     [faction, buildArmyName(faction), nextRole, cleanup.recalledTroops, playerId]
   );
+  await client.query(
+    `UPDATE season_memberships sm
+     SET faction = $1
+     FROM seasons s
+     WHERE sm.season_id = s.id
+       AND sm.player_id = $2
+       AND s.status = 'active'`,
+    [faction, playerId]
+  );
   await client.query('UPDATE faction_leaders SET player_id = NULL WHERE player_id = $1', [playerId]);
   await client.query(
     `UPDATE territory_defenders td

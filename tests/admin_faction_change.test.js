@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { isAuthorizedAdminPlayer } = require('../backend/admin-policy');
 const { changePlayerFaction } = require('../backend/admin-faction-change');
 
-function createFakeClient({ players, territories, defenders, factionLeaders }) {
+function createFakeClient({ players, territories, defenders, factionLeaders, seasonMemberships = new Map() }) {
   const adminActions = [];
   const executedQueries = [];
 
@@ -81,6 +81,15 @@ function createFakeClient({ players, territories, defenders, factionLeaders }) {
         return { rows: [] };
       }
 
+      if (text.startsWith('UPDATE season_memberships sm')) {
+        for (const membership of seasonMemberships.values()) {
+          if (Number(membership.player_id) === Number(params[1]) && membership.active) {
+            membership.faction = params[0];
+          }
+        }
+        return { rows: [] };
+      }
+
       if (text === 'UPDATE faction_leaders SET player_id = NULL WHERE player_id = $1') {
         for (const [faction, assignedPlayerId] of factionLeaders.entries()) {
           if (Number(assignedPlayerId) === Number(params[0])) {
@@ -134,7 +143,11 @@ test('changing a player faction keeps progress, locks faction, recalls invalid d
     ['blue', 2],
     ['red', null],
   ]);
-  const client = createFakeClient({ players, territories, defenders, factionLeaders });
+  const seasonMemberships = new Map([
+    ['active:2', { season_id: 1, player_id: 2, faction: 'blue', active: true }],
+    ['finished:2', { season_id: 0, player_id: 2, faction: 'blue', active: false }],
+  ]);
+  const client = createFakeClient({ players, territories, defenders, factionLeaders, seasonMemberships });
 
   const result = await changePlayerFaction(client, { actorId: 1, playerId: 2, faction: 'red' });
 
@@ -149,6 +162,8 @@ test('changing a player faction keeps progress, locks faction, recalls invalid d
   assert.equal(players.get(2).faction_locked, true);
   assert.equal(players.get(2).army_name, 'Red Army');
   assert.equal(players.get(2).role, 'member');
+  assert.equal(seasonMemberships.get('active:2').faction, 'red');
+  assert.equal(seasonMemberships.get('finished:2').faction, 'blue');
   assert.equal(players.get(2).resource_food, 900);
   assert.equal(players.get(2).soldiers, 43);
   assert.equal(territories.get('b1').defense_troops, 32);
@@ -169,6 +184,28 @@ test('changing a player faction keeps progress, locks faction, recalls invalid d
     false,
     'cleanup query must not combine DISTINCT with FOR UPDATE'
   );
+});
+
+test('changing faction updates the active-season membership for every faction', async () => {
+  for (const [oldFaction, newFaction] of [['blue', 'red'], ['red', 'green'], ['green', 'blue']]) {
+    const players = new Map([[2, { id: 2, username: 'Rook', faction: oldFaction, role: 'member', soldiers: 10 }]]);
+    const seasonMemberships = new Map([
+      ['active:2', { season_id: 1, player_id: 2, faction: oldFaction, active: true }],
+    ]);
+    const client = createFakeClient({
+      players,
+      territories: new Map(),
+      defenders: new Map(),
+      factionLeaders: new Map(),
+      seasonMemberships,
+    });
+
+    const result = await changePlayerFaction(client, { actorId: 1, playerId: 2, faction: newFaction });
+
+    assert.equal(result.ok, true, `${oldFaction} -> ${newFaction}`);
+    assert.equal(players.get(2).faction, newFaction, `${oldFaction} -> ${newFaction} player`);
+    assert.equal(seasonMemberships.get('active:2').faction, newFaction, `${oldFaction} -> ${newFaction} membership`);
+  }
 });
 
 test('changing faction returns 404 for a missing player', async () => {

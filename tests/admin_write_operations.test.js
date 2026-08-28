@@ -34,6 +34,11 @@ function createAdminClient({ players, territories, factionLeaders, territoryDefe
         return { rows: player ? [{ id: player.id, username: player.username, faction: player.faction, role: player.role }] : [], rowCount: player ? 1 : 0 };
       }
 
+      if (text === 'SELECT player_id FROM faction_leaders WHERE faction = $1 FOR UPDATE') {
+        const playerId = factionLeaders.get(params[0]);
+        return { rows: playerId ? [{ player_id: playerId }] : [], rowCount: playerId ? 1 : 0 };
+      }
+
       if (text === 'SELECT * FROM territories WHERE id = $1 FOR UPDATE') {
         const territory = territories.get(params[0]);
         return { rows: territory ? [{ ...territory }] : [], rowCount: territory ? 1 : 0 };
@@ -103,6 +108,19 @@ function createAdminClient({ players, territories, factionLeaders, territoryDefe
         const player = players.get(params[1]);
         if (player) player.role = params[0];
         return { rows: [], rowCount: player ? 1 : 0 };
+      }
+
+      if (text === "UPDATE players SET role = 'member' WHERE id = $1 AND username <> 'Sai' AND role <> 'admin'") {
+        const player = players.get(params[0]);
+        if (player && player.username !== 'Sai' && player.role !== 'admin') player.role = 'member';
+        return { rows: [], rowCount: player ? 1 : 0 };
+      }
+
+      if (text === 'UPDATE faction_leaders SET player_id = NULL WHERE player_id = $1') {
+        for (const [faction, assignedPlayerId] of factionLeaders.entries()) {
+          if (Number(assignedPlayerId) === Number(params[0])) factionLeaders.set(faction, null);
+        }
+        return { rows: [], rowCount: 1 };
       }
 
       if (text.startsWith('UPDATE territories SET ')) {
@@ -200,6 +218,56 @@ test('role updates validate against Sai-only admin rules', async () => {
   assert.deepEqual(blockedResult, { ok: false, status: 400, error: 'Sai must remain admin.' });
 });
 
+test('leader role replacement updates faction_leaders and demotes the previous leader', async () => {
+  const players = new Map([
+    [1, { id: 1, username: 'Sai', faction: 'blue', role: 'admin' }],
+    [2, { id: 2, username: 'Rook', faction: 'blue', role: 'leader' }],
+    [3, { id: 3, username: 'Vega', faction: 'blue', role: 'member' }],
+  ]);
+  const factionLeaders = new Map([['blue', 2]]);
+  const client = createAdminClient({ players, territories: new Map(), factionLeaders });
+
+  const result = await updatePlayerRole(client, { actorId: 1, playerId: 3, role: 'leader' });
+
+  assert.equal(result.ok, true);
+  assert.equal(players.get(2).role, 'member');
+  assert.equal(players.get(3).role, 'leader');
+  assert.equal(factionLeaders.get('blue'), 3);
+});
+
+test('removing a leader role clears faction_leaders', async () => {
+  const players = new Map([[2, { id: 2, username: 'Rook', faction: 'green', role: 'leader' }]]);
+  const factionLeaders = new Map([['green', 2]]);
+  const client = createAdminClient({ players, territories: new Map(), factionLeaders });
+
+  const result = await updatePlayerRole(client, { actorId: 1, playerId: 2, role: 'member' });
+
+  assert.equal(result.ok, true);
+  assert.equal(players.get(2).role, 'member');
+  assert.equal(factionLeaders.get('green'), null);
+});
+
+test('dedicated leader assignment also replaces the previous faction leader', async () => {
+  const players = new Map([
+    [2, { id: 2, username: 'Rook', faction: 'red', role: 'leader' }],
+    [3, { id: 3, username: 'Vega', faction: 'red', role: 'member' }],
+  ]);
+  const factionLeaders = new Map([['red', 2]]);
+  const client = createAdminClient({ players, territories: new Map(), factionLeaders });
+
+  const result = await assignFactionLeader(client, {
+    actorId: 1,
+    playerId: 3,
+    faction: 'red',
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(players.get(2).role, 'member');
+  assert.equal(players.get(3).role, 'leader');
+  assert.equal(factionLeaders.get('red'), 3);
+});
+
 test('territory admin updates validate owner and floor defense values', async () => {
   const territories = new Map([
     ['n1', { id: 'n1', owner_faction: 'neutral', defense_troops: 5 }],
@@ -217,6 +285,22 @@ test('territory admin updates validate owner and floor defense values', async ()
   assert.equal(result.ok, true);
   assert.deepEqual(territories.get('n1'), { id: 'n1', owner_faction: 'green', defense_troops: 14 });
   assert.deepEqual(client.adminActions[0].detail, { territoryId: 'n1', owner: 'green', defense: 14 });
+});
+
+test('territory defense cannot be set below currently stationed troops', async () => {
+  const territories = new Map([['n1', { id: 'n1', owner_faction: 'blue', defense_troops: 30 }]]);
+  const territoryDefenders = new Map([['n1', [{ territory_id: 'n1', player_id: 10, faction: 'blue', troops: 12 }]]]);
+  const client = createAdminClient({ players: new Map(), territories, factionLeaders: new Map(), territoryDefenders });
+
+  const result = await updateTerritory(client, {
+    actorId: 1,
+    territoryId: 'n1',
+    defense: 11,
+    validFactions: ['blue', 'red', 'green'],
+  });
+
+  assert.deepEqual(result, { ok: false, status: 400, error: 'Defense cannot be below currently stationed troops.' });
+  assert.equal(territories.get('n1').defense_troops, 30);
 });
 
 test('invalid leader assignment returns 400 or 404 before database constraints can fail', async () => {

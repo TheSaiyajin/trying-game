@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { logAdminAction } = require('./admin-write-operations');
+const { clearPlayerStationedDefenders } = require('./defender-garrisons');
 
 const STARTING_PLAYER_RESOURCES = Object.freeze({
   food: 500,
@@ -57,6 +58,8 @@ async function resetPlayerProgress(client, { actorId, playerId }) {
     return { ok: false, status: 404, error: 'Player not found.' };
   }
 
+  await clearPlayerStationedDefenders(client, playerId);
+
   await client.query(
     `UPDATE players
      SET resource_food = $1,
@@ -97,6 +100,11 @@ async function resetPlayerProgress(client, { actorId, playerId }) {
 }
 
 async function resetAllPlayerResources(client, { actorId }) {
+  const playerResult = await client.query('SELECT id FROM players FOR UPDATE');
+  for (const player of playerResult.rows) {
+    await clearPlayerStationedDefenders(client, player.id);
+  }
+
   await client.query(
     `UPDATE players
      SET resource_food = $1,

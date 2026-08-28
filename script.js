@@ -1407,6 +1407,7 @@ async function adminForceTick() {
   try {
     const res = await apiFetch('/admin/force-tick', { method: 'POST' });
     showToast(`✅ ${res.message}`);
+    await loadGame();
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }
