@@ -112,10 +112,11 @@ function getProductionFromBuildings(buildings = {}, territories = [], faction = 
 function getTrainingCost(count = 0, multiplier = 1) {
   const amount = clampInt(count, 0);
   const factor = Number(multiplier) || 1;
+  const minimum = amount > 0 ? 1 : 0;
   return {
-    food: Math.max(0, Math.round(50 * amount * factor)),
-    iron: Math.max(0, Math.round(20 * amount * factor)),
-    manpower: Math.max(0, Math.round(1 * amount * factor)),
+    food: Math.max(minimum, Math.round(50 * amount * factor)),
+    iron: Math.max(minimum, Math.round(20 * amount * factor)),
+    manpower: Math.max(minimum, Math.round(1 * amount * factor)),
   };
 }
 

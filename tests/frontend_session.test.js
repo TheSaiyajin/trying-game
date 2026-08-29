@@ -159,6 +159,26 @@ test('restores Map before revealing the game shell', withFrontendGlobals(async (
   assert.equal(mapWasActiveAtReveal, true);
 }));
 
+test('training UI shows the active discount and rounded total for the selected quantity', withFrontendGlobals(async () => {
+  const elements = new Map();
+  global.document.getElementById = (id) => {
+    if (!elements.has(id)) elements.set(id, createFakeElement());
+    return elements.get(id);
+  };
+  global.document.getElementById('train-count').value = '10';
+  const { setGameStateFromSnapshot, updateTrainingCostDisplay, calculateTrainingCost } = loadScriptModule();
+  setGameStateFromSnapshot({
+    player: { faction: 'blue', factionBonuses: { training: 0.05 } },
+    world: { territories: [] },
+  });
+
+  updateTrainingCostDisplay();
+
+  assert.equal(elements.get('training-discount').textContent, '5%');
+  assert.equal(elements.get('training-total-cost').textContent, '475🌾 + 190⚙️ + 10👥');
+  assert.deepEqual(calculateTrainingCost(20, 0.05), { food: 950, iron: 380, manpower: 19 });
+}));
+
 test('apiFetch preserves the HTTP status on a thrown error', withFrontendGlobals(async () => {
   global.fetch = async () => jsonResponse(429, { error: 'Too many requests' });
   const { apiFetch, setToken } = loadScriptModule();

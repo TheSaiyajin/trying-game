@@ -7,6 +7,7 @@ const { connect, getClient, initializeDatabase } = require('./db');
 const { issueToken, verifyToken, hashPassword, verifyPassword } = require('./auth');
 const {
   getUpgradeCost,
+  getTrainingCost,
   getProductionFromBuildings,
   getFactionTerritoryBonuses,
   getFactionStorageCaps,
@@ -634,11 +635,7 @@ app.post('/api/game/train-soldiers', requireAuth, asyncHandler(async (req, res) 
   const territories = await getTerritoriesSnapshot();
   const territoryBonuses = getFactionTerritoryBonuses(territories, player.faction);
   const trainingMultiplier = Math.max(0.4, 1 - (territoryBonuses.training || 0));
-  const cost = {
-    food: Math.max(1, Math.round(50 * count * trainingMultiplier)),
-    iron: Math.max(1, Math.round(20 * count * trainingMultiplier)),
-    manpower: Math.max(1, Math.round(1 * count * trainingMultiplier)),
-  };
+  const cost = getTrainingCost(count, trainingMultiplier);
 
   if (Number(player.resource_food) < cost.food || Number(player.resource_iron) < cost.iron || Number(player.resource_manpower) < cost.manpower) {
     return res.status(400).json({ error: 'Not enough resources to train soldiers.' });

@@ -650,6 +650,28 @@ function renderFactionBonuses() {
   container.innerHTML = entries.length ? entries.join('') : '<span>No active bonuses.</span>';
 }
 
+function calculateTrainingCost(count, trainingBonus = 0) {
+  const amount = Math.max(0, Math.floor(Number(count) || 0));
+  const multiplier = Math.max(0.4, 1 - (Number(trainingBonus) || 0));
+  const minimum = amount > 0 ? 1 : 0;
+  return {
+    food: Math.max(minimum, Math.round(50 * amount * multiplier)),
+    iron: Math.max(minimum, Math.round(20 * amount * multiplier)),
+    manpower: Math.max(minimum, Math.round(amount * multiplier)),
+  };
+}
+
+function updateTrainingCostDisplay() {
+  const trainingBonus = Number(G.player.factionBonuses?.training || 0);
+  const amount = document.getElementById('train-count')?.value || trainAmount;
+  const multiplier = Math.max(0.4, 1 - trainingBonus);
+  const cost = calculateTrainingCost(amount, trainingBonus);
+  const discount = document.getElementById('training-discount');
+  const total = document.getElementById('training-total-cost');
+  if (discount) discount.textContent = `${Math.round((1 - multiplier) * 100)}%`;
+  if (total) total.textContent = `${cost.food}🌾 + ${cost.iron}⚙️ + ${cost.manpower}👥`;
+}
+
 function renderCity() {
   const buildings = G.player.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 };
   const serverProduction = G.player.production || { food: 0, wood: 0, iron: 0, manpower: 0 };
@@ -701,6 +723,7 @@ function renderCity() {
 
   document.getElementById('soldiers-count').textContent = G.player.soldiers || 0;
   document.getElementById('train-count').textContent = trainAmount;
+  updateTrainingCostDisplay();
 }
 
 async function upgradeBuilding(key) {
@@ -722,6 +745,7 @@ async function upgradeBuilding(key) {
 function changeTrain(delta) {
   trainAmount = Math.max(1, Math.min(getAffordableTrainingAmount(), trainAmount + delta));
   setTroopInput('train-count', trainAmount);
+  updateTrainingCostDisplay();
 }
 
 async function trainSoldiers() {
@@ -1836,6 +1860,8 @@ if (typeof document !== 'undefined') {
         }
       });
     }
+    const trainInput = document.getElementById('train-count');
+    if (trainInput) trainInput.addEventListener('input', updateTrainingCostDisplay);
     const token = getToken();
     if (!token) {
       showAuthScreen();
@@ -1876,6 +1902,8 @@ if (typeof module !== 'undefined') {
     getFactionLegendEntries,
     renderMapLegend,
     mapTerritories,
+    calculateTrainingCost,
+    updateTrainingCostDisplay,
     selectTerritory,
     restoreSavedScreen,
     canAttack,

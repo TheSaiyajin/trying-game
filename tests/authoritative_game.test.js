@@ -149,6 +149,13 @@ test('training cost and idle earnings are consistent with server-authoritative r
   assert.equal(trainingCost.iron, 100);
   assert.equal(trainingCost.manpower, 5);
 
+  assert.deepEqual(getTrainingCost(10, 0.95), { food: 475, iron: 190, manpower: 10 });
+  assert.deepEqual(getTrainingCost(20, 0.95), { food: 950, iron: 380, manpower: 19 });
+
+  const serverSource = fs.readFileSync(path.join(__dirname, '../backend/server.js'), 'utf8');
+  const trainingRoute = serverSource.match(/app\.post\('\/api\/game\/train-soldiers'[\s\S]*?\n\}\)\);/);
+  assert.ok(trainingRoute?.[0].includes('getTrainingCost(count, trainingMultiplier)'), 'training endpoint should use the authoritative cost helper');
+
   const offlineGain = getOfflineResourceGain({ food: 8, wood: 6, iron: 4, manpower: 2 }, 300, 60 * 60 * 12);
   assert.equal(offlineGain.food, 40);
   assert.equal(offlineGain.wood, 30);
