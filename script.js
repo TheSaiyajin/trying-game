@@ -379,11 +379,15 @@ function hideBootLoading() {
   if (bootLoading) bootLoading.style.display = 'none';
 }
 
+function showBootLoading() {
+  const bootLoading = document.getElementById('boot-loading');
+  if (bootLoading) bootLoading.style.display = 'flex';
+}
+
 function hideAuthScreen() {
   const authScreen = document.getElementById('auth-screen');
   if (authScreen) authScreen.style.display = 'none';
   setGameShellVisible(true);
-  showScreen('city', { persist: false });
   hideBootLoading();
 }
 
@@ -434,10 +438,7 @@ async function submitAuth(event) {
 
     setToken(payload.token);
     message.textContent = isRegister ? 'Registration successful.' : 'Login successful.';
-    setTimeout(() => {
-      hideAuthScreen();
-      loadGame();
-    }, 250);
+    await loadGame();
   } catch (error) {
     message.textContent = error.message;
   }
@@ -459,6 +460,8 @@ function logoutPlayer() {
 }
 
 async function loadGame() {
+  setGameShellVisible(false);
+  showBootLoading();
   let user;
   try {
     user = await ensureSession();
@@ -481,9 +484,6 @@ async function loadGame() {
     return;
   }
 
-  hideAuthScreen();
-  startFactionChatPolling();
-
   try {
     const payload = await apiFetch('/game/state');
     if (!payload.player?.faction) {
@@ -500,6 +500,8 @@ async function loadGame() {
     renderMap();
     updateResourceBar();
     restoreSavedScreen(G.player);
+    hideAuthScreen();
+    startFactionChatPolling();
     connectRealtime();
   } catch (error) {
     if (error.status === 401) {

@@ -115,6 +115,50 @@ test('rejects saved Admin restoration for a non-admin player', withFrontendGloba
   assert.equal(restored, 'city');
 }));
 
+test('restores Map before revealing the game shell', withFrontendGlobals(async () => {
+  const elements = new Map();
+  const mapScreen = createFakeElement();
+  let mapActive = false;
+  mapScreen.classList.add = (name) => {
+    if (name === 'active') mapActive = true;
+  };
+  mapScreen.classList.remove = (name) => {
+    if (name === 'active') mapActive = false;
+  };
+  elements.set('screen-map', mapScreen);
+
+  const shell = createFakeElement();
+  let mapWasActiveAtReveal = false;
+  Object.defineProperty(shell.style, 'display', {
+    set(value) {
+      if (value === 'block') mapWasActiveAtReveal = mapActive;
+    },
+  });
+  elements.set('game-shell', shell);
+  global.document.getElementById = (id) => {
+    if (!elements.has(id)) elements.set(id, createFakeElement());
+    return elements.get(id);
+  };
+  global.document.querySelectorAll = (selector) => selector === '.screen' ? [mapScreen] : [];
+  global.localStorage.setItem('trying_game_screen_42', 'map');
+  global.fetch = async (url) => {
+    if (String(url).includes('/api/me')) return jsonResponse(200, { id: 42, username: 'Player1', role: 'member' });
+    if (String(url).includes('/api/game/state')) {
+      return jsonResponse(200, {
+        player: { id: 42, username: 'Player1', faction: 'blue', role: 'member' },
+        world: { territories: [] },
+      });
+    }
+    return jsonResponse(404, {});
+  };
+
+  const { loadGame, setToken } = loadScriptModule();
+  setToken('token-abc');
+  await loadGame();
+
+  assert.equal(mapWasActiveAtReveal, true);
+}));
+
 test('apiFetch preserves the HTTP status on a thrown error', withFrontendGlobals(async () => {
   global.fetch = async () => jsonResponse(429, { error: 'Too many requests' });
   const { apiFetch, setToken } = loadScriptModule();
