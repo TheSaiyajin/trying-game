@@ -298,6 +298,51 @@ test('a background refresh after midnight rollover updates the new faction witho
   assert.equal(getToken(), 'token-abc');
 }));
 
+test('a live tick updates city and open territory soldier counts without replacing typed troop values', withFrontendGlobals(async () => {
+  const elements = new Map();
+  const getElement = (id) => {
+    if (!elements.has(id)) elements.set(id, createFakeElement());
+    return elements.get(id);
+  };
+  global.document.getElementById = getElement;
+  getElement('territory-panel').style.display = 'block';
+  getElement('attack-count').value = '37';
+  getElement('defend-count').value = '23';
+  getElement('recall-count').value = '11';
+  global.fetch = async () => jsonResponse(200, {
+    player: {
+      faction: 'blue',
+      soldiers: 75,
+      resources: {},
+      buildings: {},
+      stationedTroops: { A1: 18 },
+    },
+    world: {
+      territories: [{ id: 'A1', name: 'Alpha', owner: 'blue', defense: 44, neighbors: [] }],
+    },
+  });
+
+  const { setGameStateFromSnapshot, selectTerritory, refreshGameStateInBackground, setToken } = loadScriptModule();
+  setToken('token-abc');
+  setGameStateFromSnapshot({
+    player: { faction: 'blue', soldiers: 10, resources: {}, buildings: {}, stationedTroops: { A1: 2 } },
+    world: { territories: [{ id: 'A1', name: 'Alpha', owner: 'blue', defense: 5, neighbors: [] }] },
+  });
+  selectTerritory('A1');
+  getElement('attack-count').value = '37';
+  getElement('defend-count').value = '23';
+  getElement('recall-count').value = '11';
+
+  await refreshGameStateInBackground();
+
+  assert.equal(getElement('soldiers-count').textContent, 75);
+  assert.equal(getElement('tp-city-soldiers').textContent, 75);
+  assert.equal(getElement('tp-troops').textContent, 44);
+  assert.equal(getElement('tp-stationed').textContent, 18);
+  assert.equal(getElement('defend-count').value, '23');
+  assert.equal(getElement('recall-count').value, '11');
+}));
+
 test('a background refresh during a Force Finish transition (temporary 500) never logs the player out', withFrontendGlobals(async () => {
   global.fetch = async () => jsonResponse(500, { error: 'Internal server error' });
   const { refreshGameStateInBackground, setToken, getToken } = loadScriptModule();

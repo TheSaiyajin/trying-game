@@ -540,6 +540,10 @@ async function refreshGameStateInBackground() {
     renderCity();
     renderMap();
     updateResourceBar();
+    const territoryPanel = document.getElementById('territory-panel');
+    if (selectedTerritoryId && territoryPanel?.style.display !== 'none') {
+      selectTerritory(selectedTerritoryId, { preserveTroopInputs: true });
+    }
   } catch (error) {
     if (error.status === 401) {
       localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -972,7 +976,7 @@ function initializeMobileMap(svg) {
 
 let recallSendCount = 1;
 
-function selectTerritory(id) {
+function selectTerritory(id, { preserveTroopInputs = false } = {}) {
   selectedTerritoryId = id;
   const territory = G.territories[id];
   if (!territory) return;
@@ -997,18 +1001,25 @@ function selectTerritory(id) {
   if (canAttack(id)) {
     attackSection.style.display = 'block';
     defendSection.style.display = 'none';
-    attackSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
-    setTroopInput('attack-count', attackSendCount);
+    if (recallSection) recallSection.style.display = 'none';
+    if (!preserveTroopInputs) {
+      attackSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
+      setTroopInput('attack-count', attackSendCount);
+    }
   } else if (territory.owner === G.player.faction) {
     attackSection.style.display = 'none';
     defendSection.style.display = 'block';
-    defendSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
-    setTroopInput('defend-count', defendSendCount);
+    if (!preserveTroopInputs) {
+      defendSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
+      setTroopInput('defend-count', defendSendCount);
+    }
     if (recallSection) {
       if (stationed > 0) {
         recallSection.style.display = 'block';
-        recallSendCount = Math.max(1, Math.min(1, stationed));
-        setTroopInput('recall-count', recallSendCount);
+        if (!preserveTroopInputs) {
+          recallSendCount = Math.max(1, Math.min(1, stationed));
+          setTroopInput('recall-count', recallSendCount);
+        }
       } else {
         recallSection.style.display = 'none';
       }
@@ -1016,6 +1027,7 @@ function selectTerritory(id) {
   } else {
     attackSection.style.display = 'none';
     defendSection.style.display = 'none';
+    if (recallSection) recallSection.style.display = 'none';
   }
 }
 
@@ -1839,6 +1851,7 @@ if (typeof module !== 'undefined') {
     getFactionLegendEntries,
     renderMapLegend,
     mapTerritories,
+    selectTerritory,
     canAttack,
     ownerLabel,
     formatBonusLabel,
