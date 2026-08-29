@@ -31,6 +31,10 @@ let defendSendCount = 10;
 let trainAmount = 1;
 let factionChatPollHandle = null;
 const mapView = { scale: 1, x: 0, y: 0, pointers: new Map(), dragStart: null, pinchStart: null, dragged: false, initialized: false };
+let realtimeSocket = null;
+let realtimeRefreshTimer = null;
+let realtimeRefreshInFlight = false;
+let realtimeRefreshQueued = false;
 
 // Canonical topology module (world-topology.js): required directly under Node (tests),
 // exposed as window.WORLD_TOPOLOGY when loaded via <script> in the browser.
@@ -230,6 +234,44 @@ function setToken(token) {
   if (token) localStorage.setItem(AUTH_STORAGE_KEY, token);
 }
 
+function scheduleRealtimeRefresh(delay = 150) {
+  realtimeRefreshQueued = true;
+  clearTimeout(realtimeRefreshTimer);
+  realtimeRefreshTimer = setTimeout(async () => {
+    if (realtimeRefreshInFlight) return;
+    realtimeRefreshQueued = false;
+    realtimeRefreshInFlight = true;
+    try {
+      await refreshGameStateInBackground();
+    } finally {
+      realtimeRefreshInFlight = false;
+      if (realtimeRefreshQueued) scheduleRealtimeRefresh(0);
+    }
+  }, delay);
+}
+
+function connectRealtime() {
+  const token = getToken();
+  if (!token || typeof io !== 'function') return null;
+  if (realtimeSocket) {
+    realtimeSocket.auth = { token };
+    if (!realtimeSocket.connected) realtimeSocket.connect();
+    return realtimeSocket;
+  }
+
+  realtimeSocket = io({ auth: { token }, reconnection: true });
+  realtimeSocket.on('connect', () => scheduleRealtimeRefresh(0));
+  realtimeSocket.on('state:changed', () => scheduleRealtimeRefresh());
+  return realtimeSocket;
+}
+
+function disconnectRealtime() {
+  clearTimeout(realtimeRefreshTimer);
+  realtimeRefreshQueued = false;
+  if (realtimeSocket) realtimeSocket.disconnect();
+  realtimeSocket = null;
+}
+
 async function apiFetch(path, options = {}) {
   const token = getToken();
   const headers = {
@@ -400,6 +442,7 @@ async function submitAuth(event) {
 }
 
 function logoutPlayer() {
+  disconnectRealtime();
   localStorage.removeItem(AUTH_STORAGE_KEY);
   const form = document.getElementById('auth-form');
   if (form) form.reset();
@@ -454,6 +497,7 @@ async function loadGame() {
     renderCity();
     renderMap();
     updateResourceBar();
+    connectRealtime();
   } catch (error) {
     if (error.status === 401) {
       localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -464,6 +508,24 @@ async function loadGame() {
     showToast('⚠️ Could not load the server state. Retrying…');
     setTimeout(loadGame, 1500);
   }
+}
+
+function openInfoModal() {
+  const modal = document.getElementById('info-modal');
+  if (!modal) return;
+  modal.hidden = false;
+  modal.querySelector('.info-modal-close')?.focus();
+}
+
+function closeInfoModal() {
+  const modal = document.getElementById('info-modal');
+  if (!modal) return;
+  modal.hidden = true;
+  document.getElementById('info-btn')?.focus();
+}
+
+function closeInfoModalFromBackdrop(event) {
+  if (event.target === event.currentTarget) closeInfoModal();
 }
 
 // Periodic 60s poll while logged in. This is what picks up a season rollover/faction
@@ -1714,6 +1776,10 @@ if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', async () => {
     enablePullToRefreshFallback();
 
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeInfoModal();
+    });
+
     const authForm = document.getElementById('auth-form');
     const authModeButtons = document.querySelectorAll('.auth-mode-btn');
 
@@ -1792,6 +1858,9 @@ if (typeof module !== 'undefined') {
     fetchCurrentUser,
     loadGame,
     refreshGameStateInBackground,
+    scheduleRealtimeRefresh,
+    connectRealtime,
+    disconnectRealtime,
     getToken,
     setToken,
   };

@@ -1,3 +1,4 @@
+const http = require('http');
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -49,6 +50,7 @@ const {
 } = require('./season');
 const { getCurrentUtcDayBounds } = require('./season-time');
 const { resolveTrustProxySetting } = require('./trust-proxy');
+const { attachRealtime } = require('./realtime');
 const {
  CHAT_RESPONSE_LIMIT,
  createFactionChatMessage,
@@ -59,9 +61,12 @@ const {
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
+const { notifyStateChanged } = attachRealtime(server, { verifyToken });
 const PORT = Number(process.env.PORT || 3000);
 const validFactions = ['blue', 'red', 'green'];
 const buildingNames = ['farm', 'lumbermill', 'ironmine', 'barracks'];
+let observedSeasonId = null;
 
 // Must be set before any express-rate-limit middleware: SaiWars sits behind
 // Cloudflare -> Nginx -> Express (2 hops), and rate limiting needs the real client IP, not
@@ -77,6 +82,19 @@ app.use(rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many requests, please slow down.' },
 }));
+
+app.use('/api', (req, res, next) => {
+  const isStateMutation = req.method !== 'GET' && (
+    /^\/game\/(upgrade-building|train-soldiers|defend|recall-defenders|attack|resolve-battle)$/.test(req.path)
+    || req.path.startsWith('/admin/')
+  );
+  if (isStateMutation) {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) notifyStateChanged();
+    });
+  }
+  next();
+});
 
 const factionChatSendRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -110,6 +128,8 @@ async function requireAuth(req, res, next) {
   const client = await getClient();
   try {
     const season = await ensureCurrentSeason(client);
+    if (observedSeasonId !== null && observedSeasonId !== season.id) notifyStateChanged();
+    observedSeasonId = season.id;
     await ensurePlayerFactionAssignment(client, { seasonId: season.id, playerId: req.user.userId });
     req.currentSeason = season;
     next();
@@ -339,6 +359,7 @@ async function runGlobalResourceTick(db = null, options = {}) {
         [gain.food, gain.wood, gain.iron, gain.manpower, fortressTroops, row.id]
       );
     }
+    if (playersResult.rowCount > 0) notifyStateChanged();
   } catch (error) {
     if (!suppressErrors) throw error;
     console.error('Resource tick failed:', error);
@@ -1136,7 +1157,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error.' });
 });
 
-app.listen(PORT, async () => {
+server.listen(PORT, async () => {
   try {
     await initializeDatabase();
     startResourceTickLoop();

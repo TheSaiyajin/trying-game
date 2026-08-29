@@ -284,8 +284,71 @@ html, body {
   padding: 0 10px;
   z-index: 100;
 }
-.game-title { font-weight: 700; font-size: 15px; color: var(--accent-gold); }
-.top-actions { display: flex; gap: 6px; }
+.game-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--accent-gold);
+}
+.top-actions { display: flex; flex-shrink: 0; gap: 6px; }
+
+/* ---------- Info Modal ---------- */
+.info-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(3, 7, 12, 0.82);
+}
+.info-modal-backdrop[hidden] { display: none; }
+.info-modal-panel {
+  width: min(100%, 520px);
+  max-height: min(82vh, 620px);
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--accent-gold);
+  border-radius: 8px;
+  padding: 18px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.65);
+}
+.info-modal-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.info-modal-heading h2 { color: var(--accent-gold); font-size: 19px; }
+.info-modal-panel h3 { margin: 16px 0 5px; color: var(--accent-blue2); font-size: 14px; }
+.info-modal-panel p { color: var(--text-dim); font-size: 14px; }
+.info-modal-panel .info-discord { color: var(--text-main); font-weight: 700; }
+.info-modal-close {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card2);
+  color: var(--text-main);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@media (max-width: 420px) {
+  .top-bar { padding: 0 6px; }
+  .game-title { font-size: 13px; }
+  .top-actions { gap: 4px; }
+  .top-actions .btn-small { padding: 5px 7px; }
+  .info-modal-backdrop { align-items: end; padding: 8px; }
+  .info-modal-panel { max-height: 86vh; padding: 16px 14px; }
+}
 
 /* ---------- Resource Bar ---------- */
 .resource-bar {

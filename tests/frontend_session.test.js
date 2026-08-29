@@ -59,6 +59,7 @@ function withFrontendGlobals(fn) {
     const previousLocalStorage = global.localStorage;
     const previousSetInterval = global.setInterval;
     const previousClearInterval = global.clearInterval;
+    const previousIo = global.io;
     global.document = createFakeDocument();
     global.localStorage = createFakeStorage();
     // loadGame()/startFactionChatPolling() start a real setInterval for chat polling; a
@@ -74,6 +75,7 @@ function withFrontendGlobals(fn) {
       global.localStorage = previousLocalStorage;
       global.setInterval = previousSetInterval;
       global.clearInterval = previousClearInterval;
+      global.io = previousIo;
     }
   };
 }
@@ -106,6 +108,48 @@ test('apiFetch marks a network failure as status 0 / temporary instead of losing
     assert.equal(error.isNetworkError, true);
     return true;
   });
+}));
+
+test('real-time connection authenticates with the token and debounces duplicate updates', withFrontendGlobals(async () => {
+  const handlers = {};
+  let socketOptions = null;
+  global.io = (options) => {
+    socketOptions = options;
+    return {
+      connected: true,
+      on(event, handler) { handlers[event] = handler; },
+      connect() {},
+      disconnect() {},
+    };
+  };
+  global.fetch = async () => jsonResponse(200, {
+    player: { faction: 'blue', resources: {}, buildings: {} },
+    world: { territories: [] },
+  });
+
+  const previousSetTimeout = global.setTimeout;
+  const previousClearTimeout = global.clearTimeout;
+  const timers = new Map();
+  let timerId = 0;
+  global.setTimeout = (fn) => {
+    timerId += 1;
+    timers.set(timerId, fn);
+    return timerId;
+  };
+  global.clearTimeout = (id) => timers.delete(id);
+  try {
+    const { connectRealtime, setToken } = loadScriptModule();
+    setToken('token-abc');
+    connectRealtime();
+
+    assert.deepEqual(socketOptions, { auth: { token: 'token-abc' }, reconnection: true });
+    handlers['state:changed']();
+    handlers['state:changed']();
+    assert.equal(timers.size, 1);
+  } finally {
+    global.setTimeout = previousSetTimeout;
+    global.clearTimeout = previousClearTimeout;
+  }
 }));
 
 test('ensureSession deletes the token and rejects only on a real 401', withFrontendGlobals(async () => {
