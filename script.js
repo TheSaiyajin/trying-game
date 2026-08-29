@@ -5,6 +5,8 @@
    ==================================================== */
 
 const AUTH_STORAGE_KEY = 'trying_game_token';
+const SCREEN_STORAGE_PREFIX = 'trying_game_screen_';
+const VALID_SCREENS = new Set(['city', 'map', 'activity', 'chat', 'admin']);
 const USERNAME_REGEX = /^[A-Za-z0-9_-]{3,32}$/;
 const DEFAULT_STATE = {
   player: {
@@ -381,7 +383,7 @@ function hideAuthScreen() {
   const authScreen = document.getElementById('auth-screen');
   if (authScreen) authScreen.style.display = 'none';
   setGameShellVisible(true);
-  showScreen('city');
+  showScreen('city', { persist: false });
   hideBootLoading();
 }
 
@@ -497,6 +499,7 @@ async function loadGame() {
     renderCity();
     renderMap();
     updateResourceBar();
+    restoreSavedScreen(G.player);
     connectRealtime();
   } catch (error) {
     if (error.status === 401) {
@@ -568,7 +571,25 @@ function resetGame() {
   loadGame();
 }
 
-function showScreen(name) {
+function getScreenStorageKey(player) {
+  return player?.id ? `${SCREEN_STORAGE_PREFIX}${player.id}` : '';
+}
+
+function restoreSavedScreen(player) {
+  const storageKey = getScreenStorageKey(player);
+  const savedScreen = storageKey ? localStorage.getItem(storageKey) : null;
+  const screen = VALID_SCREENS.has(savedScreen) && (savedScreen !== 'admin' || isAdminUser(player))
+    ? savedScreen
+    : 'city';
+  showScreen(screen, { persist: false });
+  return screen;
+}
+
+function showScreen(name, { persist = true } = {}) {
+  if (!VALID_SCREENS.has(name)) {
+    console.warn('Unknown screen requested:', name);
+    return;
+  }
   document.querySelectorAll('.screen').forEach((screen) => screen.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach((button) => button.classList.remove('active'));
   const targetScreen = document.getElementById('screen-' + name);
@@ -579,6 +600,8 @@ function showScreen(name) {
   targetScreen.classList.add('active');
   const targetNav = document.getElementById('nav-' + name);
   if (targetNav) targetNav.classList.add('active');
+  const storageKey = getScreenStorageKey(G.player);
+  if (persist && storageKey) localStorage.setItem(storageKey, name);
   if (name === 'city') renderCity();
   if (name === 'map') { renderMap(); renderScoreboard(); renderSeasonHistory(); }
   if (name === 'activity') renderActivity();
@@ -1852,6 +1875,7 @@ if (typeof module !== 'undefined') {
     renderMapLegend,
     mapTerritories,
     selectTerritory,
+    restoreSavedScreen,
     canAttack,
     ownerLabel,
     formatBonusLabel,

@@ -87,6 +87,34 @@ function loadScriptModule() {
   return require('../script.js');
 }
 
+test('restores a saved Map screen for the authenticated player', withFrontendGlobals(async () => {
+  const elements = new Map();
+  global.document.getElementById = (id) => {
+    if (!elements.has(id)) elements.set(id, createFakeElement());
+    return elements.get(id);
+  };
+  global.localStorage.setItem('trying_game_screen_42', 'map');
+  const { restoreSavedScreen } = loadScriptModule();
+
+  const restored = restoreSavedScreen({ id: 42, username: 'Player1', role: 'member' });
+
+  assert.equal(restored, 'map');
+}));
+
+test('rejects saved Admin restoration for a non-admin player', withFrontendGlobals(async () => {
+  const elements = new Map();
+  global.document.getElementById = (id) => {
+    if (!elements.has(id)) elements.set(id, createFakeElement());
+    return elements.get(id);
+  };
+  global.localStorage.setItem('trying_game_screen_42', 'admin');
+  const { restoreSavedScreen } = loadScriptModule();
+
+  const restored = restoreSavedScreen({ id: 42, username: 'Player1', role: 'member' });
+
+  assert.equal(restored, 'city');
+}));
+
 test('apiFetch preserves the HTTP status on a thrown error', withFrontendGlobals(async () => {
   global.fetch = async () => jsonResponse(429, { error: 'Too many requests' });
   const { apiFetch, setToken } = loadScriptModule();
