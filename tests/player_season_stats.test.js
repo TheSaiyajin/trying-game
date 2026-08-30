@@ -160,6 +160,50 @@ test('rankings expose only username, faction and statistic counters', async () =
   assert.equal('resource_food' in result.myStats, false);
 });
 
+test('rankings return at most five players per category even when a larger limit is requested', async () => {
+  const rows = Array.from({ length: 8 }, (_, index) => ({
+    player_id: index + 1,
+    username: `Player${index + 1}`,
+    faction: ['blue', 'red', 'green'][index % 3],
+    ...Object.fromEntries(STAT_COLUMNS.map((column) => [column, 8 - index])),
+  }));
+  const client = { async query() { return { rows }; } };
+
+  const result = await getSeasonStats(client, { seasonId: 3, playerId: 1, limit: 99 });
+
+  STAT_COLUMNS.forEach((column) => assert.equal(result.rankings[column].length, 5));
+  assert.deepEqual(result.rankings.kills.map((player) => player.username), ['Player1', 'Player2', 'Player3', 'Player4', 'Player5']);
+});
+
+test('rankings rendering defensively limits oversized categories to five rows', () => {
+  const previousDocument = global.document;
+  global.document = {
+    addEventListener() {},
+    createElement() {
+      return {
+        children: [],
+        className: '',
+        textContent: '',
+        append(...children) { this.children.push(...children); },
+        appendChild(child) { this.children.push(child); },
+      };
+    },
+  };
+  try {
+    delete require.cache[require.resolve('../script.js')];
+    const { renderRankings } = require('../script.js');
+    const container = { children: [], replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); } };
+    const players = Array.from({ length: 8 }, (_, index) => ({ username: `P${index}`, faction: 'blue', kills: 8 - index }));
+
+    renderRankings(container, { kills: players });
+
+    assert.equal(container.children[0].children.length, 6);
+  } finally {
+    global.document = previousDocument;
+    delete require.cache[require.resolve('../script.js')];
+  }
+});
+
 test('Activity uses internal tabs and socket refresh without adding bottom navigation', () => {
   const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
   const script = fs.readFileSync(path.join(__dirname, '../script.js'), 'utf8');

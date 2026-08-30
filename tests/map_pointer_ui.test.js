@@ -14,6 +14,8 @@ function createElement(tagName = 'div') {
     textContent: '',
     rect: { left: 0, top: 0, width: 360, height: 370 },
     classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+    capturedPointers: [],
+    releasedPointers: [],
     addEventListener(type, handler) {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type).push(handler);
@@ -26,7 +28,8 @@ function createElement(tagName = 'div') {
     setAttribute(name, value) {
       if (name === 'data-id') element.dataset.id = String(value);
     },
-    setPointerCapture() {},
+    setPointerCapture(pointerId) { element.capturedPointers.push(pointerId); },
+    releasePointerCapture(pointerId) { element.releasedPointers.push(pointerId); },
     getBoundingClientRect() { return element.rect; },
     dispatch(type, event = {}) {
       (listeners.get(type) || []).forEach((handler) => handler({
@@ -205,6 +208,7 @@ test('repeated map renders do not stack pointer listeners', () => {
     assert.equal(harness.svg.listenerCount('pointermove'), 1);
     assert.equal(harness.svg.listenerCount('pointerup'), 1);
     assert.equal(harness.svg.listenerCount('wheel'), 1);
+    assert.equal(harness.svg.listenerCount('contextmenu'), 1);
     assert.equal(harness.windowListenerCount('resize'), 1);
   } finally {
     harness.restore();
@@ -325,4 +329,57 @@ test('desktop map consumes the available screen height without overflow', () => 
   assert.match(css, /#map-svg \{[^}]*width: 100%;[^}]*height: 100%;[^}]*max-height: 100%;/);
   assert.match(css, /\.territory-panel \{[^}]*max-height: 100%;[^}]*overflow-y: auto;/);
   assert.match(css, /\.activity-tabs \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+});
+
+test('desktop right-drag pans with capture, grabbing cursor, clamping, and no selection', () => {
+  const harness = loadMapHarness({ mobile: false });
+  try {
+    harness.renderMap();
+    for (let index = 0; index < 5; index += 1) {
+      harness.svg.dispatch('wheel', { deltaY: -100, clientX: 180, clientY: 185 });
+    }
+    harness.svg.dispatch('pointerdown', { pointerId: 7, pointerType: 'mouse', button: 2, clientX: 100, clientY: 100 });
+    assert.deepEqual(harness.svg.capturedPointers, [7]);
+    assert.equal(harness.svg.style.cursor, 'grabbing');
+    harness.svg.dispatch('pointermove', { pointerId: 7, pointerType: 'mouse', button: 2, clientX: 1000, clientY: 1000 });
+    const translation = harness.svg.style.transform.match(/translate\((-?\d+(?:\.\d+)?)px, (-?\d+(?:\.\d+)?)px\)/);
+    assert.ok(Math.abs(Number(translation[1])) <= 180);
+    assert.ok(Math.abs(Number(translation[2])) <= 185);
+    assert.notEqual(harness.elements.get('territory-panel').style.display, 'block');
+    harness.svg.dispatch('pointerup', { pointerId: 7, pointerType: 'mouse', button: 2 });
+    assert.deepEqual(harness.svg.releasedPointers, [7]);
+    assert.equal(harness.svg.style.cursor, '');
+  } finally {
+    harness.restore();
+  }
+});
+
+test('right-drag at fitted 1x stays centred and cancel stops panning', () => {
+  const harness = loadMapHarness({ mobile: false });
+  try {
+    harness.renderMap();
+    harness.svg.dispatch('pointerdown', { pointerId: 8, pointerType: 'mouse', button: 2, clientX: 100, clientY: 100 });
+    harness.svg.dispatch('pointermove', { pointerId: 8, pointerType: 'mouse', button: 2, clientX: 200, clientY: 200 });
+    assert.equal(harness.svg.style.transform, 'translate(0px, 0px) scale(1)');
+    harness.svg.dispatch('pointercancel', { pointerId: 8, pointerType: 'mouse', button: 2 });
+    assert.equal(harness.svg.style.cursor, '');
+    assert.deepEqual(harness.svg.releasedPointers, [8]);
+    harness.svg.dispatch('pointermove', { pointerId: 8, pointerType: 'mouse', button: 2, clientX: 300, clientY: 300 });
+    assert.equal(harness.svg.style.transform, 'translate(0px, 0px) scale(1)');
+  } finally {
+    harness.restore();
+  }
+});
+
+test('context menu is prevented by the map handler only', () => {
+  const harness = loadMapHarness({ mobile: false });
+  try {
+    harness.renderMap();
+    let prevented = false;
+    harness.svg.dispatch('contextmenu', { preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(harness.windowListenerCount('contextmenu'), 0);
+  } finally {
+    harness.restore();
+  }
 });

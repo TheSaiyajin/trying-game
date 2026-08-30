@@ -126,7 +126,7 @@ function publicStatsRow(row) {
   };
 }
 
-async function getSeasonStats(client, { seasonId, playerId, limit = 10 }) {
+async function getSeasonStats(client, { seasonId, playerId, limit = 5 }) {
   const result = await client.query(
     `SELECT pss.player_id, p.username, sm.faction,
             pss.kills, pss.losses, pss.battles_joined, pss.battles_won,
@@ -139,11 +139,12 @@ async function getSeasonStats(client, { seasonId, playerId, limit = 10 }) {
     [seasonId]
   );
   const rows = result.rows.map(publicStatsRow);
+  const rankingLimit = Math.min(5, Math.max(1, Math.floor(Number(limit) || 5)));
   const rankings = Object.fromEntries(STAT_COLUMNS.map((column) => [
     column,
     [...rows]
       .sort((left, right) => right[column] - left[column] || left.username.localeCompare(right.username))
-      .slice(0, limit),
+      .slice(0, rankingLimit),
   ]));
   const ownRow = result.rows.find((row) => Number(row.player_id) === Number(playerId));
   return {

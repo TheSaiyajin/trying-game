@@ -32,7 +32,7 @@ let attackSendCount = 10;
 let defendSendCount = 10;
 let trainAmount = 1;
 let factionChatPollHandle = null;
-const mapView = { scale: 1, x: 0, y: 0, pointers: new Map(), dragStart: null, pinchStart: null, dragged: false, hadMultiplePointers: false, suppressClickUntil: 0, boundSvg: null, resizeBound: false };
+const mapView = { scale: 1, x: 0, y: 0, pointers: new Map(), dragStart: null, pinchStart: null, dragged: false, hadMultiplePointers: false, desktopPan: null, suppressClickUntil: 0, boundSvg: null, resizeBound: false };
 let realtimeSocket = null;
 let realtimeRefreshTimer = null;
 let realtimeRefreshInFlight = false;
@@ -910,7 +910,8 @@ function renderMap() {
     poly.setAttribute('stroke-width', selectedTerritoryId === id ? '3' : '1.5');
     poly.setAttribute('class', `territory${selectedTerritoryId === id ? ' selected' : ''}${canAttack(id) ? ' attackable' : ''}`);
     poly.setAttribute('data-id', id);
-    poly.addEventListener('click', () => {
+    poly.addEventListener('click', (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
       if (Date.now() < mapView.suppressClickUntil) return;
       selectTerritory(id);
     });
@@ -1008,7 +1009,21 @@ function initializeMobileMap(svg) {
       if (currentSvg) applyMapView(currentSvg);
     });
   }
+  svg.addEventListener('contextmenu', (event) => event.preventDefault());
   svg.addEventListener('pointerdown', (event) => {
+    if (!window.matchMedia('(max-width: 520px)').matches && event.pointerType === 'mouse' && event.button === 2) {
+      svg.setPointerCapture(event.pointerId);
+      mapView.desktopPan = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        mapX: mapView.x,
+        mapY: mapView.y,
+      };
+      svg.style.cursor = 'grabbing';
+      event.preventDefault();
+      return;
+    }
     if (!window.matchMedia('(max-width: 520px)').matches || !['touch', 'pen'].includes(event.pointerType)) return;
     if (mapView.pointers.size === 0) {
       mapView.dragged = false;
@@ -1029,6 +1044,12 @@ function initializeMobileMap(svg) {
     }
   });
   svg.addEventListener('pointermove', (event) => {
+    if (mapView.desktopPan?.pointerId === event.pointerId) {
+      mapView.x = mapView.desktopPan.mapX + event.clientX - mapView.desktopPan.x;
+      mapView.y = mapView.desktopPan.mapY + event.clientY - mapView.desktopPan.y;
+      applyMapView(svg);
+      return;
+    }
     if (!mapView.pointers.has(event.pointerId)) return;
     mapView.pointers.set(event.pointerId, {
       ...mapView.pointers.get(event.pointerId),
@@ -1051,6 +1072,12 @@ function initializeMobileMap(svg) {
     if (mapView.dragged) applyMapView(svg);
   });
   svg.addEventListener('pointerup', (event) => {
+    if (mapView.desktopPan?.pointerId === event.pointerId) {
+      mapView.desktopPan = null;
+      svg.style.cursor = '';
+      if (typeof svg.releasePointerCapture === 'function') svg.releasePointerCapture(event.pointerId);
+      return;
+    }
     const pointer = mapView.pointers.get(event.pointerId);
     if (!pointer) return;
     const shouldSelect = !mapView.dragged
@@ -1067,6 +1094,12 @@ function initializeMobileMap(svg) {
     if (shouldSelect) selectTerritory(pointer.territoryId);
   });
   svg.addEventListener('pointercancel', (event) => {
+    if (mapView.desktopPan?.pointerId === event.pointerId) {
+      mapView.desktopPan = null;
+      svg.style.cursor = '';
+      if (typeof svg.releasePointerCapture === 'function') svg.releasePointerCapture(event.pointerId);
+      return;
+    }
     if (!mapView.pointers.has(event.pointerId)) return;
     mapView.pointers.delete(event.pointerId);
     mapView.suppressClickUntil = Date.now() + 400;
@@ -1374,7 +1407,7 @@ function renderRankings(container, rankings) {
     title.className = 'activity-ranking-title';
     title.textContent = label;
     section.appendChild(title);
-    (rankings[key] || []).forEach((player, index) => {
+    (rankings[key] || []).slice(0, 5).forEach((player, index) => {
       const row = document.createElement('div');
       row.className = 'activity-ranking-row';
       const rank = document.createElement('span');
@@ -2071,6 +2104,7 @@ if (typeof module !== 'undefined') {
     buildTerritoryLayout,
     renderMap,
     initializeMobileMap,
+    renderRankings,
     closeTerritoryPanel,
     changeAttack,
     changeDefend,
