@@ -40,7 +40,14 @@ async function createSeasonRow(client, { startsAt, endsAt }) {
      RETURNING *`,
     [seasonNumber, startsAt, endsAt]
   );
-  return inserted.rows[0];
+  const season = inserted.rows[0];
+  await client.query(
+    `INSERT INTO season_territory_faction_ownership (season_id, territory_id, faction)
+     SELECT $1, id, owner_faction FROM territories WHERE owner_faction = ANY($2::varchar[])
+     ON CONFLICT DO NOTHING`,
+    [season.id, VALID_FACTIONS]
+  );
+  return season;
 }
 
 // Capitals score nothing and stay protected; core territories (from the canonical topology,

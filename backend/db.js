@@ -131,6 +131,27 @@ async function applySchemaMigrations(currentClient) {
     `CREATE INDEX IF NOT EXISTS idx_season_memberships_season_faction ON season_memberships (season_id, faction)`,
     `ALTER TABLE faction_chat_messages ADD COLUMN IF NOT EXISTS season_id INTEGER REFERENCES seasons(id)`,
     `CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_season_faction ON faction_chat_messages (season_id, faction, created_at DESC, id DESC)`,
+    `CREATE TABLE IF NOT EXISTS player_season_stats (
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      kills INTEGER NOT NULL DEFAULT 0,
+      losses INTEGER NOT NULL DEFAULT 0,
+      battles_joined INTEGER NOT NULL DEFAULT 0,
+      battles_won INTEGER NOT NULL DEFAULT 0,
+      successful_defences INTEGER NOT NULL DEFAULT 0,
+      territories_captured INTEGER NOT NULL DEFAULT 0,
+      retakes INTEGER NOT NULL DEFAULT 0,
+      reinforcement_troops_sent INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (season_id, player_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_player_season_stats_rankings ON player_season_stats (season_id)`,
+    `CREATE TABLE IF NOT EXISTS season_territory_faction_ownership (
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
+      faction VARCHAR(16) NOT NULL,
+      PRIMARY KEY (season_id, territory_id, faction)
+    )`,
   ];
 
 
@@ -143,6 +164,14 @@ async function applySchemaMigrations(currentClient) {
       }
     }
   }
+  await currentClient.query(`
+    INSERT INTO season_territory_faction_ownership (season_id, territory_id, faction)
+    SELECT s.id, t.id, t.owner_faction
+    FROM seasons s
+    CROSS JOIN territories t
+    WHERE s.status = 'active' AND t.owner_faction IN ('blue', 'red', 'green')
+    ON CONFLICT DO NOTHING
+  `);
   await currentClient.query(`
     WITH stationed AS (
       SELECT territory_id, COALESCE(SUM(GREATEST(troops, 0)), 0) AS stationed_troops

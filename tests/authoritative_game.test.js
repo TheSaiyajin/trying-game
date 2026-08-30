@@ -141,6 +141,11 @@ test('legacy databases get the required player migration columns before registra
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS faction_chat_messages')));
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time')));
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS topology_version')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS player_season_stats')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('PRIMARY KEY (season_id, player_id)')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS season_territory_faction_ownership')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('INSERT INTO season_territory_faction_ownership') && sql.includes("s.status = 'active'")));
+  assert.equal(sqlCalls.some((sql) => sql.includes('INSERT INTO player_season_stats') && sql.includes('SELECT')), false);
 });
 
 test('training cost and idle earnings are consistent with server-authoritative rules', () => {

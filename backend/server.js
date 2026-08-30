@@ -53,6 +53,7 @@ const {
 const { getCurrentUtcDayBounds } = require('./season-time');
 const { resolveTrustProxySetting } = require('./trust-proxy');
 const { attachRealtime } = require('./realtime');
+const { addPlayerSeasonStats, getSeasonStats } = require('./player-season-stats');
 const {
  CHAT_RESPONSE_LIMIT,
  createFactionChatMessage,
@@ -644,6 +645,15 @@ app.get('/api/game/battles', requireAuth, asyncHandler(async (req, res) => {
   res.json({ battles: result.rows });
 }));
 
+app.get('/api/game/activity-stats', requireAuth, asyncHandler(async (req, res) => {
+  const db = await connect();
+  const stats = await getSeasonStats(db, {
+    seasonId: req.currentSeason.id,
+    playerId: req.user.userId,
+  });
+  res.json(stats);
+}));
+
 app.post('/api/game/upgrade-building', requireAuth, asyncHandler(async (req, res) => {
   const buildingKey = sanitizeBuildingName(req.body.building);
   if (!buildingKey) return res.status(400).json({ error: 'Invalid building.' });
@@ -750,6 +760,9 @@ app.post('/api/game/defend', requireAuth, asyncHandler(async (req, res) => {
       `UPDATE territories SET defense_troops = $1 WHERE id = $2`,
       [defenseState.totalDefenseTroops + troops, territoryId]
     );
+    await addPlayerSeasonStats(client, req.currentSeason.id, player.id, {
+      reinforcement_troops_sent: troops,
+    });
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -839,6 +852,7 @@ app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
       playerId: req.user.userId,
       territoryId,
       soldiers,
+      seasonId: req.currentSeason.id,
     });
   } catch (error) {
     if (error instanceof AttackError) {
@@ -886,7 +900,7 @@ app.post('/api/game/resolve-battle', requireAuth, asyncHandler(async (req, res) 
   if (!player) return res.status(404).json({ error: 'Player not found.' });
   const db = await getClient();
   try {
-    const result = await resolveBattle(db, { player, territoryId });
+    const result = await resolveBattle(db, { player, territoryId, seasonId: req.currentSeason.id });
     if (!result.ok) {
       return res.status(result.status).json({ error: result.error });
     }

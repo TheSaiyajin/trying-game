@@ -9,6 +9,8 @@ function cloneTerritory(territory) {
 function createFakeClient({ players, territories, neighbors, lockedTerritoryIds = new Set(), initialDefenders = [] }) {
   const battleHistory = [];
   const defenders = new Map();
+  const playerSeasonStats = new Map();
+  const ownershipHistory = new Set();
   initialDefenders.forEach((defender) => {
     defenders.set(`${defender.territory_id}:${defender.player_id}`, {
       faction: defender.faction,
@@ -19,6 +21,7 @@ function createFakeClient({ players, territories, neighbors, lockedTerritoryIds 
   return {
     battleHistory,
     defenders,
+    playerSeasonStats,
     players,
     territories,
     async query(sql, params = []) {
@@ -123,6 +126,22 @@ function createFakeClient({ players, territories, neighbors, lockedTerritoryIds 
       if (text.startsWith('INSERT INTO battle_history')) {
         battleHistory.push(params);
         return { rows: [] };
+      }
+
+      if (text.startsWith('SELECT 1 FROM season_territory_faction_ownership')) {
+        return { rows: ownershipHistory.has(params.join(':')) ? [{ exists: 1 }] : [], rowCount: ownershipHistory.has(params.join(':')) ? 1 : 0 };
+      }
+
+      if (text.startsWith('INSERT INTO season_territory_faction_ownership')) {
+        ownershipHistory.add(params.join(':'));
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (text.startsWith('INSERT INTO player_season_stats')) {
+        const key = `${params[0]}:${params[1]}`;
+        const current = playerSeasonStats.get(key) || Array(8).fill(0);
+        playerSeasonStats.set(key, current.map((value, index) => value + params[index + 2]));
+        return { rows: [], rowCount: 1 };
       }
 
       throw new Error(`Unexpected query in fake client: ${text}`);

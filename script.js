@@ -32,11 +32,12 @@ let attackSendCount = 10;
 let defendSendCount = 10;
 let trainAmount = 1;
 let factionChatPollHandle = null;
-const mapView = { scale: 1, x: 0, y: 0, pointers: new Map(), dragStart: null, pinchStart: null, dragged: false, initialized: false };
+const mapView = { scale: 1, x: 0, y: 0, pointers: new Map(), dragStart: null, pinchStart: null, dragged: false, hadMultiplePointers: false, suppressClickUntil: 0, boundSvg: null };
 let realtimeSocket = null;
 let realtimeRefreshTimer = null;
 let realtimeRefreshInFlight = false;
 let realtimeRefreshQueued = false;
+let activeActivityTab = 'feed';
 
 // Canonical topology module (world-topology.js): required directly under Node (tests),
 // exposed as window.WORLD_TOPOLOGY when loaded via <script> in the browser.
@@ -549,6 +550,7 @@ async function refreshGameStateInBackground() {
     if (selectedTerritoryId && territoryPanel?.style.display !== 'none') {
       selectTerritory(selectedTerritoryId, { preserveTroopInputs: true });
     }
+    if (document.getElementById('screen-activity')?.classList.contains('active')) renderActivity();
   } catch (error) {
     if (error.status === 401) {
       localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -908,7 +910,10 @@ function renderMap() {
     poly.setAttribute('stroke-width', selectedTerritoryId === id ? '3' : '1.5');
     poly.setAttribute('class', `territory${selectedTerritoryId === id ? ' selected' : ''}${canAttack(id) ? ' attackable' : ''}`);
     poly.setAttribute('data-id', id);
-    poly.addEventListener('click', () => selectTerritory(id));
+    poly.addEventListener('click', () => {
+      if (Date.now() < mapView.suppressClickUntil) return;
+      selectTerritory(id);
+    });
     svg.appendChild(poly);
 
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -977,21 +982,35 @@ function changeMapZoom(delta) {
 }
 
 function initializeMobileMap(svg) {
-  if (mapView.initialized) return;
-  mapView.initialized = true;
+  if (mapView.boundSvg === svg) return;
+  mapView.boundSvg = svg;
   svg.addEventListener('pointerdown', (event) => {
     if (!window.matchMedia('(max-width: 520px)').matches) return;
+    if (mapView.pointers.size === 0) {
+      mapView.dragged = false;
+      mapView.hadMultiplePointers = false;
+    }
     svg.setPointerCapture(event.pointerId);
-    mapView.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    mapView.pointers.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+      territoryId: event.target?.dataset?.id || null,
+      pointerType: event.pointerType,
+    });
     mapView.dragStart = { x: event.clientX, y: event.clientY, mapX: mapView.x, mapY: mapView.y };
     if (mapView.pointers.size === 2) {
+      mapView.hadMultiplePointers = true;
       const [first, second] = [...mapView.pointers.values()];
       mapView.pinchStart = { distance: Math.hypot(first.x - second.x, first.y - second.y), scale: mapView.scale };
     }
   });
   svg.addEventListener('pointermove', (event) => {
     if (!mapView.pointers.has(event.pointerId)) return;
-    mapView.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    mapView.pointers.set(event.pointerId, {
+      ...mapView.pointers.get(event.pointerId),
+      x: event.clientX,
+      y: event.clientY,
+    });
     if (mapView.pointers.size === 2 && mapView.pinchStart) {
       const [first, second] = [...mapView.pointers.values()];
       mapView.scale = Math.max(1, Math.min(3, mapView.pinchStart.scale * (Math.hypot(first.x - second.x, first.y - second.y) / mapView.pinchStart.distance)));
@@ -1008,18 +1027,28 @@ function initializeMobileMap(svg) {
     if (mapView.dragged) applyMapView(svg);
   });
   svg.addEventListener('pointerup', (event) => {
+    const pointer = mapView.pointers.get(event.pointerId);
+    const shouldSelect = pointer?.pointerType !== 'mouse'
+      && !mapView.dragged
+      && !mapView.hadMultiplePointers
+      && pointer?.territoryId;
     mapView.pointers.delete(event.pointerId);
-    mapView.pinchStart = null;
-    mapView.dragStart = null;
-    if (mapView.dragged) {
-      svg.addEventListener('click', (clickEvent) => clickEvent.stopPropagation(), { once: true, capture: true });
+    if (pointer?.pointerType !== 'mouse') mapView.suppressClickUntil = Date.now() + 400;
+    if (mapView.pointers.size === 0) {
+      mapView.pinchStart = null;
+      mapView.dragStart = null;
       mapView.dragged = false;
+      mapView.hadMultiplePointers = false;
     }
+    if (shouldSelect) selectTerritory(pointer.territoryId);
   });
   svg.addEventListener('pointercancel', () => {
     mapView.pointers.clear();
     mapView.pinchStart = null;
     mapView.dragStart = null;
+    mapView.dragged = false;
+    mapView.hadMultiplePointers = false;
+    mapView.suppressClickUntil = Date.now() + 400;
   });
 }
 
@@ -1080,6 +1109,13 @@ function selectTerritory(id, { preserveTroopInputs = false } = {}) {
   }
 }
 
+function closeTerritoryPanel() {
+  selectedTerritoryId = null;
+  const panel = document.getElementById('territory-panel');
+  if (panel) panel.style.display = 'none';
+  renderMap();
+}
+
 function ownerLabel(owner) {
   return { blue: '🔵 Blue', red: '🔴 Red', green: '🟢 Green', neutral: '⚪ Neutral' }[owner] || owner;
 }
@@ -1111,6 +1147,8 @@ function changeAttack(delta) {
   const maxAmount = Math.max(1, Number(G.player.soldiers) || 1);
   if (delta === 'max') {
     attackSendCount = maxAmount;
+  } else if (delta === 'half') {
+    attackSendCount = Math.max(1, Math.floor(maxAmount / 2));
   } else {
     attackSendCount = Math.max(1, Math.min(maxAmount, attackSendCount + delta));
   }
@@ -1161,6 +1199,8 @@ function changeDefend(delta) {
   const maxAmount = Math.max(1, Number(G.player.soldiers) || 1);
   if (delta === 'max') {
     defendSendCount = maxAmount;
+  } else if (delta === 'half') {
+    defendSendCount = Math.max(1, Math.floor(maxAmount / 2));
   } else {
     defendSendCount = Math.max(1, Math.min(maxAmount, defendSendCount + delta));
   }
@@ -1203,6 +1243,8 @@ function changeRecall(delta) {
   const maxAmount = Math.max(1, stationed);
   if (delta === 'max') {
     recallSendCount = maxAmount;
+  } else if (delta === 'half') {
+    recallSendCount = Math.max(1, Math.floor(maxAmount / 2));
   } else {
     recallSendCount = Math.max(1, Math.min(maxAmount, recallSendCount + delta));
   }
@@ -1271,10 +1313,89 @@ function factionIcon(faction) {
   return { blue: '🔵', red: '🔴', green: '🟢', neutral: '⚪' }[faction] || '❓';
 }
 
+const ACTIVITY_STAT_LABELS = {
+  kills: 'Kills',
+  losses: 'Losses',
+  battles_joined: 'Battles Joined',
+  battles_won: 'Battles Won',
+  successful_defences: 'Successful Defences',
+  territories_captured: 'Territories Captured',
+  retakes: 'Retakes',
+  reinforcement_troops_sent: 'Reinforcement Troops Sent',
+};
+
+function showActivityTab(name) {
+  if (!['feed', 'rankings', 'my-stats'].includes(name)) return;
+  activeActivityTab = name;
+  document.querySelectorAll('.activity-tab').forEach((tab) => {
+    const selected = tab.id === `activity-tab-${name}`;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+  });
+  document.querySelectorAll('.activity-panel').forEach((panel) => {
+    panel.classList.toggle('active', panel.id === `activity-panel-${name}`);
+  });
+  renderActivity();
+}
+
+function renderRankings(container, rankings) {
+  container.replaceChildren();
+  Object.entries(ACTIVITY_STAT_LABELS).forEach(([key, label]) => {
+    const section = document.createElement('section');
+    section.className = 'activity-ranking-section';
+    const title = document.createElement('h3');
+    title.className = 'activity-ranking-title';
+    title.textContent = label;
+    section.appendChild(title);
+    (rankings[key] || []).forEach((player, index) => {
+      const row = document.createElement('div');
+      row.className = 'activity-ranking-row';
+      const rank = document.createElement('span');
+      rank.textContent = `#${index + 1}`;
+      const name = document.createElement('span');
+      name.textContent = `${factionIcon(player.faction)} ${player.username}`;
+      const value = document.createElement('span');
+      value.className = 'activity-ranking-value';
+      value.textContent = fmt(player[key]);
+      row.append(rank, name, value);
+      section.appendChild(row);
+    });
+    container.appendChild(section);
+  });
+}
+
+function renderMyStats(container, stats) {
+  container.replaceChildren();
+  const grid = document.createElement('div');
+  grid.className = 'activity-stats-grid';
+  Object.entries(ACTIVITY_STAT_LABELS).forEach(([key, label]) => {
+    const item = document.createElement('div');
+    item.className = 'activity-stat';
+    const value = document.createElement('span');
+    value.className = 'activity-stat-value';
+    value.textContent = fmt(stats[key]);
+    const name = document.createElement('span');
+    name.className = 'activity-stat-label';
+    name.textContent = label;
+    item.append(value, name);
+    grid.appendChild(item);
+  });
+  container.appendChild(grid);
+}
+
 async function renderActivity() {
   const container = document.getElementById('activity-feed');
   if (!container) return;
   try {
+    if (activeActivityTab !== 'feed') {
+      const data = await apiFetch('/game/activity-stats');
+      if (activeActivityTab === 'rankings') {
+        renderRankings(document.getElementById('activity-rankings'), data.rankings || {});
+      } else {
+        renderMyStats(document.getElementById('activity-my-stats'), data.myStats || {});
+      }
+      return;
+    }
     const data = await apiFetch('/game/battles');
     const battles = data.battles || [];
     container.replaceChildren();
@@ -1917,6 +2038,12 @@ if (typeof module !== 'undefined') {
     renderFactionMembers,
     startFactionChatPolling,
     buildTerritoryLayout,
+    renderMap,
+    initializeMobileMap,
+    closeTerritoryPanel,
+    changeAttack,
+    changeDefend,
+    changeRecall,
     formatCountdown,
     formatScoreboardFaction,
     renderScoreboard,

@@ -6,6 +6,7 @@ const {
   replaceTerritoryDefenders,
 } = require('./defender-garrisons');
 const { CAPITAL_ATTACK_ERROR, isCapitalTerritory } = require('./territory-protection');
+const { recordBattleStats } = require('./player-season-stats');
 
 // Thrown for any expected/validated failure so the route can map it to the right
 // HTTP status (400/403/404/409) instead of falling through to a generic 500.
@@ -28,7 +29,7 @@ function toSoldierCount(value) {
  * `client` must be a dedicated (non-pooled) connection so BEGIN/COMMIT/ROLLBACK
  * and the advisory lock apply to this request only.
  */
-async function performAttack(client, { playerId, territoryId, soldiers }) {
+async function performAttack(client, { playerId, territoryId, soldiers, seasonId }) {
   const cleanTerritoryId = typeof territoryId === 'string' ? territoryId.trim() : '';
   if (!cleanTerritoryId) {
     throw new AttackError(400, 'Target territory required.');
@@ -160,6 +161,16 @@ async function performAttack(client, { playerId, territoryId, soldiers }) {
         outcome.victory ? attackerFaction : ownerBefore,
       ]
     );
+    await recordBattleStats(client, {
+      seasonId,
+      territoryId: cleanTerritoryId,
+      attackerPlayerId: playerId,
+      attackerFaction,
+      defenderFaction,
+      lockedDefenders,
+      allocation,
+      outcome,
+    });
 
     await client.query('COMMIT');
     return { outcome, territoryId: cleanTerritoryId, sent: soldierCount };

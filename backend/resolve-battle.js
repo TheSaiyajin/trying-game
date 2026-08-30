@@ -6,6 +6,7 @@ const {
   replaceTerritoryDefenders,
 } = require('./defender-garrisons');
 const { CAPITAL_ATTACK_ERROR, isCapitalTerritory } = require('./territory-protection');
+const { recordBattleStats } = require('./player-season-stats');
 
 function parsePositiveInt(value, fallback = 0, maxValue = 1000000) {
   const num = Number(value) || fallback;
@@ -13,7 +14,7 @@ function parsePositiveInt(value, fallback = 0, maxValue = 1000000) {
   return Math.min(Math.max(0, Math.floor(num)), maxValue);
 }
 
-async function resolveBattle(client, { player, territoryId }) {
+async function resolveBattle(client, { player, territoryId, seasonId }) {
   const target = await client.query('SELECT * FROM territories WHERE id = $1', [territoryId]);
   const territory = target.rows[0];
   if (!territory) return { ok: false, status: 404, error: 'Territory not found.' };
@@ -84,6 +85,16 @@ async function resolveBattle(client, { player, territoryId }) {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [attackerFaction, defenderFaction, territoryId, player.id, attackTotal, defensePower, JSON.stringify({ fortBonus, attackBonus: 1.1 }), outcome.victory ? attackerFaction : defenderFaction, outcome.attackersLost, survivingAttackers, outcome.defendersLost, remainingDefenders, ownerBefore, outcome.victory ? attackerFaction : ownerBefore]
     );
+    await recordBattleStats(client, {
+      seasonId,
+      territoryId,
+      attackerPlayerId: player.id,
+      attackerFaction,
+      defenderFaction,
+      lockedDefenders,
+      allocation,
+      outcome,
+    });
     await client.query('DELETE FROM attack_contributions WHERE territory_id = $1', [territoryId]);
     await client.query(
       `INSERT INTO admin_actions (actor_id, action_name, action_detail) VALUES ($1, $2, $3)`,

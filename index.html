@@ -135,75 +135,77 @@
         <span class="leg-target">⬡ Target</span>
       </div>
 
-      <div class="map-container">
-        <svg id="map-svg" viewBox="0 0 360 370" preserveAspectRatio="xMidYMid meet"></svg>
-        <div class="map-controls" aria-label="Map zoom controls">
-          <button class="btn-circle" type="button" onclick="changeMapZoom(-1)" aria-label="Zoom out">−</button>
-          <button class="btn-circle" type="button" onclick="changeMapZoom(1)" aria-label="Zoom in">+</button>
-          <button class="btn-small" type="button" onclick="resetMapView()">Reset</button>
-        </div>
-      </div>
-
-      <div class="section-card" id="season-history-card">
-        <h3>📜 Season History</h3>
-        <div id="season-history-list" class="season-history-list">Loading...</div>
-      </div>
-
-      <!-- Territory detail panel -->
-      <div class="territory-panel" id="territory-panel" style="display:none;">
-        <h3 id="tp-name">—</h3>
-        <div class="tp-grid">
-          <div class="tp-item"><span class="tp-label">Owner</span><span id="tp-owner">—</span></div>
-          <div class="tp-item"><span class="tp-label">Total Defenders</span><span id="tp-troops">—</span></div>
-          <div class="tp-item"><span class="tp-label">Soldiers in city</span><span id="tp-city-soldiers">0</span></div>
-          <div class="tp-item"><span class="tp-label">Your stationed</span><span id="tp-stationed">0</span></div>
-          <div class="tp-item"><span class="tp-label">Battle rule</span><span id="tp-battle-rule">More troops wins</span></div>
-          <div class="tp-item tp-wide"><span class="tp-label">Bonus</span><span id="tp-bonus">—</span></div>
-          <div class="tp-item tp-wide"><span class="tp-label">Neighbors</span><span id="tp-neighbors">—</span></div>
-        </div>
-
-        <div id="attack-section" style="display:none;">
-          <hr class="divider"/>
-          <p class="attack-hint">⚔️ Attack</p>
-          <div class="row-center">
-            <button class="btn-circle" onclick="changeAttack(-10)">−10</button>
-            <button class="btn-circle" onclick="changeAttack(-1)">−</button>
-            <input class="train-count troop-count-input" id="attack-count" type="number" inputmode="numeric" min="1" step="1" value="10" aria-label="Soldiers to attack with" />
-            <button class="btn-circle" onclick="changeAttack(1)">+</button>
-            <button class="btn-circle" onclick="changeAttack(10)">+10</button>
-            <button class="btn-small" onclick="changeAttack('max')">MAX</button>
+      <div class="map-workspace">
+        <div class="map-container">
+          <svg id="map-svg" viewBox="0 0 360 370" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="map-controls" aria-label="Map zoom controls">
+            <button class="btn-circle" type="button" onclick="changeMapZoom(-1)" aria-label="Zoom out">−</button>
+            <button class="btn-circle" type="button" onclick="changeMapZoom(1)" aria-label="Zoom in">+</button>
+            <button class="btn-small" type="button" onclick="resetMapView()">Reset</button>
           </div>
-          <button class="btn-primary wide btn-attack" onclick="launchAttack()">⚔️ Attack Territory</button>
         </div>
 
-        <div id="defend-section" style="display:none;">
-          <hr class="divider"/>
-          <p class="attack-hint">🛡️ Send Defenders</p>
-          <div class="row-center">
-            <button class="btn-circle" onclick="changeDefend(-10)">−10</button>
-            <button class="btn-circle" onclick="changeDefend(-1)">−</button>
-            <input class="train-count troop-count-input" id="defend-count" type="number" inputmode="numeric" min="1" step="1" value="10" aria-label="Soldiers to send as defenders" />
-            <button class="btn-circle" onclick="changeDefend(1)">+</button>
-            <button class="btn-circle" onclick="changeDefend(10)">+10</button>
-            <button class="btn-small" onclick="changeDefend('max')">MAX</button>
+        <!-- Territory detail panel -->
+        <div class="territory-panel" id="territory-panel" style="display:none;" aria-live="polite">
+          <div class="territory-panel-head">
+            <h3 id="tp-name">—</h3>
+            <button class="territory-panel-close" type="button" onclick="closeTerritoryPanel()" aria-label="Close territory details">×</button>
           </div>
-          <button class="btn-primary wide" onclick="sendDefenders()">🛡️ Send Defenders</button>
+          <div class="tp-grid">
+            <div class="tp-item"><span class="tp-label">Owner</span><span id="tp-owner">—</span></div>
+            <div class="tp-item"><span class="tp-label">Defenders</span><span id="tp-troops">—</span></div>
+            <div class="tp-item"><span class="tp-label">In city</span><span id="tp-city-soldiers">0</span></div>
+            <div class="tp-item"><span class="tp-label">Stationed</span><span id="tp-stationed">0</span></div>
+            <div class="tp-item tp-wide"><span class="tp-label">Battle rule</span><span id="tp-battle-rule">More troops wins</span></div>
+            <div class="tp-item tp-wide"><span class="tp-label">Bonus</span><span id="tp-bonus">—</span></div>
+            <div class="tp-item tp-wide"><span class="tp-label">Neighbors</span><span id="tp-neighbors">—</span></div>
+          </div>
 
-          <div id="recall-section" style="display:none;">
+          <div id="attack-section" style="display:none;">
             <hr class="divider"/>
-            <p class="attack-hint">↩️ Recall Troops</p>
-            <div class="row-center">
-              <button class="btn-circle" onclick="changeRecall(-10)">−10</button>
-              <button class="btn-circle" onclick="changeRecall(-1)">−</button>
-              <input class="train-count troop-count-input" id="recall-count" type="number" inputmode="numeric" min="1" step="1" value="1" aria-label="Soldiers to recall" />
-              <button class="btn-circle" onclick="changeRecall(1)">+</button>
-              <button class="btn-circle" onclick="changeRecall(10)">+10</button>
-              <button class="btn-small" onclick="changeRecall('max')">MAX</button>
+            <p class="attack-hint">⚔️ Attack</p>
+            <div class="territory-quantity-row">
+              <button class="btn-small" onclick="changeAttack(-10)">−10</button>
+              <input class="train-count troop-count-input" id="attack-count" type="number" inputmode="numeric" min="1" step="1" value="10" aria-label="Soldiers to attack with" />
+              <button class="btn-small" onclick="changeAttack(10)">+10</button>
+              <button class="btn-small" onclick="changeAttack('half')">50%</button>
+              <button class="btn-small" onclick="changeAttack('max')">MAX</button>
             </div>
-            <button class="btn-secondary wide" onclick="recallDefenders()">↩️ Recall Troops</button>
+            <button class="btn-primary wide btn-attack" onclick="launchAttack()">⚔️ Attack Territory</button>
+          </div>
+
+          <div id="defend-section" style="display:none;">
+            <hr class="divider"/>
+            <p class="attack-hint">🛡️ Reinforce</p>
+            <div class="territory-quantity-row">
+              <button class="btn-small" onclick="changeDefend(-10)">−10</button>
+              <input class="train-count troop-count-input" id="defend-count" type="number" inputmode="numeric" min="1" step="1" value="10" aria-label="Soldiers to send as reinforcements" />
+              <button class="btn-small" onclick="changeDefend(10)">+10</button>
+              <button class="btn-small" onclick="changeDefend('half')">50%</button>
+              <button class="btn-small" onclick="changeDefend('max')">MAX</button>
+            </div>
+            <button class="btn-primary wide" onclick="sendDefenders()">🛡️ Reinforce Territory</button>
+
+            <div id="recall-section" style="display:none;">
+              <hr class="divider"/>
+              <p class="attack-hint">↩️ Recall</p>
+              <div class="territory-quantity-row">
+                <button class="btn-small" onclick="changeRecall(-10)">−10</button>
+                <input class="train-count troop-count-input" id="recall-count" type="number" inputmode="numeric" min="1" step="1" value="1" aria-label="Soldiers to recall" />
+                <button class="btn-small" onclick="changeRecall(10)">+10</button>
+                <button class="btn-small" onclick="changeRecall('half')">50%</button>
+                <button class="btn-small" onclick="changeRecall('max')">MAX</button>
+              </div>
+              <button class="btn-secondary wide" onclick="recallDefenders()">↩️ Recall Troops</button>
+            </div>
           </div>
         </div>
       </div>
+
+      <details class="section-card season-history-card" id="season-history-card">
+        <summary>📜 Season History</summary>
+        <div id="season-history-list" class="season-history-list">Loading...</div>
+      </details>
 
       <!-- Battle result popup -->
       <div class="battle-popup" id="battle-popup" style="display:none;">
@@ -215,8 +217,21 @@
     <!-- --- SCREEN 3: ACTIVITY --- -->
     <div class="screen" id="screen-activity">
       <h2 class="screen-title">⚔️ Activity</h2>
-      <div id="activity-feed" class="activity-feed">
-        <p class="info-text">Loading battles...</p>
+      <div class="activity-tabs" role="tablist" aria-label="Activity views">
+        <button id="activity-tab-feed" class="activity-tab active" role="tab" aria-selected="true" onclick="showActivityTab('feed')">Feed</button>
+        <button id="activity-tab-rankings" class="activity-tab" role="tab" aria-selected="false" onclick="showActivityTab('rankings')">Rankings</button>
+        <button id="activity-tab-my-stats" class="activity-tab" role="tab" aria-selected="false" onclick="showActivityTab('my-stats')">My Stats</button>
+      </div>
+      <div id="activity-panel-feed" class="activity-panel active" role="tabpanel">
+        <div id="activity-feed" class="activity-feed">
+          <p class="info-text">Loading battles...</p>
+        </div>
+      </div>
+      <div id="activity-panel-rankings" class="activity-panel" role="tabpanel">
+        <div id="activity-rankings" class="activity-rankings"></div>
+      </div>
+      <div id="activity-panel-my-stats" class="activity-panel" role="tabpanel">
+        <div id="activity-my-stats" class="activity-my-stats"></div>
       </div>
     </div>
 

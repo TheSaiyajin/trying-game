@@ -306,6 +306,20 @@ test('players can receive a different faction next season, and previous membersh
   assert.equal(secondAssignment, 'blue');
 });
 
+test('new seasons get separate ownership markers without deleting completed-season stats', async () => {
+  const client = createSeasonTestClient({ players: buildPlayers([{ id: 1 }]), territories: buildTerritories() });
+  const first = await ensureCurrentSeason(client, { now: new Date('2026-05-01T00:00:00.000Z') });
+  client.state.queryLog.length = 0;
+
+  const second = await ensureCurrentSeason(client, { now: new Date(first.ends_at.getTime() + 1) });
+
+  assert.notEqual(first.id, second.id);
+  assert.ok([...client.state.seasonTerritoryOwnership].some((key) => key.startsWith(`${first.id}:`)));
+  assert.ok([...client.state.seasonTerritoryOwnership].some((key) => key.startsWith(`${second.id}:`)));
+  assert.equal(client.state.queryLog.some((query) => query.startsWith('DELETE FROM player_season_stats')), false);
+  assert.equal(client.state.queryLog.some((query) => query.startsWith('DELETE FROM season_territory_faction_ownership')), false);
+});
+
 test('a still-authenticated player is reassigned after a season ends instead of keeping a stale faction', async () => {
   const players = buildPlayers([{ id: 1 }]);
   const client = createSeasonTestClient({ players, territories: buildTerritories() });

@@ -116,8 +116,45 @@ CREATE TABLE IF NOT EXISTS faction_chat_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS seasons (
+  id SERIAL PRIMARY KEY,
+  season_number INTEGER UNIQUE NOT NULL,
+  starts_at TIMESTAMPTZ NOT NULL,
+  ends_at TIMESTAMPTZ NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'active',
+  blue_score INTEGER,
+  red_score INTEGER,
+  green_score INTEGER,
+  result VARCHAR(16),
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS player_season_stats (
+  season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  kills INTEGER NOT NULL DEFAULT 0,
+  losses INTEGER NOT NULL DEFAULT 0,
+  battles_joined INTEGER NOT NULL DEFAULT 0,
+  battles_won INTEGER NOT NULL DEFAULT 0,
+  successful_defences INTEGER NOT NULL DEFAULT 0,
+  territories_captured INTEGER NOT NULL DEFAULT 0,
+  retakes INTEGER NOT NULL DEFAULT 0,
+  reinforcement_troops_sent INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (season_id, player_id)
+);
+
+CREATE TABLE IF NOT EXISTS season_territory_faction_ownership (
+  season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
+  faction VARCHAR(16) NOT NULL,
+  PRIMARY KEY (season_id, territory_id, faction)
+);
+
 CREATE INDEX IF NOT EXISTS idx_players_username ON players(username);
 CREATE INDEX IF NOT EXISTS idx_buildings_player ON buildings(player_id);
 CREATE INDEX IF NOT EXISTS idx_attack_contrib_territory ON attack_contributions(territory_id);
 CREATE INDEX IF NOT EXISTS idx_defenders_territory ON territory_defenders(territory_id);
 CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time ON faction_chat_messages(faction, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_player_season_stats_rankings ON player_season_stats(season_id);

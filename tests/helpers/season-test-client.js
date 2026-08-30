@@ -28,6 +28,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
   const state = {
     seasons: [],
     seasonMemberships: [],
+    seasonTerritoryOwnership: new Set(),
     players,
     territories,
     buildings: new Map([...players.keys()].map((id) => [id, { farm: 5, lumbermill: 5, ironmine: 5, barracks: 5 }])),
@@ -91,6 +92,16 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         };
         state.seasons.push(row);
         return { rows: [row] };
+      }
+
+      if (text.startsWith('INSERT INTO season_territory_faction_ownership')) {
+        const [seasonId, validFactions] = params;
+        for (const territory of state.territories.values()) {
+          if (validFactions.includes(territory.owner_faction)) {
+            state.seasonTerritoryOwnership.add(`${seasonId}:${territory.id}:${territory.owner_faction}`);
+          }
+        }
+        return { rows: [] };
       }
 
       if (text.startsWith('SELECT id, owner_faction, is_capital FROM territories')) {
