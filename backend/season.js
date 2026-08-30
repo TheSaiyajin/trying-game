@@ -248,8 +248,27 @@ async function ensurePlayerFactionAssignment(client, { seasonId, playerId }) {
     // production code needs no rewrite. faction is never trusted on its own for authorization
     // -- callers must confirm it matches a season_memberships row for the active season.
     await client.query(
-      'UPDATE players SET faction = $1, faction_locked = TRUE, army_name = $2 WHERE id = $3',
-      [faction, buildArmyName(faction), playerId]
+      `UPDATE players
+       SET faction = $1,
+           faction_locked = TRUE,
+           army_name = $2,
+           resource_food = $3,
+           resource_wood = $4,
+           resource_iron = $5,
+           resource_manpower = $6,
+           soldiers = $7,
+           resource_last_updated = NOW()
+       WHERE id = $8`,
+      [
+        faction,
+        buildArmyName(faction),
+        STARTING_PLAYER_RESOURCES.food,
+        STARTING_PLAYER_RESOURCES.wood,
+        STARTING_PLAYER_RESOURCES.iron,
+        STARTING_PLAYER_RESOURCES.manpower,
+        STARTING_PLAYER_RESOURCES.soldiers,
+        playerId,
+      ]
     );
 
     const finalRow = await client.query(

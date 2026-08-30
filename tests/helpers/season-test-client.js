@@ -209,13 +209,19 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         return { rows: [] };
       }
 
-      if (text === 'UPDATE players SET faction = $1, faction_locked = TRUE, army_name = $2 WHERE id = $3') {
-        const [faction, armyName, playerId] = params;
+      if (text.startsWith('UPDATE players SET faction = $1, faction_locked = TRUE, army_name = $2, resource_food = $3')) {
+        const [faction, armyName, food, wood, iron, manpower, soldiers, playerId] = params;
         const player = state.players.get(playerId);
         if (player) {
           player.faction = faction;
           player.faction_locked = true;
           player.army_name = armyName;
+          player.resource_food = food;
+          player.resource_wood = wood;
+          player.resource_iron = iron;
+          player.resource_manpower = manpower;
+          player.soldiers = soldiers;
+          player.resource_last_updated = new Date();
         }
         return { rows: [] };
       }

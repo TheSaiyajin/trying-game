@@ -21,6 +21,7 @@ const {
 } = require('./admin-policy');
 const { changePlayerFaction } = require('./admin-faction-change');
 const {
+  STARTING_PLAYER_RESOURCES,
   getSeasonResetPlan,
   resetAllPlayerResources,
   resetPlayerProgress,
@@ -275,12 +276,41 @@ async function getPlayerState(playerId) {
   };
 }
 
-async function applyOfflineResourceEarnings(playerId) {
-  const db = await connect();
-  const player = await getPlayerById(playerId);
+async function applyOfflineResourceEarnings(playerId, db = null) {
+  const queryable = db || await connect();
+  const player = await getPlayerById(playerId, queryable);
   if (!player) return null;
 
-  const faction = player.faction || 'blue';
+  if (!validFactions.includes(player.faction)) {
+    await queryable.query(
+      `UPDATE players
+       SET resource_food = $1,
+           resource_wood = $2,
+           resource_iron = $3,
+           resource_manpower = $4,
+           soldiers = $5,
+           resource_last_updated = NOW()
+       WHERE id = $6`,
+      [
+        STARTING_PLAYER_RESOURCES.food,
+        STARTING_PLAYER_RESOURCES.wood,
+        STARTING_PLAYER_RESOURCES.iron,
+        STARTING_PLAYER_RESOURCES.manpower,
+        STARTING_PLAYER_RESOURCES.soldiers,
+        playerId,
+      ]
+    );
+    return {
+      ...player,
+      resource_food: STARTING_PLAYER_RESOURCES.food,
+      resource_wood: STARTING_PLAYER_RESOURCES.wood,
+      resource_iron: STARTING_PLAYER_RESOURCES.iron,
+      resource_manpower: STARTING_PLAYER_RESOURCES.manpower,
+      soldiers: STARTING_PLAYER_RESOURCES.soldiers,
+    };
+  }
+
+  const faction = player.faction;
   const lastUpdated = player.resource_last_updated ? new Date(player.resource_last_updated) : new Date();
   const secondsSince = Math.max(0, Math.min((Date.now() - lastUpdated.getTime()) / 1000, 60 * 60 * 12));
   if (secondsSince < 60) return player;
@@ -288,8 +318,8 @@ async function applyOfflineResourceEarnings(playerId) {
   const wholeMinutes = Math.floor(secondsSince / 60);
   if (wholeMinutes <= 0) return player;
 
-  const buildings = await getPlayerBuildingLevels(playerId);
-  const territories = await getTerritoriesSnapshot();
+  const buildings = await getPlayerBuildingLevels(playerId, queryable);
+  const territories = await getTerritoriesSnapshot(queryable);
   const production = getProductionFromBuildings(buildings, territories, faction, true);
   const gain = limitResourceGain({
     food: player.resource_food,
@@ -304,7 +334,7 @@ async function applyOfflineResourceEarnings(playerId) {
   }, getFactionStorageCaps(territories, faction));
   const fortressTroops = getFactionTerritoryBonuses(territories, faction).fortressTroops * wholeMinutes;
 
-  await db.query(
+  await queryable.query(
     `UPDATE players
      SET resource_food = resource_food + $1,
          resource_wood = resource_wood + $2,
@@ -338,8 +368,30 @@ async function runGlobalResourceTick(db = null, options = {}) {
     const playersResult = await queryable.query('SELECT id, faction, resource_food, resource_wood, resource_iron, resource_manpower FROM players');
 
     for (const row of playersResult.rows) {
+      if (!validFactions.includes(row.faction)) {
+        await queryable.query(
+          `UPDATE players
+           SET resource_food = $1,
+               resource_wood = $2,
+               resource_iron = $3,
+               resource_manpower = $4,
+               soldiers = $5,
+               resource_last_updated = NOW()
+           WHERE id = $6`,
+          [
+            STARTING_PLAYER_RESOURCES.food,
+            STARTING_PLAYER_RESOURCES.wood,
+            STARTING_PLAYER_RESOURCES.iron,
+            STARTING_PLAYER_RESOURCES.manpower,
+            STARTING_PLAYER_RESOURCES.soldiers,
+            row.id,
+          ]
+        );
+        continue;
+      }
+
       const buildings = await getPlayerBuildingLevels(row.id, queryable);
-      const faction = row.faction || 'blue';
+      const faction = row.faction;
       const production = getProductionFromBuildings(buildings, territories, faction, true);
       const gain = limitResourceGain({
         food: row.resource_food,
@@ -1154,13 +1206,17 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error.' });
 });
 
-server.listen(PORT, async () => {
-  try {
-    await initializeDatabase();
-    startResourceTickLoop();
-    console.log(`Server ready on http://localhost:${PORT}`);
-  } catch (error) {
-    console.error('Database initialization failed:', error.message);
-    process.exit(1);
-  }
-});
+if (require.main === module) {
+  server.listen(PORT, async () => {
+    try {
+      await initializeDatabase();
+      startResourceTickLoop();
+      console.log(`Server ready on http://localhost:${PORT}`);
+    } catch (error) {
+      console.error('Database initialization failed:', error.message);
+      process.exit(1);
+    }
+  });
+}
+
+module.exports = { applyOfflineResourceEarnings, runGlobalResourceTick };

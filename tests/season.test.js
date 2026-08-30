@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createSeasonTestClient } = require('./helpers/season-test-client');
 const topology = require('../world-topology');
+const { STARTING_PLAYER_RESOURCES } = require('../backend/admin-resets');
 const {
   computeScores,
   determineResult,
@@ -193,6 +194,28 @@ test('assignment also syncs army_name to match the assigned faction', async () =
 
   const expected = `${faction.charAt(0).toUpperCase()}${faction.slice(1)} Army`;
   assert.equal(client.state.players.get(1).army_name, expected);
+});
+
+test('assignment resets resources to defaults and starts the earnings clock at assignment', async () => {
+  const staleTimestamp = new Date('2026-04-01T00:00:00.000Z');
+  const client = createSeasonTestClient({
+    players: buildPlayers([{ id: 1, resource_last_updated: staleTimestamp }]),
+    territories: new Map(),
+  });
+  await ensureCurrentSeason(client, { now: new Date('2026-05-01T00:00:01.000Z') });
+  const beforeAssignment = Date.now();
+
+  await ensurePlayerFactionAssignment(client, { seasonId: client.state.seasons[0].id, playerId: 1 });
+
+  const player = client.state.players.get(1);
+  assert.deepEqual({
+    food: player.resource_food,
+    wood: player.resource_wood,
+    iron: player.resource_iron,
+    manpower: player.resource_manpower,
+    soldiers: player.soldiers,
+  }, STARTING_PLAYER_RESOURCES);
+  assert.ok(player.resource_last_updated.getTime() >= beforeAssignment);
 });
 
 test('refreshing or logging in again never changes the assigned faction', async () => {
