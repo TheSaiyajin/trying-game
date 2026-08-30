@@ -202,11 +202,6 @@
         </div>
       </div>
 
-      <details class="section-card season-history-card" id="season-history-card">
-        <summary>📜 Season History</summary>
-        <div id="season-history-list" class="season-history-list">Loading...</div>
-      </details>
-
       <!-- Battle result popup -->
       <div class="battle-popup" id="battle-popup" style="display:none;">
         <p id="battle-result-text"></p>
@@ -221,6 +216,7 @@
         <button id="activity-tab-feed" class="activity-tab active" role="tab" aria-selected="true" onclick="showActivityTab('feed')">Feed</button>
         <button id="activity-tab-rankings" class="activity-tab" role="tab" aria-selected="false" onclick="showActivityTab('rankings')">Rankings</button>
         <button id="activity-tab-my-stats" class="activity-tab" role="tab" aria-selected="false" onclick="showActivityTab('my-stats')">My Stats</button>
+        <button id="activity-tab-seasons" class="activity-tab" role="tab" aria-selected="false" onclick="showActivityTab('seasons')">Seasons</button>
       </div>
       <div id="activity-panel-feed" class="activity-panel active" role="tabpanel">
         <div id="activity-feed" class="activity-feed">
@@ -232,6 +228,12 @@
       </div>
       <div id="activity-panel-my-stats" class="activity-panel" role="tabpanel">
         <div id="activity-my-stats" class="activity-my-stats"></div>
+      </div>
+      <div id="activity-panel-seasons" class="activity-panel" role="tabpanel">
+        <div class="section-card season-history-card" id="season-history-card">
+          <h3>📜 Season History</h3>
+          <div id="season-history-list" class="season-history-list">Loading...</div>
+        </div>
       </div>
     </div>
 

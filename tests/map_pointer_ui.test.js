@@ -12,6 +12,7 @@ function createElement(tagName = 'div') {
     children: [],
     parentElement: null,
     textContent: '',
+    rect: { left: 0, top: 0, width: 360, height: 370 },
     classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
     addEventListener(type, handler) {
       if (!listeners.has(type)) listeners.set(type, []);
@@ -26,7 +27,7 @@ function createElement(tagName = 'div') {
       if (name === 'data-id') element.dataset.id = String(value);
     },
     setPointerCapture() {},
-    getBoundingClientRect() { return { width: 360, height: 370 }; },
+    getBoundingClientRect() { return element.rect; },
     dispatch(type, event = {}) {
       (listeners.get(type) || []).forEach((handler) => handler({
         pointerId: 1,
@@ -34,6 +35,7 @@ function createElement(tagName = 'div') {
         clientX: 0,
         clientY: 0,
         target: element,
+        preventDefault() {},
         ...event,
       }));
     },
@@ -70,7 +72,14 @@ function loadMapHarness({ mobile = true } = {}) {
     addEventListener() {},
     body: { appendChild() {} },
   };
-  global.window = { matchMedia() { return { matches: mobile }; } };
+  const windowListeners = new Map();
+  global.window = {
+    matchMedia() { return { matches: mobile }; },
+    addEventListener(type, handler) {
+      if (!windowListeners.has(type)) windowListeners.set(type, []);
+      windowListeners.get(type).push(handler);
+    },
+  };
   global.localStorage = { getItem() { return null; }, setItem() {}, removeItem() {} };
   delete require.cache[require.resolve('../script.js')];
   const script = require('../script.js');
@@ -83,6 +92,8 @@ function loadMapHarness({ mobile = true } = {}) {
     ...script,
     svg,
     elements,
+    windowListenerCount(type) { return (windowListeners.get(type) || []).length; },
+    dispatchWindow(type) { (windowListeners.get(type) || []).forEach((handler) => handler()); },
     polygon() { return svg.children.find((child) => child.tagName === 'polygon'); },
     restore() {
       global.document = previous.document;
@@ -193,6 +204,8 @@ test('repeated map renders do not stack pointer listeners', () => {
     assert.equal(harness.svg.listenerCount('pointerdown'), 1);
     assert.equal(harness.svg.listenerCount('pointermove'), 1);
     assert.equal(harness.svg.listenerCount('pointerup'), 1);
+    assert.equal(harness.svg.listenerCount('wheel'), 1);
+    assert.equal(harness.windowListenerCount('resize'), 1);
   } finally {
     harness.restore();
   }
@@ -246,4 +259,70 @@ test('territory actions use a desktop sticky panel and mobile bottom sheet above
   assert.match(html, /changeRecall\('half'\)/);
   assert.match(css, /@media \(min-width: 760px\)[\s\S]*?\.map-workspace \{ display: grid;[\s\S]*?\.territory-panel \{ position: sticky;/);
   assert.match(css, /@media \(max-width: 520px\)[\s\S]*?\.territory-panel \{[\s\S]*?position: fixed;[\s\S]*?bottom: calc\(var\(--nav-h\) \+ env\(safe-area-inset-bottom\)\);[\s\S]*?overflow-y: auto;/);
+});
+
+test('desktop wheel zooms toward the cursor and stays between 1x and 3x', () => {
+  const harness = loadMapHarness({ mobile: false });
+  try {
+    harness.renderMap();
+    const preventions = [];
+    for (let index = 0; index < 15; index += 1) {
+      harness.svg.dispatch('wheel', {
+        deltaY: -100,
+        clientX: 320,
+        clientY: 185,
+        preventDefault() { preventions.push(true); },
+      });
+    }
+    assert.match(harness.svg.style.transform, /translate\(-?\d+(?:\.\d+)?px, -?\d+(?:\.\d+)?px\) scale\(3\)/);
+    assert.doesNotMatch(harness.svg.style.transform, /translate\(0px, 0px\)/);
+    assert.equal(preventions.length, 15);
+
+    for (let index = 0; index < 20; index += 1) {
+      harness.svg.dispatch('wheel', { deltaY: 100, clientX: 320, clientY: 185 });
+    }
+    assert.match(harness.svg.style.transform, /scale\(1\)$/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test('desktop resize re-clamps the zoomed map inside its container', () => {
+  const harness = loadMapHarness({ mobile: false });
+  try {
+    harness.renderMap();
+    for (let index = 0; index < 5; index += 1) {
+      harness.svg.dispatch('wheel', { deltaY: -100, clientX: 360, clientY: 185 });
+    }
+    harness.svg.parentElement.rect = { left: 0, top: 0, width: 100, height: 100 };
+    harness.dispatchWindow('resize');
+    const translateX = Number(harness.svg.style.transform.match(/translate\((-?\d+(?:\.\d+)?)px/)?.[1]);
+    assert.ok(Math.abs(translateX) <= 50);
+  } finally {
+    harness.restore();
+  }
+});
+
+test('Season History exists once under the fourth Activity tab and reuses its renderer', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
+  const script = fs.readFileSync(path.join(__dirname, '../script.js'), 'utf8');
+  const mapMarkup = html.match(/id="screen-map"[\s\S]*?id="screen-activity"/)?.[0] || '';
+  const activityMarkup = html.match(/id="screen-activity"[\s\S]*?id="screen-admin"/)?.[0] || '';
+
+  assert.doesNotMatch(mapMarkup, /season-history-card|season-history-list/);
+  assert.match(activityMarkup, /id="activity-tab-seasons"[\s\S]*?id="activity-panel-seasons"[\s\S]*?id="season-history-card"[\s\S]*?id="season-history-list"/);
+  assert.equal((html.match(/id="season-history-list"/g) || []).length, 1);
+  assert.match(script, /activeActivityTab === 'seasons'[\s\S]*?await renderSeasonHistory\(\)/);
+  assert.doesNotMatch(script, /if \(name === 'map'\)[^{\n]*renderSeasonHistory/);
+});
+
+test('desktop map consumes the available screen height without overflow', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../style.css'), 'utf8');
+
+  assert.match(css, /@media \(min-width: 760px\)[\s\S]*?#screen-map\.active \{ display: flex; flex-direction: column; overflow: hidden; \}/);
+  assert.match(css, /\.map-workspace \{[^}]*flex: 1;[^}]*min-height: 0;[^}]*overflow: hidden;/);
+  assert.match(css, /\.map-container \{[^}]*height: 100%;[^}]*overflow: hidden;/);
+  assert.match(css, /#map-svg \{[^}]*width: 100%;[^}]*height: 100%;[^}]*max-height: 100%;/);
+  assert.match(css, /\.territory-panel \{[^}]*max-height: 100%;[^}]*overflow-y: auto;/);
+  assert.match(css, /\.activity-tabs \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
 });

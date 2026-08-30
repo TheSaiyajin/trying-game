@@ -32,7 +32,7 @@ let attackSendCount = 10;
 let defendSendCount = 10;
 let trainAmount = 1;
 let factionChatPollHandle = null;
-const mapView = { scale: 1, x: 0, y: 0, pointers: new Map(), dragStart: null, pinchStart: null, dragged: false, hadMultiplePointers: false, suppressClickUntil: 0, boundSvg: null };
+const mapView = { scale: 1, x: 0, y: 0, pointers: new Map(), dragStart: null, pinchStart: null, dragged: false, hadMultiplePointers: false, suppressClickUntil: 0, boundSvg: null, resizeBound: false };
 let realtimeSocket = null;
 let realtimeRefreshTimer = null;
 let realtimeRefreshInFlight = false;
@@ -607,7 +607,7 @@ function showScreen(name, { persist = true } = {}) {
   const storageKey = getScreenStorageKey(G.player);
   if (persist && storageKey) localStorage.setItem(storageKey, name);
   if (name === 'city') renderCity();
-  if (name === 'map') { renderMap(); renderScoreboard(); renderSeasonHistory(); }
+  if (name === 'map') { renderMap(); renderScoreboard(); }
   if (name === 'activity') renderActivity();
   if (name === 'chat') { renderFactionChat({ scrollToNewest: true }); renderFactionMembers(); }
   if (name === 'admin') renderAdminPanel();
@@ -984,6 +984,30 @@ function changeMapZoom(delta) {
 function initializeMobileMap(svg) {
   if (mapView.boundSvg === svg) return;
   mapView.boundSvg = svg;
+  svg.addEventListener('wheel', (event) => {
+    if (window.matchMedia('(max-width: 520px)').matches) return;
+    event.preventDefault();
+    const container = svg.parentElement;
+    if (!container) return;
+    const bounds = container.getBoundingClientRect();
+    const oldScale = mapView.scale;
+    const newScale = Math.max(1, Math.min(3, oldScale + (event.deltaY < 0 ? 0.2 : -0.2)));
+    if (newScale === oldScale) return;
+    const ratio = newScale / oldScale;
+    const cursorX = event.clientX - bounds.left - (bounds.width / 2);
+    const cursorY = event.clientY - bounds.top - (bounds.height / 2);
+    mapView.x += (1 - ratio) * (cursorX - mapView.x);
+    mapView.y += (1 - ratio) * (cursorY - mapView.y);
+    mapView.scale = newScale;
+    applyMapView(svg);
+  }, { passive: false });
+  if (!mapView.resizeBound && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    mapView.resizeBound = true;
+    window.addEventListener('resize', () => {
+      const currentSvg = document.getElementById('map-svg');
+      if (currentSvg) applyMapView(currentSvg);
+    });
+  }
   svg.addEventListener('pointerdown', (event) => {
     if (!window.matchMedia('(max-width: 520px)').matches || !['touch', 'pen'].includes(event.pointerType)) return;
     if (mapView.pointers.size === 0) {
@@ -1328,7 +1352,7 @@ const ACTIVITY_STAT_LABELS = {
 };
 
 function showActivityTab(name) {
-  if (!['feed', 'rankings', 'my-stats'].includes(name)) return;
+  if (!['feed', 'rankings', 'my-stats', 'seasons'].includes(name)) return;
   activeActivityTab = name;
   document.querySelectorAll('.activity-tab').forEach((tab) => {
     const selected = tab.id === `activity-tab-${name}`;
@@ -1390,6 +1414,10 @@ async function renderActivity() {
   const container = document.getElementById('activity-feed');
   if (!container) return;
   try {
+    if (activeActivityTab === 'seasons') {
+      await renderSeasonHistory();
+      return;
+    }
     if (activeActivityTab !== 'feed') {
       const data = await apiFetch('/game/activity-stats');
       if (activeActivityTab === 'rankings') {
