@@ -46,7 +46,7 @@ function createElement(tagName = 'div') {
   return element;
 }
 
-function loadMapHarness() {
+function loadMapHarness({ mobile = true } = {}) {
   const previous = {
     document: global.document,
     window: global.window,
@@ -70,7 +70,7 @@ function loadMapHarness() {
     addEventListener() {},
     body: { appendChild() {} },
   };
-  global.window = { matchMedia() { return { matches: true }; } };
+  global.window = { matchMedia() { return { matches: mobile }; } };
   global.localStorage = { getItem() { return null; }, setItem() {}, removeItem() {} };
   delete require.cache[require.resolve('../script.js')];
   const script = require('../script.js');
@@ -125,7 +125,7 @@ test('a touch tap with movement inside the drag threshold still selects', () => 
 });
 
 test('desktop mouse selection remains on the polygon click path', () => {
-  const harness = loadMapHarness();
+  const harness = loadMapHarness({ mobile: false });
   try {
     harness.renderMap();
     const polygon = harness.polygon();
@@ -133,6 +133,21 @@ test('desktop mouse selection remains on the polygon click path', () => {
     harness.svg.dispatch('pointerup', { pointerType: 'mouse', target: polygon });
     assert.notEqual(harness.elements.get('territory-panel').style.display, 'block');
     polygon.dispatch('click', { pointerType: 'mouse' });
+    assert.equal(harness.elements.get('territory-panel').style.display, 'block');
+  } finally {
+    harness.restore();
+  }
+});
+
+test('untracked mobile pointer events do not suppress the next territory click', () => {
+  const harness = loadMapHarness();
+  try {
+    harness.renderMap();
+    const polygon = harness.polygon();
+    harness.svg.dispatch('pointermove', { pointerId: 9, target: polygon });
+    harness.svg.dispatch('pointerup', { pointerId: 9, target: polygon });
+    harness.svg.dispatch('pointercancel', { pointerId: 9, target: polygon });
+    polygon.dispatch('click');
     assert.equal(harness.elements.get('territory-panel').style.display, 'block');
   } finally {
     harness.restore();

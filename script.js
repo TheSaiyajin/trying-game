@@ -985,7 +985,7 @@ function initializeMobileMap(svg) {
   if (mapView.boundSvg === svg) return;
   mapView.boundSvg = svg;
   svg.addEventListener('pointerdown', (event) => {
-    if (!window.matchMedia('(max-width: 520px)').matches) return;
+    if (!window.matchMedia('(max-width: 520px)').matches || !['touch', 'pen'].includes(event.pointerType)) return;
     if (mapView.pointers.size === 0) {
       mapView.dragged = false;
       mapView.hadMultiplePointers = false;
@@ -1028,12 +1028,12 @@ function initializeMobileMap(svg) {
   });
   svg.addEventListener('pointerup', (event) => {
     const pointer = mapView.pointers.get(event.pointerId);
-    const shouldSelect = pointer?.pointerType !== 'mouse'
-      && !mapView.dragged
+    if (!pointer) return;
+    const shouldSelect = !mapView.dragged
       && !mapView.hadMultiplePointers
       && pointer?.territoryId;
     mapView.pointers.delete(event.pointerId);
-    if (pointer?.pointerType !== 'mouse') mapView.suppressClickUntil = Date.now() + 400;
+    mapView.suppressClickUntil = Date.now() + 400;
     if (mapView.pointers.size === 0) {
       mapView.pinchStart = null;
       mapView.dragStart = null;
@@ -1042,13 +1042,16 @@ function initializeMobileMap(svg) {
     }
     if (shouldSelect) selectTerritory(pointer.territoryId);
   });
-  svg.addEventListener('pointercancel', () => {
-    mapView.pointers.clear();
-    mapView.pinchStart = null;
-    mapView.dragStart = null;
-    mapView.dragged = false;
-    mapView.hadMultiplePointers = false;
+  svg.addEventListener('pointercancel', (event) => {
+    if (!mapView.pointers.has(event.pointerId)) return;
+    mapView.pointers.delete(event.pointerId);
     mapView.suppressClickUntil = Date.now() + 400;
+    if (mapView.pointers.size === 0) {
+      mapView.pinchStart = null;
+      mapView.dragStart = null;
+      mapView.dragged = false;
+      mapView.hadMultiplePointers = false;
+    }
   });
 }
 
