@@ -1009,41 +1009,44 @@ function initializeMobileMap(svg) {
       if (currentSvg) applyMapView(currentSvg);
     });
   }
-  svg.addEventListener('contextmenu', (event) => event.preventDefault());
   svg.addEventListener('mousedown', (event) => {
-    if (!window.matchMedia('(max-width: 520px)').matches && event.button === 2 && mapView.scale > 1) {
+    if (!window.matchMedia('(max-width: 520px)').matches && event.button === 0) {
       mapView.desktopPan = {
         svg,
         x: event.clientX,
         y: event.clientY,
         mapX: mapView.x,
         mapY: mapView.y,
+        dragged: false,
       };
-      svg.style.cursor = 'grabbing';
-      event.preventDefault();
-      return;
     }
   });
   if (!mapView.desktopPanBound && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     mapView.desktopPanBound = true;
     const stopDesktopPan = () => {
       if (!mapView.desktopPan) return;
+      if (mapView.desktopPan.dragged) mapView.suppressClickUntil = Date.now() + 400;
       mapView.desktopPan.svg.style.cursor = '';
       mapView.desktopPan = null;
     };
     window.addEventListener('mousemove', (event) => {
       if (!mapView.desktopPan) return;
-      if ((event.buttons & 2) === 0) {
+      if ((event.buttons & 1) === 0) {
         stopDesktopPan();
         return;
       }
-      mapView.x = mapView.desktopPan.mapX + event.clientX - mapView.desktopPan.x;
-      mapView.y = mapView.desktopPan.mapY + event.clientY - mapView.desktopPan.y;
+      const deltaX = event.clientX - mapView.desktopPan.x;
+      const deltaY = event.clientY - mapView.desktopPan.y;
+      if (!mapView.desktopPan.dragged && Math.hypot(deltaX, deltaY) <= 5) return;
+      mapView.desktopPan.dragged = true;
+      mapView.desktopPan.svg.style.cursor = 'grabbing';
+      mapView.x = mapView.desktopPan.mapX + deltaX;
+      mapView.y = mapView.desktopPan.mapY + deltaY;
       applyMapView(mapView.desktopPan.svg);
+      event.preventDefault();
     });
     window.addEventListener('mouseup', stopDesktopPan);
     window.addEventListener('blur', stopDesktopPan);
-    window.addEventListener('pointercancel', stopDesktopPan);
   }
   svg.addEventListener('pointerdown', (event) => {
     if (!window.matchMedia('(max-width: 520px)').matches || !['touch', 'pen'].includes(event.pointerType)) return;

@@ -140,10 +140,10 @@ test('desktop mouse selection remains on the polygon click path', () => {
   try {
     harness.renderMap();
     const polygon = harness.polygon();
-    harness.svg.dispatch('pointerdown', { pointerType: 'mouse', target: polygon });
-    harness.svg.dispatch('pointerup', { pointerType: 'mouse', target: polygon });
+    harness.svg.dispatch('mousedown', { button: 0, buttons: 1, target: polygon, clientX: 20, clientY: 20 });
+    harness.dispatchWindow('mouseup', { button: 0, buttons: 0 });
     assert.notEqual(harness.elements.get('territory-panel').style.display, 'block');
-    polygon.dispatch('click', { pointerType: 'mouse' });
+    polygon.dispatch('click', { button: 0 });
     assert.equal(harness.elements.get('territory-panel').style.display, 'block');
   } finally {
     harness.restore();
@@ -206,12 +206,11 @@ test('repeated map renders do not stack pointer listeners', () => {
     assert.equal(harness.svg.listenerCount('pointerup'), 1);
     assert.equal(harness.svg.listenerCount('mousedown'), 1);
     assert.equal(harness.svg.listenerCount('wheel'), 1);
-    assert.equal(harness.svg.listenerCount('contextmenu'), 1);
+    assert.equal(harness.svg.listenerCount('contextmenu'), 0);
     assert.equal(harness.windowListenerCount('resize'), 1);
     assert.equal(harness.windowListenerCount('mousemove'), 1);
     assert.equal(harness.windowListenerCount('mouseup'), 1);
     assert.equal(harness.windowListenerCount('blur'), 1);
-    assert.equal(harness.windowListenerCount('pointercancel'), 1);
   } finally {
     harness.restore();
   }
@@ -333,41 +332,39 @@ test('desktop map consumes the available screen height without overflow', () => 
   assert.match(css, /\.activity-tabs \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
 });
 
-test('desktop right-drag pans through window mouse events with clamping and no selection', () => {
+test('desktop left-drag pans after 5px through window events and suppresses selection', () => {
   const harness = loadMapHarness({ mobile: false });
   try {
     harness.renderMap();
     for (let index = 0; index < 5; index += 1) {
       harness.svg.dispatch('wheel', { deltaY: -100, clientX: 180, clientY: 185 });
     }
-    harness.svg.dispatch('mousedown', { button: 2, buttons: 2, clientX: 100, clientY: 100 });
+    const polygon = harness.polygon();
+    harness.svg.dispatch('mousedown', { button: 0, buttons: 1, target: polygon, clientX: 100, clientY: 100 });
+    harness.dispatchWindow('mousemove', { buttons: 1, clientX: 103, clientY: 104, preventDefault() {} });
+    assert.notEqual(harness.svg.style.cursor, 'grabbing');
+    harness.dispatchWindow('mousemove', { buttons: 1, clientX: 1000, clientY: 1000, preventDefault() {} });
     assert.equal(harness.svg.style.cursor, 'grabbing');
-    harness.dispatchWindow('mousemove', { buttons: 2, clientX: 1000, clientY: 1000 });
     const translation = harness.svg.style.transform.match(/translate\((-?\d+(?:\.\d+)?)px, (-?\d+(?:\.\d+)?)px\)/);
     assert.ok(Math.abs(Number(translation[1])) <= 180);
     assert.ok(Math.abs(Number(translation[2])) <= 185);
-    assert.notEqual(harness.elements.get('territory-panel').style.display, 'block');
-    harness.dispatchWindow('mouseup', { button: 2, buttons: 0 });
+    harness.dispatchWindow('mouseup', { button: 0, buttons: 0 });
     assert.equal(harness.svg.style.cursor, '');
-    harness.polygon().dispatch('click', { button: 0 });
-    assert.equal(harness.elements.get('territory-panel').style.display, 'block');
+    polygon.dispatch('click', { button: 0 });
+    assert.notEqual(harness.elements.get('territory-panel').style.display, 'block');
   } finally {
     harness.restore();
   }
 });
 
-test('right mouse does not pan at 1x and lost button, blur, or cancel stop active pans', () => {
+test('lost left-button state and blur stop active desktop pans', () => {
   const harness = loadMapHarness({ mobile: false });
   try {
     harness.renderMap();
-    const initialTransform = harness.svg.style.transform;
-    harness.svg.dispatch('mousedown', { button: 2, buttons: 2, clientX: 100, clientY: 100 });
-    harness.dispatchWindow('mousemove', { buttons: 2, clientX: 200, clientY: 200 });
-    assert.equal(harness.svg.style.transform, initialTransform);
-    assert.notEqual(harness.svg.style.cursor, 'grabbing');
     harness.svg.dispatch('wheel', { deltaY: -100, clientX: 180, clientY: 185 });
-    for (const endEvent of ['mousemove', 'blur', 'pointercancel']) {
-      harness.svg.dispatch('mousedown', { button: 2, buttons: 2, clientX: 100, clientY: 100 });
+    for (const endEvent of ['mousemove', 'blur']) {
+      harness.svg.dispatch('mousedown', { button: 0, buttons: 1, clientX: 100, clientY: 100 });
+      harness.dispatchWindow('mousemove', { buttons: 1, clientX: 110, clientY: 100, preventDefault() {} });
       assert.equal(harness.svg.style.cursor, 'grabbing');
       harness.dispatchWindow(endEvent, endEvent === 'mousemove' ? { buttons: 0, clientX: 200, clientY: 200 } : {});
       assert.equal(harness.svg.style.cursor, '');
@@ -377,13 +374,14 @@ test('right mouse does not pan at 1x and lost button, blur, or cancel stop activ
   }
 });
 
-test('context menu is prevented by the map handler only', () => {
+test('map leaves the normal context menu enabled', () => {
   const harness = loadMapHarness({ mobile: false });
   try {
     harness.renderMap();
     let prevented = false;
     harness.svg.dispatch('contextmenu', { preventDefault() { prevented = true; } });
-    assert.equal(prevented, true);
+    assert.equal(prevented, false);
+    assert.equal(harness.svg.listenerCount('contextmenu'), 0);
     assert.equal(harness.windowListenerCount('contextmenu'), 0);
   } finally {
     harness.restore();
