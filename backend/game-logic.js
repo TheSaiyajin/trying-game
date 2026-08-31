@@ -98,9 +98,8 @@ function limitResourceGain(resources = {}, gain = {}, caps = {}) {
   }));
 }
 
-function limitPassiveFortressTroopGain(citySoldiers = 0, stationedDefenders = 0, generatedTroops = 0) {
-  const totalOwnedTroops = clampInt(citySoldiers) + clampInt(stationedDefenders);
-  const available = Math.max(0, PASSIVE_FORTRESS_TROOP_CAP - totalOwnedTroops);
+function limitPassiveFortressTroopGain(citySoldiers = 0, generatedTroops = 0) {
+  const available = Math.max(0, PASSIVE_FORTRESS_TROOP_CAP - clampInt(citySoldiers));
   return Math.min(clampInt(generatedTroops), available);
 }
 

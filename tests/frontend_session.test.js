@@ -179,7 +179,7 @@ test('training UI shows the active discount and rounded total for the selected q
   assert.deepEqual(calculateTrainingCost(20, 0.05), { food: 950, iron: 380, manpower: 19 });
 }));
 
-test('faction bonus UI shows the passive fortress cap, total troops, and paused state', withFrontendGlobals(async () => {
+test('faction bonus UI shows the city reserve cap and ignores stationed troops', withFrontendGlobals(async () => {
   const elements = new Map();
   global.document.getElementById = (id) => {
     if (!elements.has(id)) elements.set(id, createFakeElement());
@@ -192,25 +192,23 @@ test('faction bonus UI shows the passive fortress cap, total troops, and paused 
       faction: 'blue',
       soldiers: 230,
       stationedTroops: { b1: 20 },
-      totalTroops: 999,
       fortressTroopCap: 250,
-      fortressTroopsPaused: false,
       factionBonuses: { fortressTroops: 1 },
     },
     world: { territories: [] },
   });
 
-  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress generation: Paused · Total troops 250\/250/);
+  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress reserve: 230\/250 · Active/);
   assert.match(elements.get('faction-bonuses').innerHTML, /Fortress Generation \+1\/min/);
 
   setGameStateFromSnapshot({
     player: { faction: 'blue', soldiers: 265, stationedTroops: { b1: 20 }, fortressTroopCap: 250 },
     world: { territories: [] },
   });
-  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress generation: Paused · Total troops 285 \(cap 250\)/);
+  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress reserve: 265\/250 · Paused/);
 }));
 
-test('training immediately refreshes the client-calculated fortress troop total', withFrontendGlobals(async () => {
+test('training immediately refreshes the fortress reserve display', withFrontendGlobals(async () => {
   const elements = new Map();
   global.document.getElementById = (id) => {
     if (!elements.has(id)) elements.set(id, createFakeElement());
@@ -224,7 +222,6 @@ test('training immediately refreshes the client-calculated fortress troop total'
         faction: 'blue',
         soldiers: 208,
         stationedTroops: {},
-        totalTroops: 200,
         fortressTroopCap: 250,
         factionBonuses: { fortressTroops: 1 },
         resources: { food: 10000, iron: 10000, manpower: 10000 },
@@ -248,7 +245,7 @@ test('training immediately refreshes the client-calculated fortress troop total'
 
   await trainSoldiers();
 
-  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress generation: Active · Total troops 208\/250/);
+  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress reserve: 208\/250 · Active/);
 }));
 
 test('apiFetch preserves the HTTP status on a thrown error', withFrontendGlobals(async () => {

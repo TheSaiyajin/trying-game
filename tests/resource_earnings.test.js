@@ -17,14 +17,8 @@ function createResourceClient(playerRows, territories = []) {
         const player = players.get(params[0]);
         return { rows: player ? [{ ...player }] : [], rowCount: player ? 1 : 0 };
       }
-      if (text.startsWith('SELECT p.id, p.faction, p.resource_food')) {
-        return {
-          rows: [...players.values()].map((player) => ({
-            ...player,
-            stationed_defenders: player.stationed_defenders || 0,
-          })),
-          rowCount: players.size,
-        };
+      if (text.startsWith('SELECT id, faction, resource_food')) {
+        return { rows: [...players.values()].map((player) => ({ ...player })), rowCount: players.size };
       }
       if (text === 'SELECT * FROM buildings WHERE player_id = $1') {
         stats.buildingQueries += 1;
@@ -32,10 +26,6 @@ function createResourceClient(playerRows, territories = []) {
       }
       if (text.startsWith('SELECT t.*,')) {
         return { rows: territories, rowCount: territories.length };
-      }
-      if (text.startsWith('SELECT COALESCE(SUM(troops), 0) AS stationed_defenders')) {
-        const player = players.get(params[0]);
-        return { rows: [{ stationed_defenders: player?.stationed_defenders || 0 }], rowCount: 1 };
       }
       if (text.startsWith('UPDATE players SET resource_food = resource_food + $1')) {
         const playerId = params.at(-1);
@@ -110,9 +100,9 @@ test('valid-faction players continue receiving offline earnings', async () => {
   assert.equal(client.stats.buildingQueries, 1);
 });
 
-test('global fortress gain counts stationed defenders and only fills remaining cap space', async () => {
+test('global fortress gain ignores stationed defenders and fills the city reserve cap', async () => {
   const client = createResourceClient([
-    defaultPlayer({ faction: 'blue', soldiers: 248, stationed_defenders: 1 }),
+    defaultPlayer({ faction: 'blue', soldiers: 248, stationed_defenders: 500 }),
   ], [
     { id: 'f1', owner_faction: 'blue', is_fortress: true },
     { id: 'f2', owner_faction: 'blue', is_fortress: true },
@@ -120,20 +110,20 @@ test('global fortress gain counts stationed defenders and only fills remaining c
 
   await runGlobalResourceTick(client, { suppressErrors: false });
 
-  assert.equal(client.players.get(1).soldiers, 249);
+  assert.equal(client.players.get(1).soldiers, 250);
 });
 
-test('offline fortress gain stops when city and stationed troops reach the passive cap', async () => {
+test('offline fortress gain ignores stationed defenders and fills only the city reserve', async () => {
   const client = createResourceClient([
-    defaultPlayer({ faction: 'blue', soldiers: 245, stationed_defenders: 2 }),
+    defaultPlayer({ faction: 'blue', soldiers: 245, stationed_defenders: 500 }),
   ], [
     { id: 'f1', owner_faction: 'blue', is_fortress: true },
   ]);
 
   const result = await applyOfflineResourceEarnings(1, client);
 
-  assert.equal(result.soldiers, 248);
-  assert.equal(client.players.get(1).soldiers, 248);
+  assert.equal(result.soldiers, 250);
+  assert.equal(client.players.get(1).soldiers, 250);
 });
 
 test('invalid-faction players are normalized back to shared resource defaults', async () => {

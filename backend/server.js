@@ -335,14 +335,8 @@ async function applyOfflineResourceEarnings(playerId, db = null) {
     iron: Math.max(0, Math.floor(production.iron * wholeMinutes)),
     manpower: Math.max(0, Math.floor(production.manpower * wholeMinutes)),
   }, getFactionStorageCaps(territories, faction));
-  const stationedResult = await queryable.query(
-    `SELECT COALESCE(SUM(troops), 0) AS stationed_defenders
-     FROM territory_defenders WHERE player_id = $1`,
-    [playerId]
-  );
-  const stationedDefenders = Number(stationedResult.rows[0]?.stationed_defenders || 0);
   const generatedFortressTroops = getFactionTerritoryBonuses(territories, faction).fortressTroops * wholeMinutes;
-  const fortressTroops = limitPassiveFortressTroopGain(player.soldiers, stationedDefenders, generatedFortressTroops);
+  const fortressTroops = limitPassiveFortressTroopGain(player.soldiers, generatedFortressTroops);
 
   await queryable.query(
     `UPDATE players
@@ -376,15 +370,8 @@ async function runGlobalResourceTick(db = null, options = {}) {
     const queryable = db || await connect();
     const territories = await getTerritoriesSnapshot(queryable);
     const playersResult = await queryable.query(
-      `SELECT p.id, p.faction, p.resource_food, p.resource_wood, p.resource_iron,
-              p.resource_manpower, p.soldiers,
-              COALESCE(d.stationed_defenders, 0) AS stationed_defenders
-       FROM players p
-       LEFT JOIN (
-         SELECT player_id, SUM(troops) AS stationed_defenders
-         FROM territory_defenders
-         GROUP BY player_id
-       ) d ON d.player_id = p.id`
+      `SELECT id, faction, resource_food, resource_wood, resource_iron, resource_manpower, soldiers
+       FROM players`
     );
 
     for (const row of playersResult.rows) {
@@ -420,7 +407,7 @@ async function runGlobalResourceTick(db = null, options = {}) {
         manpower: row.resource_manpower,
       }, production, getFactionStorageCaps(territories, faction));
       const generatedFortressTroops = getFactionTerritoryBonuses(territories, faction).fortressTroops;
-      const fortressTroops = limitPassiveFortressTroopGain(row.soldiers, row.stationed_defenders, generatedFortressTroops);
+      const fortressTroops = limitPassiveFortressTroopGain(row.soldiers, generatedFortressTroops);
       await queryable.query(
         `UPDATE players
          SET resource_food = resource_food + $1,
@@ -466,13 +453,9 @@ async function getPlayerWorldState(playerId, season = null) {
     [playerId]
   );
   const stationedTroops = {};
-  let stationedDefenders = 0;
   for (const row of stationedResult.rows) {
-    const troops = Number(row.troops);
-    stationedTroops[row.territory_id] = troops;
-    stationedDefenders += troops;
+    stationedTroops[row.territory_id] = Number(row.troops);
   }
-  const totalTroops = Number(player.soldiers) + stationedDefenders;
 
   return {
     player: {
@@ -494,8 +477,6 @@ async function getPlayerWorldState(playerId, season = null) {
       storageCaps,
       stationedTroops,
       fortressTroopCap: PASSIVE_FORTRESS_TROOP_CAP,
-      totalTroops,
-      fortressTroopsPaused: factionBonuses.fortressTroops > 0 && totalTroops >= PASSIVE_FORTRESS_TROOP_CAP,
     },
     world: {
       territories,

@@ -83,12 +83,12 @@ test('controlled Fortresses add one troop per minute each', () => {
   assert.equal(bonuses.fortressTroops, 2);
 });
 
-test('passive fortress troops stop at 250 total owned troops without clamping existing armies', () => {
-  assert.equal(limitPassiveFortressTroopGain(240, 0, 2), 2);
-  assert.equal(limitPassiveFortressTroopGain(249, 0, 5), 1);
-  assert.equal(limitPassiveFortressTroopGain(250, 0, 5), 0);
-  assert.equal(limitPassiveFortressTroopGain(300, 0, 5), 0);
-  assert.equal(limitPassiveFortressTroopGain(239, 10, 5), 1);
+test('passive fortress troops fill only the city reserve up to 250 without clamping it', () => {
+  assert.equal(limitPassiveFortressTroopGain(240, 2), 2);
+  assert.equal(limitPassiveFortressTroopGain(249, 5), 1);
+  assert.equal(limitPassiveFortressTroopGain(250, 5), 0);
+  assert.equal(limitPassiveFortressTroopGain(300, 5), 0);
+  assert.equal(limitPassiveFortressTroopGain(208, 5), 5);
 });
 
 test('battle outcome is resolved server-side using backend calculations', () => {
