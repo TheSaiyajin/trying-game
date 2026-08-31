@@ -7,6 +7,7 @@ const {
   getProductionFromBuildings,
   getFactionStorageCaps,
   limitResourceGain,
+  limitPassiveFortressTroopGain,
   getFactionTerritoryBonuses,
   getTrainingCost,
   getOfflineResourceGain,
@@ -80,6 +81,14 @@ test('controlled Fortresses add one troop per minute each', () => {
     { owner_faction: 'red', is_fortress: true },
   ], 'blue');
   assert.equal(bonuses.fortressTroops, 2);
+});
+
+test('passive fortress troops stop at 250 total owned troops without clamping existing armies', () => {
+  assert.equal(limitPassiveFortressTroopGain(240, 0, 2), 2);
+  assert.equal(limitPassiveFortressTroopGain(249, 0, 5), 1);
+  assert.equal(limitPassiveFortressTroopGain(250, 0, 5), 0);
+  assert.equal(limitPassiveFortressTroopGain(300, 0, 5), 0);
+  assert.equal(limitPassiveFortressTroopGain(239, 10, 5), 1);
 });
 
 test('battle outcome is resolved server-side using backend calculations', () => {
@@ -160,6 +169,8 @@ test('training cost and idle earnings are consistent with server-authoritative r
   const serverSource = fs.readFileSync(path.join(__dirname, '../backend/server.js'), 'utf8');
   const trainingRoute = serverSource.match(/app\.post\('\/api\/game\/train-soldiers'[\s\S]*?\n\}\)\);/);
   assert.ok(trainingRoute?.[0].includes('getTrainingCost(count, trainingMultiplier)'), 'training endpoint should use the authoritative cost helper');
+  assert.ok(trainingRoute?.[0].includes('soldiers = soldiers + $4'), 'training should add requested troops even above the passive cap');
+  assert.ok(!trainingRoute?.[0].includes('limitPassiveFortressTroopGain'), 'the passive fortress cap must not apply to training');
 
   const offlineGain = getOfflineResourceGain({ food: 8, wood: 6, iron: 4, manpower: 2 }, 300, 60 * 60 * 12);
   assert.equal(offlineGain.food, 40);

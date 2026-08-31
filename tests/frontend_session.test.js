@@ -179,6 +179,30 @@ test('training UI shows the active discount and rounded total for the selected q
   assert.deepEqual(calculateTrainingCost(20, 0.05), { food: 950, iron: 380, manpower: 19 });
 }));
 
+test('faction bonus UI shows the passive fortress cap, total troops, and paused state', withFrontendGlobals(async () => {
+  const elements = new Map();
+  global.document.getElementById = (id) => {
+    if (!elements.has(id)) elements.set(id, createFakeElement());
+    return elements.get(id);
+  };
+  const { setGameStateFromSnapshot } = loadScriptModule();
+
+  setGameStateFromSnapshot({
+    player: {
+      faction: 'blue',
+      soldiers: 230,
+      totalTroops: 250,
+      fortressTroopCap: 250,
+      fortressTroopsPaused: true,
+      factionBonuses: { fortressTroops: 1 },
+    },
+    world: { territories: [] },
+  });
+
+  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress Troops 250\/250 total · Paused/);
+  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress Generation \+1\/min/);
+}));
+
 test('apiFetch preserves the HTTP status on a thrown error', withFrontendGlobals(async () => {
   global.fetch = async () => jsonResponse(429, { error: 'Too many requests' });
   const { apiFetch, setToken } = loadScriptModule();

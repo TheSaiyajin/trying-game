@@ -26,6 +26,7 @@ const BUILDING_DEFS = {
 };
 
 const BASE_STORAGE_CAP = 10000;
+const PASSIVE_FORTRESS_TROOP_CAP = 250;
 const RESOURCE_KEYS = ['food', 'wood', 'iron', 'manpower'];
 
 function clampInt(value, minimum = 0) {
@@ -97,6 +98,12 @@ function limitResourceGain(resources = {}, gain = {}, caps = {}) {
   }));
 }
 
+function limitPassiveFortressTroopGain(citySoldiers = 0, stationedDefenders = 0, generatedTroops = 0) {
+  const totalOwnedTroops = clampInt(citySoldiers) + clampInt(stationedDefenders);
+  const available = Math.max(0, PASSIVE_FORTRESS_TROOP_CAP - totalOwnedTroops);
+  return Math.min(clampInt(generatedTroops), available);
+}
+
 function getProductionFromBuildings(buildings = {}, territories = [], faction = 'blue', includeBonuses = false) {
   const normalized = normalizeBuildingLevels(buildings);
   const bonuses = includeBonuses ? getFactionTerritoryBonuses(territories, faction) : { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 };
@@ -155,11 +162,13 @@ function calculateBattleOutcome(attackStats, defenseStats) {
 module.exports = {
   BUILDING_DEFS,
   BASE_STORAGE_CAP,
+  PASSIVE_FORTRESS_TROOP_CAP,
   getUpgradeCost,
   getProductionFromBuildings,
   getFactionTerritoryBonuses,
   getFactionStorageCaps,
   limitResourceGain,
+  limitPassiveFortressTroopGain,
   getTrainingCost,
   getOfflineResourceGain,
   calculateBattleOutcome,

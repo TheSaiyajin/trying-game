@@ -639,17 +639,20 @@ function renderFactionBonuses() {
   const container = document.getElementById('faction-bonuses');
   if (!container) return;
   const bonuses = G.player.factionBonuses || {};
-  const entries = [
+  const totalTroops = Number(G.player.totalTroops ?? G.player.soldiers ?? 0);
+  const fortressTroopCap = Number(G.player.fortressTroopCap || 250);
+  const fortressStatus = G.player.fortressTroopsPaused ? 'Paused' : 'Active';
+  const entries = [`<span>⚔️ Fortress Troops ${totalTroops}/${fortressTroopCap} total · ${fortressStatus}</span>`, ...[
     ['food', '🌾 Food Production', '+', '%'], ['wood', '🪵 Wood Production', '+', '%'],
     ['iron', '⚙️ Iron Production', '+', '%'], ['manpower', '👥 Manpower Production', '+', '%'],
     ['training', '⚔️ Training Cost', '-', '%'], ['storage', '📦 Storage', '+', '%'],
-    ['fortressTroops', '⚔️ Fortress Troops', '+', '/min'], ['allResources', '✨ All Resources', '+', '%'],
+    ['fortressTroops', '🏰 Fortress Generation', '+', '/min'], ['allResources', '✨ All Resources', '+', '%'],
   ].map(([key, label, prefix, suffix]) => {
     const value = Number(bonuses[key] || 0);
     if (value <= 0) return null;
     return `<span>${label} ${prefix}${suffix === '%' ? Math.round(value * 100) : value}${suffix}</span>`;
-  }).filter(Boolean);
-  container.innerHTML = entries.length ? entries.join('') : '<span>No active bonuses.</span>';
+  }).filter(Boolean)];
+  container.innerHTML = entries.join('');
 }
 
 function calculateTrainingCost(count, trainingBonus = 0) {
@@ -1196,7 +1199,7 @@ function formatBonusLabel(bonusType, bonusValue) {
     iron: `⚙️ +${pct}% Iron Production`,
     manpower: `👥 +${pct}% Manpower Production`,
     training: `⚔️ -${pct}% Training Cost`,
-    fortress: '🏰 Fortress — +1 Troop/min',
+    fortress: '🏰 Fortress — +1 Troop/min up to 250 total troops',
     storage: `📦 +${pct}% Storage`,
     resource: `✨ +${pct}% All Resources`,
     none: '—',

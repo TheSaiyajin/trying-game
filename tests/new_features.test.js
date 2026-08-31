@@ -219,7 +219,7 @@ test('formatBonusLabel produces readable labels for all bonus types', () => {
   assert.equal(formatBonusLabel('iron', 0.10), '⚙️ +10% Iron Production');
   assert.equal(formatBonusLabel('manpower', 0.10), '👥 +10% Manpower Production');
   assert.equal(formatBonusLabel('training', 0.05), '⚔️ -5% Training Cost');
-  assert.equal(formatBonusLabel('fortress', 0), '🏰 Fortress — +1 Troop/min');
+  assert.equal(formatBonusLabel('fortress', 0), '🏰 Fortress — +1 Troop/min up to 250 total troops');
   assert.equal(formatBonusLabel('storage', 0.20), '📦 +20% Storage');
   assert.equal(formatBonusLabel('resource', 0.10), '✨ +10% All Resources');
   assert.equal(formatBonusLabel('none', 0), '—');
