@@ -639,10 +639,15 @@ function renderFactionBonuses() {
   const container = document.getElementById('faction-bonuses');
   if (!container) return;
   const bonuses = G.player.factionBonuses || {};
-  const totalTroops = Number(G.player.totalTroops ?? G.player.soldiers ?? 0);
+  const stationedTroops = Object.values(G.player.stationedTroops || {})
+    .reduce((total, troops) => total + (Number(troops) || 0), 0);
+  const totalTroops = (Number(G.player.soldiers) || 0) + stationedTroops;
   const fortressTroopCap = Number(G.player.fortressTroopCap || 250);
-  const fortressStatus = G.player.fortressTroopsPaused ? 'Paused' : 'Active';
-  const entries = [`<span>⚔️ Fortress Troops ${totalTroops}/${fortressTroopCap} total · ${fortressStatus}</span>`, ...[
+  const fortressStatus = totalTroops >= fortressTroopCap ? 'Paused' : 'Active';
+  const fortressCounter = totalTroops > fortressTroopCap
+    ? `${totalTroops} (cap ${fortressTroopCap})`
+    : `${totalTroops}/${fortressTroopCap}`;
+  const entries = [`<span>Fortress generation: ${fortressStatus} · Total troops ${fortressCounter}</span>`, ...[
     ['food', '🌾 Food Production', '+', '%'], ['wood', '🪵 Wood Production', '+', '%'],
     ['iron', '⚙️ Iron Production', '+', '%'], ['manpower', '👥 Manpower Production', '+', '%'],
     ['training', '⚔️ Training Cost', '-', '%'], ['storage', '📦 Storage', '+', '%'],
@@ -2099,6 +2104,7 @@ if (typeof module !== 'undefined') {
     mapTerritories,
     calculateTrainingCost,
     updateTrainingCostDisplay,
+    trainSoldiers,
     selectTerritory,
     restoreSavedScreen,
     canAttack,

@@ -191,16 +191,64 @@ test('faction bonus UI shows the passive fortress cap, total troops, and paused 
     player: {
       faction: 'blue',
       soldiers: 230,
-      totalTroops: 250,
+      stationedTroops: { b1: 20 },
+      totalTroops: 999,
       fortressTroopCap: 250,
-      fortressTroopsPaused: true,
+      fortressTroopsPaused: false,
       factionBonuses: { fortressTroops: 1 },
     },
     world: { territories: [] },
   });
 
-  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress Troops 250\/250 total · Paused/);
+  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress generation: Paused · Total troops 250\/250/);
   assert.match(elements.get('faction-bonuses').innerHTML, /Fortress Generation \+1\/min/);
+
+  setGameStateFromSnapshot({
+    player: { faction: 'blue', soldiers: 265, stationedTroops: { b1: 20 }, fortressTroopCap: 250 },
+    world: { territories: [] },
+  });
+  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress generation: Paused · Total troops 285 \(cap 250\)/);
+}));
+
+test('training immediately refreshes the client-calculated fortress troop total', withFrontendGlobals(async () => {
+  const elements = new Map();
+  global.document.getElementById = (id) => {
+    if (!elements.has(id)) elements.set(id, createFakeElement());
+    return elements.get(id);
+  };
+  elements.set('train-count', { ...createFakeElement(), value: '8' });
+  global.fetch = async () => jsonResponse(200, {
+    trained: 8,
+    state: {
+      player: {
+        faction: 'blue',
+        soldiers: 208,
+        stationedTroops: {},
+        totalTroops: 200,
+        fortressTroopCap: 250,
+        factionBonuses: { fortressTroops: 1 },
+        resources: { food: 10000, iron: 10000, manpower: 10000 },
+      },
+      world: { territories: [] },
+    },
+  });
+  const { setGameStateFromSnapshot, setToken, trainSoldiers } = loadScriptModule();
+  setToken('token-abc');
+  setGameStateFromSnapshot({
+    player: {
+      faction: 'blue',
+      soldiers: 200,
+      stationedTroops: {},
+      fortressTroopCap: 250,
+      factionBonuses: { fortressTroops: 1 },
+      resources: { food: 10000, iron: 10000, manpower: 10000 },
+    },
+    world: { territories: [] },
+  });
+
+  await trainSoldiers();
+
+  assert.match(elements.get('faction-bonuses').innerHTML, /Fortress generation: Active · Total troops 208\/250/);
 }));
 
 test('apiFetch preserves the HTTP status on a thrown error', withFrontendGlobals(async () => {
