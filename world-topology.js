@@ -61,9 +61,9 @@
 
   function bonusFields(bonusType, isCore) {
     if (isCore) {
-      if (bonusType === 'fortress') return { bonusValue: 0.25, resourceBonus: 0, storageBonus: 0.15, isFortress: true };
+      if (bonusType === 'fortress') return { bonusValue: 0.25, resourceBonus: 0, storageBonus: 0, isFortress: true };
       if (bonusType === 'storage') return { bonusValue: 0.25, resourceBonus: 0, storageBonus: 0.25, isFortress: false };
-      return { bonusValue: 0.15, resourceBonus: 0.15, storageBonus: 0.15, isFortress: false };
+      return { bonusValue: 0.15, resourceBonus: 0.15, storageBonus: 0, isFortress: false };
     }
     switch (bonusType) {
       case 'food':
@@ -74,9 +74,9 @@
       case 'training':
         return { bonusValue: 0.05, resourceBonus: 0.05, storageBonus: 0, isFortress: false };
       case 'resource':
-        return { bonusValue: 0.10, resourceBonus: 0.10, storageBonus: 0.10, isFortress: false };
+        return { bonusValue: 0.10, resourceBonus: 0.10, storageBonus: 0, isFortress: false };
       case 'fortress':
-        return { bonusValue: 0.20, resourceBonus: 0, storageBonus: 0.10, isFortress: true };
+        return { bonusValue: 0.20, resourceBonus: 0, storageBonus: 0, isFortress: true };
       case 'storage':
         return { bonusValue: 0.20, resourceBonus: 0, storageBonus: 0.20, isFortress: false };
       default:
