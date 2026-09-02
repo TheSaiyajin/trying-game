@@ -1,12 +1,12 @@
-name: Deploy SaiWars
+name: Deploy SaiWars Indev
 
 on:
   push:
     branches:
-      - main
+      - indev
 
 concurrency:
-  group: saiwars-production
+  group: saiwars-indev
   cancel-in-progress: true
 
 jobs:
@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,21 +51,21 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Deploy to VPS
+      - name: Deploy indev to VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           ssh "$VPS_USER@$VPS_HOST" << 'EOF'
             set -e
-            cd /var/www/trying-game
+            cd /var/www/trying-game-indev
 
-            git fetch origin main
-            git reset --hard origin/main
-            sed -i "s/__BUILD_VERSION__/$(git rev-parse --short HEAD)/g" index.html
+            git -c safe.directory=/var/www/trying-game-indev fetch origin indev
+            git -c safe.directory=/var/www/trying-game-indev reset --hard origin/indev
+            sed -i "s/__BUILD_VERSION__/$(git -c safe.directory=/var/www/trying-game-indev rev-parse --short HEAD)/g" index.html
             npm ci
-            sudo systemctl restart saiwars
+            sudo systemctl restart saiwars-indev
 
             sleep 2
-            curl -fsS http://127.0.0.1:3000/api/health
+            curl -fsS http://127.0.0.1:3001/api/health
           EOF
