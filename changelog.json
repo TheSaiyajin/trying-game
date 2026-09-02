@@ -6,7 +6,8 @@
       "Balanced building upgrade costs and limited building progression.",
       "Balanced the resources required to train soldiers.",
       "Territory storage bonuses now scale with upgraded storage.",
-      "Made faction bonus information clearer."
+      "Made faction bonus information clearer.",
+      "All Resources bonuses now improve production without increasing storage capacity."
     ]
   }
 ]
