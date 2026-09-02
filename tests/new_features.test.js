@@ -263,6 +263,18 @@ test('getFactionTerritoryBonuses handles raw DB-shaped territory objects (owner_
   assert.equal(bonuses.allResources, 0.10);
 });
 
+test('only Storage territories increase storage capacity', () => {
+  const territories = [
+    { owner_faction: 'blue', bonus_type: 'resource', bonus_value: 0.10, storage_bonus: 0.10 },
+    { owner_faction: 'blue', bonus_type: 'fortress', bonus_value: 0.20, storage_bonus: 0.10 },
+    { owner_faction: 'blue', bonus_type: 'storage', bonus_value: 0.20, storage_bonus: 0.20 },
+  ];
+
+  const bonuses = getFactionTerritoryBonuses(territories, 'blue');
+  assert.equal(bonuses.allResources, 0.10);
+  assert.equal(bonuses.storage, 0.20);
+});
+
 test('production correctly uses territory bonuses from snapshot-shaped objects', () => {
   const buildings = { farm: 4, lumbermill: 1, ironmine: 1, barracks: 1 };
   const territories = [
