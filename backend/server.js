@@ -7,7 +7,6 @@ const { connect, getClient, initializeDatabase } = require('./db');
 const { issueToken, verifyToken, hashPassword, verifyPassword } = require('./auth');
 const {
   getUpgradeCost,
-  getTrainingCost,
   getProductionFromBuildings,
   getFactionTerritoryBonuses,
   getFactionStorageCaps,
@@ -17,6 +16,7 @@ const {
   PASSIVE_FORTRESS_TROOP_CAP,
 } = require('./game-logic');
 const { AttackError, performAttack } = require('./attack-logic');
+const { TrainingError, performSoldierTraining } = require('./soldier-training');
 const {
   isSafeUsername,
   isAuthorizedAdminPlayer,
@@ -734,26 +734,19 @@ app.post('/api/game/train-soldiers', requireAuth, asyncHandler(async (req, res) 
   const count = parsePositiveInt(req.body.amount || 0, 0, 5000);
   if (count <= 0) return res.status(400).json({ error: 'Training amount must be positive.' });
 
-  const player = await getPlayerById(req.user.userId);
-  if (!player.faction) return res.status(400).json({ error: 'Choose a faction before training troops.' });
-
-  const territories = await getTerritoriesSnapshot();
-  const territoryBonuses = getFactionTerritoryBonuses(territories, player.faction);
-  const trainingMultiplier = Math.max(0.4, 1 - (territoryBonuses.training || 0));
-  const cost = getTrainingCost(count, trainingMultiplier);
-
-  if (Number(player.resource_food) < cost.food || Number(player.resource_iron) < cost.iron || Number(player.resource_manpower) < cost.manpower) {
-    return res.status(400).json({ error: 'Not enough resources to train soldiers.' });
+  const client = await getClient();
+  let result;
+  try {
+    result = await performSoldierTraining(client, { playerId: req.user.userId, count });
+  } catch (error) {
+    if (error instanceof TrainingError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  } finally {
+    client.release();
   }
 
-  const db = await connect();
-  await db.query(
-    `UPDATE players SET resource_food = resource_food - $1, resource_iron = resource_iron - $2, resource_manpower = resource_manpower - $3, soldiers = soldiers + $4, last_action_at = NOW() WHERE id = $5`,
-    [cost.food, cost.iron, cost.manpower, count, player.id]
-  );
-
-  const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
-  res.json({ ok: true, state: snapshot, trainingCost: cost, trained: count });
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
+  res.json({ ok: true, state: snapshot, trainingCost: result.cost, trained: result.trained });
 }));
 
 app.post('/api/game/defend', requireAuth, asyncHandler(async (req, res) => {

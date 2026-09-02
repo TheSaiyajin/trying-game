@@ -868,11 +868,12 @@ function getAffordableTrainingAmount() {
       : total
   ), 0);
   const multiplier = Math.max(0.4, 1 - trainingBonus);
-  const maximum = Math.min(5000, Math.floor(Number(resources.food || 0) / (50 * multiplier)), Math.floor(Number(resources.iron || 0) / (20 * multiplier)), Math.floor(Number(resources.manpower || 0) / multiplier));
+  const maximum = Math.min(5000, Math.floor(Number(resources.food || 0) / (50 * multiplier)), Math.floor(Number(resources.iron || 0) / (25 * multiplier)), Math.floor(Number(resources.manpower || 0) / (20 * multiplier)));
   for (let amount = Math.max(0, maximum); amount > 0; amount -= 1) {
-    if (Math.round(50 * amount * multiplier) <= Number(resources.food || 0)
-      && Math.round(20 * amount * multiplier) <= Number(resources.iron || 0)
-      && Math.round(amount * multiplier) <= Number(resources.manpower || 0)) return amount;
+    const cost = calculateTrainingCost(amount, trainingBonus);
+    if (cost.food <= Number(resources.food || 0)
+      && cost.iron <= Number(resources.iron || 0)
+      && cost.manpower <= Number(resources.manpower || 0)) return amount;
   }
   return 0;
 }
@@ -2176,6 +2177,7 @@ if (typeof module !== 'undefined') {
     renderMapLegend,
     mapTerritories,
     calculateTrainingCost,
+    getAffordableTrainingAmount,
     loadChangelog,
     renderChangelogEntries,
     openChangelogModal,

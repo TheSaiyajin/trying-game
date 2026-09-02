@@ -183,6 +183,19 @@ test('training UI shows the active discount and rounded total for the selected q
   assert.deepEqual(calculateTrainingCost(20, 0.05), { food: 950, iron: 475, manpower: 380 });
 }));
 
+test('training affordability is limited by the 20 manpower per soldier cost', withFrontendGlobals(async () => {
+  const { setGameStateFromSnapshot, getAffordableTrainingAmount } = loadScriptModule();
+  setGameStateFromSnapshot({
+    player: {
+      faction: 'blue',
+      resources: { food: 5000, wood: 0, iron: 2500, manpower: 59 },
+    },
+    world: { territories: [] },
+  });
+
+  assert.equal(getAffordableTrainingAmount(), 2);
+}));
+
 test('faction bonus UI shows the city reserve cap and ignores stationed troops', withFrontendGlobals(async () => {
   const elements = new Map();
   global.document.getElementById = (id) => {

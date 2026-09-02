@@ -212,8 +212,11 @@ test('training cost and idle earnings are consistent with server-authoritative r
 
   const serverSource = fs.readFileSync(path.join(__dirname, '../backend/server.js'), 'utf8');
   const trainingRoute = serverSource.match(/app\.post\('\/api\/game\/train-soldiers'[\s\S]*?\n\}\)\);/);
-  assert.ok(trainingRoute?.[0].includes('getTrainingCost(count, trainingMultiplier)'), 'training endpoint should use the authoritative cost helper');
-  assert.ok(trainingRoute?.[0].includes('soldiers = soldiers + $4'), 'training should add requested troops even above the passive cap');
+  const trainingSource = fs.readFileSync(path.join(__dirname, '../backend/soldier-training.js'), 'utf8');
+  assert.ok(trainingRoute?.[0].includes('performSoldierTraining(client'), 'training endpoint should use the atomic authority helper');
+  assert.ok(trainingSource.includes('getTrainingCost(count, trainingMultiplier)'), 'training authority should use the shared cost helper');
+  assert.ok(trainingSource.includes('SELECT * FROM players WHERE id = $1 FOR UPDATE'), 'training authority should lock the player before checking resources');
+  assert.ok(trainingSource.includes('soldiers = soldiers + $4'), 'training should add requested troops even above the passive cap');
   assert.ok(!trainingRoute?.[0].includes('limitPassiveFortressTroopGain'), 'the passive fortress cap must not apply to training');
 
   const offlineGain = getOfflineResourceGain({ food: 8, wood: 6, iron: 4, manpower: 2 }, 300, 60 * 60 * 12);
