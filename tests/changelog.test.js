@@ -103,6 +103,7 @@ test('initial changelog entry contains only simple player-facing information', (
       'Balanced the resources required to train soldiers.',
       'Territory storage bonuses now scale with upgraded storage.',
       'Made faction bonus information clearer.',
+      'All Resources bonuses now improve production without increasing storage capacity.',
     ],
   }]);
   assert.deepEqual(Object.keys(entries[0]), ['title', 'changes']);

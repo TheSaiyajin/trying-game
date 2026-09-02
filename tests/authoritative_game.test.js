@@ -60,7 +60,7 @@ test('storage levels and territory bonuses determine fully upgraded capacity', (
   assert.equal(getStorageCapacity(10), 55000);
   assert.equal(getStorageCapacity(2, 0.30), 19500);
   assert.deepEqual(getFactionStorageCaps(
-    [{ owner_faction: 'blue', storage_bonus: 0.30 }],
+    [{ owner_faction: 'blue', bonus_type: 'storage', bonus_value: 0.30, storage_bonus: 0.30 }],
     'blue',
     { storage: 2 }
   ), { food: 19500, wood: 19500, iron: 19500, manpower: 19500 });
@@ -78,7 +78,7 @@ test('storage bonuses cap new gains without removing resources earned above a lo
   ), { food: 0, wood: 1, iron: 0, manpower: 0 });
 });
 
-test('storage bonus prefers dedicated storage fields and stacks with fortress and resource bonuses', () => {
+test('only Storage territories add capacity while fortress and resource effects remain active', () => {
   const territories = [
     { owner_faction: 'blue', bonus_type: 'storage', bonus_value: 0.20, storage_bonus: 0.15 },
     { owner: 'blue', bonus: 'storage', bonusValue: 0.10 },
