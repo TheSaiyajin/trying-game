@@ -1,0 +1,73 @@
+name: Deploy SaiWars Indev
+
+on:
+  push:
+    branches:
+      - indev
+
+concurrency:
+  group: saiwars-indev
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build check
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    permissions:
+      contents: read
+
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy indev to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" << 'EOF'
+            set -e
+
+            sudo -u game git -C /var/www/trying-game-indev fetch origin indev
+            sudo -u game git -C /var/www/trying-game-indev reset --hard origin/indev
+
+            BUILD_VERSION="$(sudo -u game git -C /var/www/trying-game-indev rev-parse --short HEAD)"
+            sudo -u game sed -i "s/__BUILD_VERSION__/${BUILD_VERSION}/g" /var/www/trying-game-indev/index.html
+            sudo -u game npm --prefix /var/www/trying-game-indev ci
+
+            sudo systemctl restart saiwars-indev
+
+            sleep 2
+            curl -fsS http://127.0.0.1:3001/api/health
+          EOF
