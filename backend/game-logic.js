@@ -77,8 +77,11 @@ function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
     if (bonusType === 'iron') bonuses.iron += bonusValue;
     if (bonusType === 'manpower') bonuses.manpower += bonusValue;
     if (bonusType === 'training') bonuses.training += bonusValue;
-    if (storageBonus !== undefined && storageBonus !== null) bonuses.storage += Number(storageBonus) || 0;
-    else if (bonusType === 'storage') bonuses.storage += bonusValue;
+    if (bonusType === 'storage') {
+      bonuses.storage += storageBonus !== undefined && storageBonus !== null
+        ? Number(storageBonus) || 0
+        : bonusValue;
+    }
     if (bonusType === 'resource') {
       bonuses.food += bonusValue;
       bonuses.wood += bonusValue;
