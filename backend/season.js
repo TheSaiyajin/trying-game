@@ -124,12 +124,13 @@ async function resetSeasonalGameplay(client) {
   );
   await client.query(
     `UPDATE buildings
-     SET farm = $1, lumbermill = $2, ironmine = $3, barracks = $4, updated_at = NOW()`,
+      SET farm = $1, lumbermill = $2, ironmine = $3, barracks = $4, storage = $5, updated_at = NOW()`,
     [
       STARTING_BUILDING_LEVELS.farm,
       STARTING_BUILDING_LEVELS.lumbermill,
       STARTING_BUILDING_LEVELS.ironmine,
       STARTING_BUILDING_LEVELS.barracks,
+      STARTING_BUILDING_LEVELS.storage,
     ]
   );
   await client.query('UPDATE faction_leaders SET player_id = NULL');

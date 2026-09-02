@@ -433,6 +433,8 @@ html, body {
 .building-name { font-weight: 700; font-size: 14px; margin-bottom: 1px; }
 .building-level { font-size: 11px; color: var(--text-dim); }
 .building-prod  { font-size: 12px; color: var(--accent-green); margin-top: 2px; }
+.building-capacity { font-size: 12px; color: var(--accent-green); margin-top: 2px; }
+.building-next-capacity { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
 .building-cost  { font-size: 11px; color: var(--accent-gold); margin-top: 2px; }
 .cost-line { font-size: 13px; margin-bottom: 6px; }
 .info-text { color: var(--text-dim); font-size: 13px; margin-top: 6px; }

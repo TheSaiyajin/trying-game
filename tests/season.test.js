@@ -419,6 +419,7 @@ test('seasonal reset clears gameplay progress and restores the canonical balance
   assert.equal(players.get(1).soldiers, 100);
   assert.equal(players.get(1).resource_food, 500);
   assert.equal(players.get(1).faction, null);
+  assert.equal(client.state.buildings.get(1).storage, 1);
   assert.equal(client.state.territories.get('n1').owner_faction, 'neutral');
   assert.equal(client.state.territories.get('n28').owner_faction, 'neutral');
   assert.equal(client.state.territories.size, 33);

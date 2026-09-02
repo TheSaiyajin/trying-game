@@ -166,7 +166,11 @@ test('training UI shows the active discount and rounded total for the selected q
     return elements.get(id);
   };
   global.document.getElementById('train-count').value = '10';
-  const { setGameStateFromSnapshot, updateTrainingCostDisplay, calculateTrainingCost } = loadScriptModule();
+  const {
+    setGameStateFromSnapshot,
+    updateTrainingCostDisplay,
+    calculateTrainingCost,
+  } = loadScriptModule();
   setGameStateFromSnapshot({
     player: { faction: 'blue', factionBonuses: { training: 0.05 } },
     world: { territories: [] },
@@ -175,8 +179,8 @@ test('training UI shows the active discount and rounded total for the selected q
   updateTrainingCostDisplay();
 
   assert.equal(elements.get('training-discount').textContent, '5%');
-  assert.equal(elements.get('training-total-cost').textContent, '475🌾 + 190⚙️ + 10👥');
-  assert.deepEqual(calculateTrainingCost(20, 0.05), { food: 950, iron: 380, manpower: 19 });
+  assert.equal(elements.get('training-total-cost').textContent, '475🌾 + 238⚙️ + 190👥');
+  assert.deepEqual(calculateTrainingCost(20, 0.05), { food: 950, iron: 475, manpower: 380 });
 }));
 
 test('faction bonus UI shows the city reserve cap and ignores stationed troops', withFrontendGlobals(async () => {
@@ -193,13 +197,16 @@ test('faction bonus UI shows the city reserve cap and ignores stationed troops',
       soldiers: 230,
       stationedTroops: { b1: 20 },
       fortressTroopCap: 250,
-      factionBonuses: { fortressTroops: 1 },
+      factionBonuses: { food: 0.15, allResources: 0.10, fortressTroops: 1 },
     },
     world: { territories: [] },
   });
 
   assert.match(elements.get('faction-bonuses').innerHTML, /Fortress reserve: 230\/250 · Active/);
   assert.match(elements.get('faction-bonuses').innerHTML, /Fortress Generation \+1\/min/);
+  assert.match(elements.get('faction-bonuses').innerHTML, /Food Production \+5%/);
+  assert.match(elements.get('faction-bonuses').innerHTML, /All Resources \+10%/);
+  assert.doesNotMatch(elements.get('faction-bonuses').innerHTML, /Food Production \+15%/);
 
   setGameStateFromSnapshot({
     player: { faction: 'blue', soldiers: 265, stationedTroops: { b1: 20 }, fortressTroopCap: 250 },

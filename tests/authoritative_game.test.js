@@ -6,6 +6,7 @@ const {
   getUpgradeCost,
   getProductionFromBuildings,
   getFactionStorageCaps,
+  getStorageCapacity,
   limitResourceGain,
   limitPassiveFortressTroopGain,
   getFactionTerritoryBonuses,
@@ -24,9 +25,11 @@ test('admin route parser accepts positive digit-string IDs', () => {
   assert.equal(parsePositiveInt('2', 0, 100000), 2);
 });
 
-test('upgrade cost grows with level using backend rules', () => {
+test('upgrade cost preserves level 2 and scales exponentially after it', () => {
   assert.deepEqual(getUpgradeCost('farm', 1), { food: 50, wood: 80, iron: 0 });
   assert.deepEqual(getUpgradeCost('farm', 2), { food: 100, wood: 160, iron: 0 });
+  assert.deepEqual(getUpgradeCost('farm', 3), { food: 210, wood: 336, iron: 0 });
+  assert.deepEqual(getUpgradeCost('storage', 5), { food: 1372, wood: 2196, iron: 1647 });
 });
 
 test('production uses faction-controlled territory bonuses from the backend', () => {
@@ -43,6 +46,24 @@ test('production uses faction-controlled territory bonuses from the backend', ()
   assert.equal(result.wood, 12);
   assert.equal(result.iron, 3);
   assert.equal(result.manpower, 4);
+
+  assert.deepEqual(
+    getProductionFromBuildings({ farm: 11, lumbermill: 11, ironmine: 11, barracks: 11 }),
+    { food: 50, wood: 40, iron: 30, manpower: 20 }
+  );
+});
+
+test('storage levels and territory bonuses determine fully upgraded capacity', () => {
+  assert.equal(getStorageCapacity(1), 10000);
+  assert.equal(getStorageCapacity(2), 15000);
+  assert.equal(getStorageCapacity(5), 30000);
+  assert.equal(getStorageCapacity(10), 55000);
+  assert.equal(getStorageCapacity(2, 0.30), 19500);
+  assert.deepEqual(getFactionStorageCaps(
+    [{ owner_faction: 'blue', storage_bonus: 0.30 }],
+    'blue',
+    { storage: 2 }
+  ), { food: 19500, wood: 19500, iron: 19500, manpower: 19500 });
 });
 
 test('storage bonuses cap new gains without removing resources earned above a lost buff cap', () => {
@@ -137,6 +158,7 @@ test('legacy databases get the required player migration columns before registra
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS faction')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE players ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NULL')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE buildings ADD COLUMN IF NOT EXISTS farm')));
+  assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE buildings ADD COLUMN IF NOT EXISTS storage INTEGER NOT NULL DEFAULT 1')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE territories ADD COLUMN IF NOT EXISTS owner_faction')));
   assert.ok(sqlCalls.some((sql) => sql.includes('ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS contribution')));
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE UNIQUE INDEX IF NOT EXISTS territory_defenders_territory_player_idx')));
@@ -157,14 +179,36 @@ test('legacy databases get the required player migration columns before registra
   assert.equal(sqlCalls.some((sql) => sql.includes('INSERT INTO player_season_stats') && sql.includes('SELECT')), false);
 });
 
+test('storage schema, registration, snapshots, and upgrades stay server-authoritative', () => {
+  const schemaSource = fs.readFileSync(path.join(__dirname, '../backend/schema.sql'), 'utf8');
+  const serverSource = fs.readFileSync(path.join(__dirname, '../backend/server.js'), 'utf8');
+  const routeStart = serverSource.indexOf("app.post('/api/game/upgrade-building'");
+  const routeEnd = serverSource.indexOf("app.post('/api/game/train-soldiers'", routeStart);
+  const upgradeRoute = serverSource.slice(routeStart, routeEnd);
+
+  assert.match(schemaSource, /storage INTEGER NOT NULL DEFAULT 1/);
+  assert.match(serverSource, /INSERT INTO buildings \(player_id, farm, lumbermill, ironmine, barracks, storage\)/);
+  assert.match(serverSource, /storage: Number\(row\.storage \|\| 1\)/);
+  assert.match(serverSource, /buildingUpgradeCosts/);
+  assert.match(serverSource, /nextStorageCaps/);
+  assert.match(upgradeRoute, /const client = await getClient\(\)/);
+  assert.match(upgradeRoute, /await client\.query\('BEGIN'\)/);
+  assert.match(upgradeRoute, /SELECT \* FROM players WHERE id = \$1 FOR UPDATE/);
+  assert.match(upgradeRoute, /SELECT \* FROM buildings WHERE player_id = \$1 FOR UPDATE/);
+  assert.match(upgradeRoute, /currentLevel >= MAX_BUILDING_LEVEL/);
+  assert.match(upgradeRoute, /maximum level of \$\{MAX_BUILDING_LEVEL\}/);
+  assert.match(upgradeRoute, /await client\.query\('COMMIT'\)/);
+  assert.match(upgradeRoute, /client\.release\(\)/);
+});
+
 test('training cost and idle earnings are consistent with server-authoritative rules', () => {
   const trainingCost = getTrainingCost(5, 1);
   assert.equal(trainingCost.food, 250);
-  assert.equal(trainingCost.iron, 100);
-  assert.equal(trainingCost.manpower, 5);
+  assert.equal(trainingCost.iron, 125);
+  assert.equal(trainingCost.manpower, 100);
 
-  assert.deepEqual(getTrainingCost(10, 0.95), { food: 475, iron: 190, manpower: 10 });
-  assert.deepEqual(getTrainingCost(20, 0.95), { food: 950, iron: 380, manpower: 19 });
+  assert.deepEqual(getTrainingCost(10, 0.95), { food: 475, iron: 238, manpower: 190 });
+  assert.deepEqual(getTrainingCost(20, 0.95), { food: 950, iron: 475, manpower: 380 });
 
   const serverSource = fs.readFileSync(path.join(__dirname, '../backend/server.js'), 'utf8');
   const trainingRoute = serverSource.match(/app\.post\('\/api\/game\/train-soldiers'[\s\S]*?\n\}\)\);/);

@@ -16,7 +16,7 @@ const DEFAULT_STATE = {
     role: 'member',
     resources: { food: 0, wood: 0, iron: 0, manpower: 0 },
     soldiers: 0,
-    buildings: { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
+    buildings: { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1, storage: 1 },
     production: { food: 0, wood: 0, iron: 0, manpower: 0 },
   },
   territories: {},
@@ -199,7 +199,7 @@ function setGameStateFromSnapshot(snapshot) {
     player: {
       ...(snapshot.player || {}),
       resources: snapshot.player?.resources || { food: 0, wood: 0, iron: 0, manpower: 0 },
-      buildings: snapshot.player?.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
+      buildings: snapshot.player?.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1, storage: 1 },
       production: snapshot.player?.production || { food: 0, wood: 0, iron: 0, manpower: 0 },
       factionBonuses: snapshot.player?.factionBonuses || { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 },
       stationedTroops: snapshot.player?.stationedTroops || {},
@@ -648,7 +648,10 @@ function renderFactionBonuses() {
     ['training', '⚔️ Training Cost', '-', '%'], ['storage', '📦 Storage', '+', '%'],
     ['fortressTroops', '🏰 Fortress Generation', '+', '/min'], ['allResources', '✨ All Resources', '+', '%'],
   ].map(([key, label, prefix, suffix]) => {
-    const value = Number(bonuses[key] || 0);
+    const combinedValue = Number(bonuses[key] || 0);
+    const value = ['food', 'wood', 'iron', 'manpower'].includes(key)
+      ? Math.max(0, combinedValue - Number(bonuses.allResources || 0))
+      : combinedValue;
     if (value <= 0) return null;
     return `<span>${label} ${prefix}${suffix === '%' ? Math.round(value * 100) : value}${suffix}</span>`;
   }).filter(Boolean)];
@@ -661,8 +664,8 @@ function calculateTrainingCost(count, trainingBonus = 0) {
   const minimum = amount > 0 ? 1 : 0;
   return {
     food: Math.max(minimum, Math.round(50 * amount * multiplier)),
-    iron: Math.max(minimum, Math.round(20 * amount * multiplier)),
-    manpower: Math.max(minimum, Math.round(amount * multiplier)),
+    iron: Math.max(minimum, Math.round(25 * amount * multiplier)),
+    manpower: Math.max(minimum, Math.round(20 * amount * multiplier)),
   };
 }
 
@@ -678,38 +681,43 @@ function updateTrainingCostDisplay() {
 }
 
 function renderCity() {
-  const buildings = G.player.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 };
+  const buildings = G.player.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1, storage: 1 };
   const serverProduction = G.player.production || { food: 0, wood: 0, iron: 0, manpower: 0 };
   const factionBonuses = G.player.factionBonuses || { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 };
   const container = document.getElementById('building-list');
   container.innerHTML = '';
 
   const defs = {
-    farm: { name: 'Farm', icon: '🌾', resource: 'food', baseRate: 5, cost: { food: 50, wood: 80, iron: 0 } },
-    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', baseRate: 4, cost: { food: 40, wood: 0, iron: 60 } },
-    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', baseRate: 3, cost: { food: 30, wood: 100, iron: 0 } },
-    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', baseRate: 2, cost: { food: 80, wood: 60, iron: 80 } },
+    farm: { name: 'Farm', icon: '🌾', resource: 'food', baseRate: 5 },
+    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', baseRate: 4 },
+    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', baseRate: 3 },
+    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', baseRate: 2 },
+    storage: { name: 'Storage', icon: '📦' },
   };
 
   Object.entries(defs).forEach(([key, def]) => {
     const level = Number(buildings[key] || 1);
-    const baseProd = def.baseRate * level;
-    const totalProd = Number(serverProduction[def.resource] || baseProd);
+    const isStorage = key === 'storage';
+    const baseProd = isStorage ? 0 : def.baseRate * level;
+    const totalProd = isStorage ? 0 : Number(serverProduction[def.resource] || baseProd);
     const bonusPct = Math.round((factionBonuses[def.resource] || 0) * 100);
     const nextLevel = level + 1;
-    const cost = {
-      food: def.cost.food * nextLevel,
-      wood: def.cost.wood * nextLevel,
-      iron: def.cost.iron * nextLevel,
-    };
+    const isMaxLevel = level >= 10;
+    const cost = G.player.buildingUpgradeCosts?.[key];
     const costParts = [];
-    if (cost.food > 0) costParts.push(`${fmt(cost.food)}🌾`);
-    if (cost.wood > 0) costParts.push(`${fmt(cost.wood)}🪵`);
-    if (cost.iron > 0) costParts.push(`${fmt(cost.iron)}⚙️`);
+    if (cost?.food > 0) costParts.push(`${fmt(cost.food)}🌾`);
+    if (cost?.wood > 0) costParts.push(`${fmt(cost.wood)}🪵`);
+    if (cost?.iron > 0) costParts.push(`${fmt(cost.iron)}⚙️`);
 
-    const bonusLine = bonusPct > 0
+    const bonusLine = !isStorage && bonusPct > 0
       ? `<div class="building-bonus">Territory bonus: +${bonusPct}%</div>`
       : '';
+        const currentCapacity = Number(G.player.storageCaps?.food) || 0;
+    const buildingDetail = isStorage
+      ? `<div class="building-capacity">Capacity: ${fmt(currentCapacity)} each</div>
+          <div class="building-next-capacity">Next capacity: ${isMaxLevel ? 'MAX' : `${fmt(G.player.nextStorageCaps?.food || 0)} each`}</div>`
+      : `<div class="building-prod">+${totalProd} ${def.resource}/min</div>`;
+    const costLine = isMaxLevel ? '' : `<div class="building-cost">Next: ${costParts.join(' + ')}</div>`;
 
     const card = document.createElement('div');
     card.className = 'building-card';
@@ -717,11 +725,11 @@ function renderCity() {
       <div class="building-info">
         <div class="building-name">${def.icon} ${def.name}</div>
         <div class="building-level">Level ${level}</div>
-        <div class="building-prod">+${totalProd} ${def.resource}/min</div>
+        ${buildingDetail}
         ${bonusLine}
-        <div class="building-cost">Next: ${costParts.join(' + ')}</div>
+        ${costLine}
       </div>
-      <button class="btn-upgrade" onclick="upgradeBuilding('${key}')">⬆ Lvl ${nextLevel}</button>
+      <button class="btn-upgrade" onclick="upgradeBuilding('${key}')" ${isMaxLevel ? 'disabled' : ''}>${isMaxLevel ? 'MAX' : `⬆ Lvl ${nextLevel}`}</button>
     `;
     container.appendChild(card);
   });

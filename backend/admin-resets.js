@@ -16,6 +16,7 @@ const STARTING_BUILDING_LEVELS = Object.freeze({
   lumbermill: 1,
   ironmine: 1,
   barracks: 1,
+  storage: 1,
 });
 
 function getWorldResetSeedSql(seedSql = null) {
@@ -85,13 +86,15 @@ async function resetPlayerProgress(client, { actorId, playerId }) {
          lumbermill = $2,
          ironmine = $3,
          barracks = $4,
+         storage = $5,
          updated_at = NOW()
-     WHERE player_id = $5`,
+       WHERE player_id = $6`,
     [
       STARTING_BUILDING_LEVELS.farm,
       STARTING_BUILDING_LEVELS.lumbermill,
       STARTING_BUILDING_LEVELS.ironmine,
       STARTING_BUILDING_LEVELS.barracks,
+      STARTING_BUILDING_LEVELS.storage,
       playerId,
     ]
   );
@@ -157,12 +160,14 @@ async function resetWorldState(client, { actorId, applyWorldSeedFn = applyWorldS
          lumbermill = $2,
          ironmine = $3,
          barracks = $4,
+         storage = $5,
          updated_at = NOW()`,
     [
       STARTING_BUILDING_LEVELS.farm,
       STARTING_BUILDING_LEVELS.lumbermill,
       STARTING_BUILDING_LEVELS.ironmine,
       STARTING_BUILDING_LEVELS.barracks,
+      STARTING_BUILDING_LEVELS.storage,
     ]
   );
 
