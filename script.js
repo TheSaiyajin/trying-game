@@ -20,8 +20,7 @@ const DEFAULT_STATE = {
     production: { food: 0, wood: 0, iron: 0, manpower: 0 },
   },
   territories: {},
-  attackTarget: '',
-  attackContributions: {},
+  rallies: {},
   chatMessages: [],
   season: null,
 };
@@ -79,6 +78,22 @@ function mapTerritories(rawTerritories) {
     };
   });
   return entryMap;
+}
+
+function mapRallies(rawRallies) {
+  const rallies = {};
+  (rawRallies || []).forEach((rally) => {
+    rallies[rally.territoryId] = {
+      territoryId: rally.territoryId,
+      attackerFaction: rally.attackerFaction,
+      defenderFaction: rally.defenderFaction,
+      startedBy: rally.startedBy,
+      resolvesAt: rally.resolvesAt,
+      totalAttackers: Number(rally.totalAttackers || 0),
+      myContribution: Number(rally.myContribution || 0),
+    };
+  });
+  return rallies;
 }
 
 function isAdminUser(user) {
@@ -205,8 +220,7 @@ function setGameStateFromSnapshot(snapshot) {
       stationedTroops: snapshot.player?.stationedTroops || {},
     },
     territories: mapTerritories(snapshot.world?.territories || snapshot.territories || []),
-    attackTarget: '',
-    attackContributions: {},
+    rallies: mapRallies(snapshot.world?.rallies || []),
     // A season/faction change invalidates any cached chat: never show the previous
     // faction's messages, even briefly, while the new season's chat loads.
     chatMessages: previousFaction && previousFaction === G.player?.faction ? (G.chatMessages || []) : [],
@@ -938,6 +952,8 @@ function createHexPoints(cx, cy, radius = 28) {
 function canAttack(id, gameState = G) {
   const territory = gameState.territories[id];
   if (!territory || territory.capital || territory.owner === gameState.player.faction) return false;
+  const rally = gameState.rallies?.[id];
+  if (rally && rally.attackerFaction !== gameState.player.faction) return false;
   return territory.adj.some((neighborId) => gameState.territories[neighborId] && gameState.territories[neighborId].owner === gameState.player.faction);
 }
 
@@ -987,7 +1003,7 @@ function renderMap() {
     poly.setAttribute('fill', fill);
     poly.setAttribute('stroke', selectedTerritoryId === id ? '#fff' : stroke);
     poly.setAttribute('stroke-width', selectedTerritoryId === id ? '3' : '1.5');
-    poly.setAttribute('class', `territory${selectedTerritoryId === id ? ' selected' : ''}${canAttack(id) ? ' attackable' : ''}`);
+    poly.setAttribute('class', `territory${selectedTerritoryId === id ? ' selected' : ''}${canAttack(id) ? ' attackable' : ''}${G.rallies[id] ? ' rally-active' : ''}`);
     poly.setAttribute('data-id', id);
     poly.addEventListener('click', (event) => {
       if (event.button !== undefined && event.button !== 0) return;
@@ -1021,6 +1037,16 @@ function renderMap() {
       capitalMarker.setAttribute('class', 'territory-capital-marker');
       capitalMarker.textContent = '👑';
       svg.appendChild(capitalMarker);
+    }
+
+    if (G.rallies[id]) {
+      const rallyMarker = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      rallyMarker.setAttribute('x', x - 18);
+      rallyMarker.setAttribute('y', y - 14);
+      rallyMarker.setAttribute('text-anchor', 'middle');
+      rallyMarker.setAttribute('class', 'territory-rally-marker');
+      rallyMarker.textContent = '⏳';
+      svg.appendChild(rallyMarker);
     }
 
     const troops = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -1200,6 +1226,40 @@ function initializeMobileMap(svg) {
 
 let recallSendCount = 1;
 
+function formatRallyCountdown(resolvesAt, now = Date.now()) {
+  const totalSeconds = Math.max(0, Math.ceil((new Date(resolvesAt).getTime() - now) / 1000));
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
+}
+
+function renderSelectedRallyStatus() {
+  const status = document.getElementById('rally-status');
+  if (!status) return;
+  const rally = selectedTerritoryId ? G.rallies[selectedTerritoryId] : null;
+  const territory = selectedTerritoryId ? G.territories[selectedTerritoryId] : null;
+  if (!rally || !territory) {
+    status.style.display = 'none';
+    return;
+  }
+
+  status.style.display = 'flex';
+  document.getElementById('rally-status-title').textContent = `⏳ ${ownerLabel(rally.attackerFaction)} rally`;
+  const remaining = new Date(rally.resolvesAt).getTime() - Date.now();
+  document.getElementById('rally-status-countdown').textContent = remaining > 0
+    ? formatRallyCountdown(rally.resolvesAt)
+    : 'Resolving…';
+  document.getElementById('rally-status-troops').textContent = `Attackers: ${rally.totalAttackers} · Defenders: ${territory.troops}`;
+  const personal = document.getElementById('rally-status-personal');
+  personal.textContent = rally.attackerFaction === G.player.faction
+    ? `Your contribution: ${rally.myContribution}`
+    : 'Reinforce this territory before time runs out.';
+}
+
+function tickRallyCountdowns() {
+  if (selectedTerritoryId) renderSelectedRallyStatus();
+}
+
 function selectTerritory(id, { preserveTroopInputs = false } = {}) {
   selectedTerritoryId = id;
   const territory = G.territories[id];
@@ -1213,17 +1273,27 @@ function selectTerritory(id, { preserveTroopInputs = false } = {}) {
   document.getElementById('tp-city-soldiers').textContent = Number(G.player.soldiers || 0);
   const stationed = Number((G.player.stationedTroops || {})[id] || 0);
   document.getElementById('tp-stationed').textContent = stationed;
+  const rally = G.rallies[id] || null;
   document.getElementById('tp-battle-rule').textContent = territory.capital
     ? 'Protected capital — cannot be attacked or occupied.'
-    : 'Send more troops than defenders to capture';
+    : rally
+      ? 'Rally resolves when the timer reaches zero'
+      : territory.owner === 'neutral'
+        ? 'Neutral attacks resolve immediately'
+        : 'Enemy attacks open a 10-minute rally';
   document.getElementById('tp-bonus').textContent = formatBonusLabel(territory.bonus, territory.bonusValue);
   document.getElementById('tp-neighbors').textContent = (territory.adj || []).map((neighborId) => G.territories[neighborId]?.name || neighborId).join(', ');
 
   const attackSection = document.getElementById('attack-section');
   const defendSection = document.getElementById('defend-section');
   const recallSection = document.getElementById('recall-section');
+  const attackLabel = document.getElementById('attack-action-label');
+  const attackButton = document.getElementById('attack-action-button');
+  renderSelectedRallyStatus();
   if (canAttack(id)) {
     attackSection.style.display = 'block';
+    if (attackLabel) attackLabel.textContent = rally ? '⚔️ Join Rally' : '⚔️ Attack';
+    if (attackButton) attackButton.textContent = rally ? '⚔️ Add Troops to Rally' : territory.owner === 'neutral' ? '⚔️ Attack Territory' : '⚔️ Start 10-Minute Rally';
     defendSection.style.display = 'none';
     if (recallSection) recallSection.style.display = 'none';
     if (!preserveTroopInputs) {
@@ -1331,7 +1401,13 @@ async function launchAttack() {
         : `<span class="result-defeat">💀 HELD!</span><br>Attack failed.<br>Defenders left: ${result.defendersRemaining}`;
       document.getElementById('battle-popup').style.display = 'block';
     }
-    showToast(result?.victory ? '✅ Territory captured.' : '⚠️ Attack resolved by troop count.');
+    if (response.rally) {
+      showToast(response.rallyCreated
+        ? '⏳ Rally started. Allies have 10 minutes to join.'
+        : `⚔️ ${response.sent} troops added to the rally.`);
+    } else {
+      showToast(result?.victory ? '✅ Territory captured.' : '⚠️ Neutral attack resolved by troop count.');
+    }
     renderCity();
     renderMap();
     updateResourceBar();
@@ -1418,32 +1494,6 @@ async function recallDefenders() {
     renderMap();
     updateResourceBar();
     if (selectedTerritoryId) selectTerritory(selectedTerritoryId);
-  } catch (error) {
-    showToast(`❌ ${error.message}`);
-  }
-}
-
-async function resolveSelectedTargetBattle() {
-  if (!selectedTerritoryId) {
-    showToast('❌ Select a target first.');
-    return;
-  }
-  try {
-    const response = await apiFetch('/game/resolve-battle', {
-      method: 'POST',
-      body: JSON.stringify({ territoryId: selectedTerritoryId }),
-    });
-    setGameStateFromSnapshot(response.state);
-
-    const result = response.outcome;
-    document.getElementById('battle-result-text').innerHTML = result.victory
-      ? `<span class="result-victory">⚔️ VICTORY!</span><br>Attack succeeded.<br>Attackers left: ${result.attackersRemaining}`
-      : `<span class="result-defeat">💀 DEFEAT!</span><br>Attack failed.<br>Defenders lost: ${result.defendersLost}`;
-    document.getElementById('battle-popup').style.display = 'block';
-    renderMap();
-    renderCity();
-    updateResourceBar();
-    showToast(result.victory ? '✅ Victory resolved by the server.' : '⚠️ Battle resolved by the server.');
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }
@@ -2158,6 +2208,7 @@ if (typeof document !== 'undefined') {
         // Smooth HH:MM:SS countdown to the current season end; the season data
         // itself only refreshes with the 60s background poll above.
         setInterval(tickScoreboardCountdown, 1000);
+        setInterval(tickRallyCountdowns, 1000);
       } else {
         showAuthScreen();
         setAuthMode('login');
@@ -2176,6 +2227,7 @@ if (typeof module !== 'undefined') {
     getFactionLegendEntries,
     renderMapLegend,
     mapTerritories,
+    mapRallies,
     calculateTrainingCost,
     getAffordableTrainingAmount,
     loadChangelog,
@@ -2204,6 +2256,8 @@ if (typeof module !== 'undefined') {
     changeDefend,
     changeRecall,
     formatCountdown,
+    formatRallyCountdown,
+    tickRallyCountdowns,
     formatScoreboardFaction,
     renderScoreboard,
     apiFetch,

@@ -92,6 +92,20 @@ async function applySchemaMigrations(currentClient) {
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
     `CREATE UNIQUE INDEX IF NOT EXISTS attack_contributions_territory_player_idx ON attack_contributions (territory_id, player_id)`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS started_by INTEGER REFERENCES players(id) ON DELETE CASCADE`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS defender_faction VARCHAR(16)`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS season_id INTEGER`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS resolves_at TIMESTAMPTZ`,
+    `DELETE FROM attack_targets
+     WHERE started_by IS NULL OR defender_faction IS NULL OR season_id IS NULL OR resolves_at IS NULL`,
+    `DELETE FROM attack_contributions ac
+     WHERE NOT EXISTS (SELECT 1 FROM attack_targets at WHERE at.territory_id = ac.territory_id)`,
+    `ALTER TABLE attack_targets ALTER COLUMN started_by SET NOT NULL`,
+    `ALTER TABLE attack_targets ALTER COLUMN defender_faction SET NOT NULL`,
+    `ALTER TABLE attack_targets ALTER COLUMN season_id SET NOT NULL`,
+    `ALTER TABLE attack_targets ALTER COLUMN resolves_at SET NOT NULL`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS attack_targets_territory_idx ON attack_targets (territory_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_attack_targets_due ON attack_targets (resolves_at, id)`,
     `ALTER TABLE faction_leaders ALTER COLUMN player_id DROP NOT NULL`,
     `ALTER TABLE admin_actions ADD COLUMN IF NOT EXISTS action_detail TEXT`,
     `CREATE TABLE IF NOT EXISTS faction_chat_messages (

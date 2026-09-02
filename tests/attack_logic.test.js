@@ -411,3 +411,20 @@ test('returns 409 when an attack on the same territory is already in progress', 
     (error) => error instanceof AttackError && error.status === 409
   );
 });
+
+test('neutral-only attacks cannot resolve instantly if the territory became faction-owned', async () => {
+  const { players, territories, neighbors } = buildWorld();
+  const client = createFakeClient({ players, territories, neighbors });
+
+  await assert.rejects(
+    () => performAttack(client, {
+      playerId: 1,
+      territoryId: 'n3',
+      soldiers: 10,
+      neutralOnly: true,
+    }),
+    (error) => error instanceof AttackError && error.status === 409 && /Start a rally/.test(error.message)
+  );
+  assert.equal(players.get(1).soldiers, 50);
+  assert.equal(territories.get('n3').owner_faction, 'red');
+});

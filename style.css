@@ -587,6 +587,7 @@ html, body {
 .leg-green  { color: #66cc77; font-weight: 700; }
 .leg-target { color: var(--accent-gold); font-weight: 700; }
 .territory-capital-marker { font-size: 14px; }
+.territory-rally-marker { font-size: 12px; }
 
 .map-container {
   position: relative;
@@ -684,6 +685,20 @@ html, body {
 .tp-item.tp-wide { grid-column: span 2; }
 .tp-label { display: block; font-size: 10px; color: var(--text-dim); margin-bottom: 2px; }
 .tp-item span:last-child { font-size: 13px; font-weight: 600; }
+
+.rally-status {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--accent-gold);
+  border-radius: 7px;
+  background: rgba(227, 179, 65, 0.08);
+  font-size: 12px;
+}
+.rally-status strong { color: var(--accent-gold); }
+#rally-status-countdown { font-variant-numeric: tabular-nums; }
 
 .divider { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 .attack-hint { font-size: 14px; font-weight: 700; color: var(--accent-red); margin-bottom: 4px; }
@@ -1075,6 +1090,7 @@ html, body {
 .faction-bonuses span { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; color: var(--text-main); font-size: 11px; font-weight: 600; }
 
 .territory.attackable { stroke: var(--accent-gold) !important; stroke-width: 2.5 !important; filter: drop-shadow(0 0 4px rgba(227, 179, 65, 0.8)); }
+.territory.rally-active { stroke-dasharray: 5 3; filter: drop-shadow(0 0 5px rgba(227, 179, 65, 0.9)); }
 .territory.selected { stroke: #fff !important; stroke-width: 3.5 !important; filter: brightness(1.35); }
 .territory-bonus-icon { font-size: 11px; }
 

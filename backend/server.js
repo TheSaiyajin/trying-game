@@ -47,6 +47,11 @@ const {
 } = require('./defender-garrisons');
 const { resolveBattle } = require('./resolve-battle');
 const {
+  getActiveRallies,
+  getExpiredRallyTerritoryIds,
+  startOrJoinRally,
+} = require('./rally-battles');
+const {
   ensureCurrentSeason,
   ensurePlayerFactionAssignment,
   forceFinishCurrentSeason,
@@ -91,7 +96,7 @@ app.use(rateLimit({
 
 app.use('/api', (req, res, next) => {
   const isStateMutation = req.method !== 'GET' && (
-    /^\/game\/(upgrade-building|train-soldiers|defend|recall-defenders|attack|resolve-battle)$/.test(req.path)
+    /^\/game\/(upgrade-building|train-soldiers|defend|recall-defenders|attack)$/.test(req.path)
     || req.path.startsWith('/admin/')
   );
   if (isStateMutation) {
@@ -445,6 +450,42 @@ function startResourceTickLoop() {
   resourceTickHandle = setInterval(runGlobalResourceTick, 60 * 1000);
 }
 
+let rallyResolutionHandle = null;
+let rallyResolutionRunning = false;
+
+async function runExpiredRallyResolution({ now = new Date(), suppressErrors = true } = {}) {
+  if (rallyResolutionRunning) return { resolved: 0, skipped: true };
+  rallyResolutionRunning = true;
+  let resolved = 0;
+  try {
+    const db = await connect();
+    const territoryIds = await getExpiredRallyTerritoryIds(db, { now });
+    for (const territoryId of territoryIds) {
+      const client = await getClient();
+      try {
+        const result = await resolveBattle(client, { territoryId, now });
+        if (result.ok || result.cancelled) resolved += 1;
+      } finally {
+        client.release();
+      }
+    }
+    if (resolved > 0) notifyStateChanged();
+    return { resolved, skipped: false };
+  } catch (error) {
+    if (!suppressErrors) throw error;
+    console.error('Rally resolution failed:', error);
+    return { resolved, skipped: false, error };
+  } finally {
+    rallyResolutionRunning = false;
+  }
+}
+
+function startRallyResolutionLoop() {
+  if (rallyResolutionHandle) return;
+  runExpiredRallyResolution();
+  rallyResolutionHandle = setInterval(runExpiredRallyResolution, 5 * 1000);
+}
+
 async function getPlayerWorldState(playerId, season = null) {
   const player = await applyOfflineResourceEarnings(playerId) || await getPlayerById(playerId);
   if (!player) return null;
@@ -472,6 +513,9 @@ async function getPlayerWorldState(playerId, season = null) {
   for (const row of stationedResult.rows) {
     stationedTroops[row.territory_id] = Number(row.troops);
   }
+  const rallies = season
+    ? await getActiveRallies(db, { seasonId: season.id, playerId })
+    : [];
 
   return {
     player: {
@@ -500,6 +544,7 @@ async function getPlayerWorldState(playerId, season = null) {
     },
     world: {
       territories,
+      rallies,
       players: players.rows.map((row) => ({
         id: row.id,
         username: row.username,
@@ -884,12 +929,23 @@ app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
   const client = await getClient();
   let result;
   try {
-    result = await performAttack(client, {
-      playerId: req.user.userId,
-      territoryId,
-      soldiers,
-      seasonId: req.currentSeason.id,
-    });
+    const db = await connect();
+    const targetResult = await db.query('SELECT owner_faction FROM territories WHERE id = $1', [territoryId]);
+    const targetOwner = targetResult.rows[0]?.owner_faction;
+    result = targetOwner === 'neutral'
+      ? await performAttack(client, {
+        playerId: req.user.userId,
+        territoryId,
+        soldiers,
+        seasonId: req.currentSeason.id,
+        neutralOnly: true,
+      })
+      : await startOrJoinRally(client, {
+        playerId: req.user.userId,
+        territoryId,
+        soldiers,
+        seasonId: req.currentSeason.id,
+      });
   } catch (error) {
     if (error instanceof AttackError) {
       return res.status(error.status).json({ error: error.message });
@@ -900,7 +956,15 @@ app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
   }
 
   const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
-  res.json({ ok: true, state: snapshot, sent: result.sent, territoryId: result.territoryId, outcome: result.outcome });
+  res.json({
+    ok: true,
+    state: snapshot,
+    sent: result.sent,
+    territoryId: result.territoryId || territoryId,
+    outcome: result.outcome || null,
+    rally: result.rally || null,
+    rallyCreated: Boolean(result.rally && result.created),
+  });
 }));
 
 app.get('/api/game/faction-chat', requireAuth, asyncHandler(async (req, res) => {
@@ -926,25 +990,6 @@ app.post('/api/game/faction-chat', requireAuth, factionChatSendRateLimit, asyncH
   if (!result.ok) return res.status(result.status).json({ error: result.error });
 
   res.status(201).json({ faction: player.faction, message: result.message });
-}));
-
-app.post('/api/game/resolve-battle', requireAuth, asyncHandler(async (req, res) => {
-  const territoryId = String(req.body.territoryId || '').trim();
-  if (!territoryId) return res.status(400).json({ error: 'No territory selected.' });
-
-  const player = await getPlayerById(req.user.userId);
-  if (!player) return res.status(404).json({ error: 'Player not found.' });
-  const db = await getClient();
-  try {
-    const result = await resolveBattle(db, { player, territoryId, seasonId: req.currentSeason.id });
-    if (!result.ok) {
-      return res.status(result.status).json({ error: result.error });
-    }
-    const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
-    res.json({ ok: true, outcome: result.outcome, state: snapshot });
-  } finally {
-    db.release();
-  }
 }));
 
 app.post('/api/admin/reset-world', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
@@ -1261,6 +1306,7 @@ if (require.main === module) {
     try {
       await initializeDatabase();
       startResourceTickLoop();
+      startRallyResolutionLoop();
       console.log(`Server ready on http://localhost:${PORT}`);
     } catch (error) {
       console.error('Database initialization failed:', error.message);
@@ -1269,4 +1315,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { applyOfflineResourceEarnings, runGlobalResourceTick };
+module.exports = { applyOfflineResourceEarnings, runExpiredRallyResolution, runGlobalResourceTick };

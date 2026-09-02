@@ -93,7 +93,11 @@ CREATE TABLE IF NOT EXISTS attack_targets (
   id SERIAL PRIMARY KEY,
   faction VARCHAR(16) NOT NULL,
   territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  started_by INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  defender_faction VARCHAR(16) NOT NULL,
+  season_id INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolves_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS faction_leaders (
@@ -156,6 +160,8 @@ CREATE TABLE IF NOT EXISTS season_territory_faction_ownership (
 CREATE INDEX IF NOT EXISTS idx_players_username ON players(username);
 CREATE INDEX IF NOT EXISTS idx_buildings_player ON buildings(player_id);
 CREATE INDEX IF NOT EXISTS idx_attack_contrib_territory ON attack_contributions(territory_id);
+CREATE UNIQUE INDEX IF NOT EXISTS attack_targets_territory_idx ON attack_targets(territory_id);
+CREATE INDEX IF NOT EXISTS idx_attack_targets_due ON attack_targets(resolves_at, id);
 CREATE INDEX IF NOT EXISTS idx_defenders_territory ON territory_defenders(territory_id);
 CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time ON faction_chat_messages(faction, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_player_season_stats_rankings ON player_season_stats(season_id);
