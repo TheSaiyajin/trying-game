@@ -16,7 +16,7 @@ const DEFAULT_STATE = {
     role: 'member',
     resources: { food: 0, wood: 0, iron: 0, manpower: 0 },
     soldiers: 0,
-    buildings: { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
+    buildings: { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1, storage: 1 },
     production: { food: 0, wood: 0, iron: 0, manpower: 0 },
   },
   territories: {},
@@ -199,7 +199,7 @@ function setGameStateFromSnapshot(snapshot) {
     player: {
       ...(snapshot.player || {}),
       resources: snapshot.player?.resources || { food: 0, wood: 0, iron: 0, manpower: 0 },
-      buildings: snapshot.player?.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
+      buildings: snapshot.player?.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1, storage: 1 },
       production: snapshot.player?.production || { food: 0, wood: 0, iron: 0, manpower: 0 },
       factionBonuses: snapshot.player?.factionBonuses || { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 },
       stationedTroops: snapshot.player?.stationedTroops || {},
@@ -534,6 +534,73 @@ function closeInfoModalFromBackdrop(event) {
   if (event.target === event.currentTarget) closeInfoModal();
 }
 
+async function loadChangelog() {
+  const response = await fetch(`changelog.json?${Date.now()}`, { cache: 'no-store' });
+  if (!response.ok) throw new Error('Could not load changelog.');
+  const entries = await response.json();
+  if (!Array.isArray(entries)) throw new Error('Invalid changelog.');
+  return entries;
+}
+
+function renderChangelogEntries(entries) {
+  const container = document.getElementById('changelog-entries');
+  if (!container) return;
+  container.replaceChildren();
+
+  entries.forEach((entry) => {
+    if (!entry || typeof entry.title !== 'string' || !Array.isArray(entry.changes)) return;
+    const article = document.createElement('article');
+    article.className = 'changelog-entry';
+    const heading = document.createElement('h3');
+    heading.textContent = entry.title;
+    const list = document.createElement('ul');
+    entry.changes.forEach((change) => {
+      if (typeof change !== 'string') return;
+      const item = document.createElement('li');
+      item.textContent = change;
+      list.appendChild(item);
+    });
+    article.append(heading, list);
+    container.appendChild(article);
+  });
+
+  if (!container.childElementCount) {
+    const message = document.createElement('p');
+    message.textContent = 'No changelog entries are available yet.';
+    container.appendChild(message);
+  }
+}
+
+async function openChangelogModal() {
+  const modal = document.getElementById('changelog-modal');
+  const container = document.getElementById('changelog-entries');
+  if (!modal || !container) return;
+  modal.hidden = false;
+  modal.querySelector('.info-modal-close')?.focus();
+
+  const loading = document.createElement('p');
+  loading.textContent = 'Loading changelog...';
+  container.replaceChildren(loading);
+  try {
+    renderChangelogEntries(await loadChangelog());
+  } catch (error) {
+    const message = document.createElement('p');
+    message.textContent = 'The changelog is unavailable right now. Please try again later.';
+    container.replaceChildren(message);
+  }
+}
+
+function closeChangelogModal() {
+  const modal = document.getElementById('changelog-modal');
+  if (!modal) return;
+  modal.hidden = true;
+  document.getElementById('changelog-btn')?.focus();
+}
+
+function closeChangelogModalFromBackdrop(event) {
+  if (event.target === event.currentTarget) closeChangelogModal();
+}
+
 // Periodic 60s poll while logged in. This is what picks up a season rollover/faction
 // reassignment that happened while the player stayed on the page (setGameStateFromSnapshot
 // already refreshes the map legend, scoreboard, and chat when the faction changes). Only a
@@ -648,7 +715,10 @@ function renderFactionBonuses() {
     ['training', '⚔️ Training Cost', '-', '%'], ['storage', '📦 Storage', '+', '%'],
     ['fortressTroops', '🏰 Fortress Generation', '+', '/min'], ['allResources', '✨ All Resources', '+', '%'],
   ].map(([key, label, prefix, suffix]) => {
-    const value = Number(bonuses[key] || 0);
+    const combinedValue = Number(bonuses[key] || 0);
+    const value = ['food', 'wood', 'iron', 'manpower'].includes(key)
+      ? Math.max(0, combinedValue - Number(bonuses.allResources || 0))
+      : combinedValue;
     if (value <= 0) return null;
     return `<span>${label} ${prefix}${suffix === '%' ? Math.round(value * 100) : value}${suffix}</span>`;
   }).filter(Boolean)];
@@ -661,8 +731,8 @@ function calculateTrainingCost(count, trainingBonus = 0) {
   const minimum = amount > 0 ? 1 : 0;
   return {
     food: Math.max(minimum, Math.round(50 * amount * multiplier)),
-    iron: Math.max(minimum, Math.round(20 * amount * multiplier)),
-    manpower: Math.max(minimum, Math.round(amount * multiplier)),
+    iron: Math.max(minimum, Math.round(25 * amount * multiplier)),
+    manpower: Math.max(minimum, Math.round(20 * amount * multiplier)),
   };
 }
 
@@ -678,38 +748,43 @@ function updateTrainingCostDisplay() {
 }
 
 function renderCity() {
-  const buildings = G.player.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 };
+  const buildings = G.player.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1, storage: 1 };
   const serverProduction = G.player.production || { food: 0, wood: 0, iron: 0, manpower: 0 };
   const factionBonuses = G.player.factionBonuses || { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 };
   const container = document.getElementById('building-list');
   container.innerHTML = '';
 
   const defs = {
-    farm: { name: 'Farm', icon: '🌾', resource: 'food', baseRate: 5, cost: { food: 50, wood: 80, iron: 0 } },
-    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', baseRate: 4, cost: { food: 40, wood: 0, iron: 60 } },
-    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', baseRate: 3, cost: { food: 30, wood: 100, iron: 0 } },
-    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', baseRate: 2, cost: { food: 80, wood: 60, iron: 80 } },
+    farm: { name: 'Farm', icon: '🌾', resource: 'food', baseRate: 5 },
+    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', baseRate: 4 },
+    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', baseRate: 3 },
+    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', baseRate: 2 },
+    storage: { name: 'Storage', icon: '📦' },
   };
 
   Object.entries(defs).forEach(([key, def]) => {
     const level = Number(buildings[key] || 1);
-    const baseProd = def.baseRate * level;
-    const totalProd = Number(serverProduction[def.resource] || baseProd);
+    const isStorage = key === 'storage';
+    const baseProd = isStorage ? 0 : def.baseRate * level;
+    const totalProd = isStorage ? 0 : Number(serverProduction[def.resource] || baseProd);
     const bonusPct = Math.round((factionBonuses[def.resource] || 0) * 100);
     const nextLevel = level + 1;
-    const cost = {
-      food: def.cost.food * nextLevel,
-      wood: def.cost.wood * nextLevel,
-      iron: def.cost.iron * nextLevel,
-    };
+    const isMaxLevel = level >= 10;
+    const cost = G.player.buildingUpgradeCosts?.[key];
     const costParts = [];
-    if (cost.food > 0) costParts.push(`${fmt(cost.food)}🌾`);
-    if (cost.wood > 0) costParts.push(`${fmt(cost.wood)}🪵`);
-    if (cost.iron > 0) costParts.push(`${fmt(cost.iron)}⚙️`);
+    if (cost?.food > 0) costParts.push(`${fmt(cost.food)}🌾`);
+    if (cost?.wood > 0) costParts.push(`${fmt(cost.wood)}🪵`);
+    if (cost?.iron > 0) costParts.push(`${fmt(cost.iron)}⚙️`);
 
-    const bonusLine = bonusPct > 0
+    const bonusLine = !isStorage && bonusPct > 0
       ? `<div class="building-bonus">Territory bonus: +${bonusPct}%</div>`
       : '';
+        const currentCapacity = Number(G.player.storageCaps?.food) || 0;
+    const buildingDetail = isStorage
+      ? `<div class="building-capacity">Capacity: ${fmt(currentCapacity)} each</div>
+          <div class="building-next-capacity">Next capacity: ${isMaxLevel ? 'MAX' : `${fmt(G.player.nextStorageCaps?.food || 0)} each`}</div>`
+      : `<div class="building-prod">+${totalProd} ${def.resource}/min</div>`;
+    const costLine = isMaxLevel ? '' : `<div class="building-cost">Next: ${costParts.join(' + ')}</div>`;
 
     const card = document.createElement('div');
     card.className = 'building-card';
@@ -717,11 +792,11 @@ function renderCity() {
       <div class="building-info">
         <div class="building-name">${def.icon} ${def.name}</div>
         <div class="building-level">Level ${level}</div>
-        <div class="building-prod">+${totalProd} ${def.resource}/min</div>
+        ${buildingDetail}
         ${bonusLine}
-        <div class="building-cost">Next: ${costParts.join(' + ')}</div>
+        ${costLine}
       </div>
-      <button class="btn-upgrade" onclick="upgradeBuilding('${key}')">⬆ Lvl ${nextLevel}</button>
+      <button class="btn-upgrade" onclick="upgradeBuilding('${key}')" ${isMaxLevel ? 'disabled' : ''}>${isMaxLevel ? 'MAX' : `⬆ Lvl ${nextLevel}`}</button>
     `;
     container.appendChild(card);
   });
@@ -793,11 +868,12 @@ function getAffordableTrainingAmount() {
       : total
   ), 0);
   const multiplier = Math.max(0.4, 1 - trainingBonus);
-  const maximum = Math.min(5000, Math.floor(Number(resources.food || 0) / (50 * multiplier)), Math.floor(Number(resources.iron || 0) / (20 * multiplier)), Math.floor(Number(resources.manpower || 0) / multiplier));
+  const maximum = Math.min(5000, Math.floor(Number(resources.food || 0) / (50 * multiplier)), Math.floor(Number(resources.iron || 0) / (25 * multiplier)), Math.floor(Number(resources.manpower || 0) / (20 * multiplier)));
   for (let amount = Math.max(0, maximum); amount > 0; amount -= 1) {
-    if (Math.round(50 * amount * multiplier) <= Number(resources.food || 0)
-      && Math.round(20 * amount * multiplier) <= Number(resources.iron || 0)
-      && Math.round(amount * multiplier) <= Number(resources.manpower || 0)) return amount;
+    const cost = calculateTrainingCost(amount, trainingBonus);
+    if (cost.food <= Number(resources.food || 0)
+      && cost.iron <= Number(resources.iron || 0)
+      && cost.manpower <= Number(resources.manpower || 0)) return amount;
   }
   return 0;
 }
@@ -2033,7 +2109,10 @@ if (typeof document !== 'undefined') {
     enablePullToRefreshFallback();
 
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') closeInfoModal();
+      if (event.key === 'Escape') {
+        closeInfoModal();
+        closeChangelogModal();
+      }
     });
 
     const authForm = document.getElementById('auth-form');
@@ -2098,6 +2177,10 @@ if (typeof module !== 'undefined') {
     renderMapLegend,
     mapTerritories,
     calculateTrainingCost,
+    getAffordableTrainingAmount,
+    loadChangelog,
+    renderChangelogEntries,
+    openChangelogModal,
     updateTrainingCostDisplay,
     trainSoldiers,
     selectTerritory,

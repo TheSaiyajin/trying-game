@@ -7,15 +7,16 @@ const { connect, getClient, initializeDatabase } = require('./db');
 const { issueToken, verifyToken, hashPassword, verifyPassword } = require('./auth');
 const {
   getUpgradeCost,
-  getTrainingCost,
   getProductionFromBuildings,
   getFactionTerritoryBonuses,
   getFactionStorageCaps,
   limitResourceGain,
   limitPassiveFortressTroopGain,
+  MAX_BUILDING_LEVEL,
   PASSIVE_FORTRESS_TROOP_CAP,
 } = require('./game-logic');
 const { AttackError, performAttack } = require('./attack-logic');
+const { TrainingError, performSoldierTraining } = require('./soldier-training');
 const {
   isSafeUsername,
   isAuthorizedAdminPlayer,
@@ -70,7 +71,7 @@ const server = http.createServer(app);
 const { notifyStateChanged } = attachRealtime(server, { verifyToken });
 const PORT = Number(process.env.PORT || 3000);
 const validFactions = ['blue', 'red', 'green'];
-const buildingNames = ['farm', 'lumbermill', 'ironmine', 'barracks'];
+const buildingNames = ['farm', 'lumbermill', 'ironmine', 'barracks', 'storage'];
 let observedSeasonId = null;
 
 // Must be set before any express-rate-limit middleware: SaiWars sits behind
@@ -220,6 +221,7 @@ async function getPlayerBuildingLevels(playerId, db = null) {
     lumbermill: Number(row.lumbermill || 1),
     ironmine: Number(row.ironmine || 1),
     barracks: Number(row.barracks || 1),
+    storage: Number(row.storage || 1),
   };
 }
 
@@ -260,6 +262,11 @@ async function getPlayerState(playerId) {
   const buildings = await getPlayerBuildingLevels(playerId);
   const territories = await getTerritoriesSnapshot();
   const production = getProductionFromBuildings(buildings, territories, player.faction, true);
+  const storageCaps = getFactionStorageCaps(territories, player.faction, buildings);
+  const buildingUpgradeCosts = Object.fromEntries(buildingNames.map((key) => [
+    key,
+    buildings[key] >= MAX_BUILDING_LEVEL ? null : getUpgradeCost(key, buildings[key] + 1),
+  ]));
 
   return {
     id: player.id,
@@ -275,6 +282,11 @@ async function getPlayerState(playerId) {
     soldiers: Number(player.soldiers),
     buildings,
     production,
+    buildingUpgradeCosts,
+    storageCaps,
+    nextStorageCaps: buildings.storage >= MAX_BUILDING_LEVEL
+      ? null
+      : getFactionStorageCaps(territories, player.faction, { ...buildings, storage: buildings.storage + 1 }),
     territories,
   };
 }
@@ -334,7 +346,7 @@ async function applyOfflineResourceEarnings(playerId, db = null) {
     wood: Math.max(0, Math.floor(production.wood * wholeMinutes)),
     iron: Math.max(0, Math.floor(production.iron * wholeMinutes)),
     manpower: Math.max(0, Math.floor(production.manpower * wholeMinutes)),
-  }, getFactionStorageCaps(territories, faction));
+  }, getFactionStorageCaps(territories, faction, buildings));
   const generatedFortressTroops = getFactionTerritoryBonuses(territories, faction).fortressTroops * wholeMinutes;
   const fortressTroops = limitPassiveFortressTroopGain(player.soldiers, generatedFortressTroops);
 
@@ -405,7 +417,7 @@ async function runGlobalResourceTick(db = null, options = {}) {
         wood: row.resource_wood,
         iron: row.resource_iron,
         manpower: row.resource_manpower,
-      }, production, getFactionStorageCaps(territories, faction));
+      }, production, getFactionStorageCaps(territories, faction, buildings));
       const generatedFortressTroops = getFactionTerritoryBonuses(territories, faction).fortressTroops;
       const fortressTroops = limitPassiveFortressTroopGain(row.soldiers, generatedFortressTroops);
       await queryable.query(
@@ -446,7 +458,11 @@ async function getPlayerWorldState(playerId, season = null) {
   const buildings = await getPlayerBuildingLevels(playerId);
   const production = getProductionFromBuildings(buildings, territories, player.faction || 'blue', true);
   const factionBonuses = getFactionTerritoryBonuses(territories, player.faction || 'blue');
-  const storageCaps = getFactionStorageCaps(territories, player.faction || 'blue');
+  const storageCaps = getFactionStorageCaps(territories, player.faction || 'blue', buildings);
+  const buildingUpgradeCosts = Object.fromEntries(buildingNames.map((key) => [
+    key,
+    buildings[key] >= MAX_BUILDING_LEVEL ? null : getUpgradeCost(key, buildings[key] + 1),
+  ]));
 
   const stationedResult = await db.query(
     `SELECT territory_id, troops FROM territory_defenders WHERE player_id = $1`,
@@ -473,8 +489,12 @@ async function getPlayerWorldState(playerId, season = null) {
       soldiers: Number(player.soldiers),
       buildings,
       production,
+      buildingUpgradeCosts,
       factionBonuses,
       storageCaps,
+      nextStorageCaps: buildings.storage >= MAX_BUILDING_LEVEL
+        ? null
+        : getFactionStorageCaps(territories, player.faction || 'blue', { ...buildings, storage: buildings.storage + 1 }),
       stationedTroops,
       fortressTroopCap: PASSIVE_FORTRESS_TROOP_CAP,
     },
@@ -558,8 +578,8 @@ app.post('/api/register', asyncHandler(async (req, res) => {
 
   const player = insertPlayer.rows[0];
   await db.query(
-    `INSERT INTO buildings (player_id, farm, lumbermill, ironmine, barracks)
-     VALUES ($1, 1, 1, 1, 1)`,
+    `INSERT INTO buildings (player_id, farm, lumbermill, ironmine, barracks, storage)
+     VALUES ($1, 1, 1, 1, 1, 1)`,
     [player.id]
   );
 
@@ -666,32 +686,47 @@ app.post('/api/game/upgrade-building', requireAuth, asyncHandler(async (req, res
   const buildingKey = sanitizeBuildingName(req.body.building);
   if (!buildingKey) return res.status(400).json({ error: 'Invalid building.' });
 
-  const player = await getPlayerById(req.user.userId);
-  const buildings = await getPlayerBuildingLevels(player.id);
-  const nextLevel = (buildings[buildingKey] || 1) + 1;
-  const cost = getUpgradeCost(buildingKey, nextLevel);
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const playerResult = await client.query('SELECT * FROM players WHERE id = $1 FOR UPDATE', [req.user.userId]);
+    const buildingResult = await client.query('SELECT * FROM buildings WHERE player_id = $1 FOR UPDATE', [req.user.userId]);
+    const player = playerResult.rows[0];
+    const buildings = buildingResult.rows[0];
+    if (!player || !buildings) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Player not found.' });
+    }
 
-  const resources = {
-    food: Number(player.resource_food),
-    wood: Number(player.resource_wood),
-    iron: Number(player.resource_iron),
-  };
+    const currentLevel = Number(buildings[buildingKey] || 1);
+    if (currentLevel >= MAX_BUILDING_LEVEL) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `${buildingKey} is already at the maximum level of ${MAX_BUILDING_LEVEL}.` });
+    }
 
-  if (resources.food < cost.food || resources.wood < cost.wood || resources.iron < cost.iron) {
-    return res.status(400).json({ error: 'Not enough resources for the building upgrade.' });
+    const cost = getUpgradeCost(buildingKey, currentLevel + 1);
+    if (Number(player.resource_food) < cost.food || Number(player.resource_wood) < cost.wood || Number(player.resource_iron) < cost.iron) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Not enough resources for the building upgrade.' });
+    }
+
+    await client.query(
+      `UPDATE players SET resource_food = resource_food - $1, resource_wood = resource_wood - $2, resource_iron = resource_iron - $3 WHERE id = $4`,
+      [cost.food, cost.wood, cost.iron, player.id]
+    );
+    await client.query(
+      `UPDATE buildings SET ${buildingKey} = ${buildingKey} + 1, updated_at = NOW() WHERE player_id = $1`,
+      [player.id]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
 
-  const db = await connect();
-  await db.query(
-    `UPDATE players SET resource_food = resource_food - $1, resource_wood = resource_wood - $2, resource_iron = resource_iron - $3 WHERE id = $4`,
-    [cost.food, cost.wood, cost.iron, player.id]
-  );
-  await db.query(
-    `UPDATE buildings SET ${buildingKey} = ${buildingKey} + 1, updated_at = NOW() WHERE player_id = $1`,
-    [player.id]
-  );
-
-  const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
   res.json({ ok: true, state: snapshot });
 }));
 
@@ -699,26 +734,19 @@ app.post('/api/game/train-soldiers', requireAuth, asyncHandler(async (req, res) 
   const count = parsePositiveInt(req.body.amount || 0, 0, 5000);
   if (count <= 0) return res.status(400).json({ error: 'Training amount must be positive.' });
 
-  const player = await getPlayerById(req.user.userId);
-  if (!player.faction) return res.status(400).json({ error: 'Choose a faction before training troops.' });
-
-  const territories = await getTerritoriesSnapshot();
-  const territoryBonuses = getFactionTerritoryBonuses(territories, player.faction);
-  const trainingMultiplier = Math.max(0.4, 1 - (territoryBonuses.training || 0));
-  const cost = getTrainingCost(count, trainingMultiplier);
-
-  if (Number(player.resource_food) < cost.food || Number(player.resource_iron) < cost.iron || Number(player.resource_manpower) < cost.manpower) {
-    return res.status(400).json({ error: 'Not enough resources to train soldiers.' });
+  const client = await getClient();
+  let result;
+  try {
+    result = await performSoldierTraining(client, { playerId: req.user.userId, count });
+  } catch (error) {
+    if (error instanceof TrainingError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  } finally {
+    client.release();
   }
 
-  const db = await connect();
-  await db.query(
-    `UPDATE players SET resource_food = resource_food - $1, resource_iron = resource_iron - $2, resource_manpower = resource_manpower - $3, soldiers = soldiers + $4, last_action_at = NOW() WHERE id = $5`,
-    [cost.food, cost.iron, cost.manpower, count, player.id]
-  );
-
-  const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
-  res.json({ ok: true, state: snapshot, trainingCost: cost, trained: count });
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
+  res.json({ ok: true, state: snapshot, trainingCost: result.cost, trained: result.trained });
 }));
 
 app.post('/api/game/defend', requireAuth, asyncHandler(async (req, res) => {

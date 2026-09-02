@@ -1,0 +1,12 @@
+[
+  {
+    "title": "Storage and resource balancing",
+    "changes": [
+      "Added a Storage building that increases resource capacity.",
+      "Balanced building upgrade costs and limited building progression.",
+      "Balanced the resources required to train soldiers.",
+      "Territory storage bonuses now scale with upgraded storage.",
+      "Made faction bonus information clearer."
+    ]
+  }
+]

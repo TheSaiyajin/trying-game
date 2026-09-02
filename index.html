@@ -52,6 +52,7 @@
       </div>
       <div class="top-actions">
         <button class="btn-small" id="info-btn" type="button" onclick="openInfoModal()">ℹ️ Info</button>
+        <button class="btn-small" id="changelog-btn" type="button" onclick="openChangelogModal()">Changelog</button>
         <button class="btn-small" id="logout-btn" onclick="logoutPlayer()">🚪 Logout</button>
       </div>
     </header>
@@ -69,6 +70,16 @@
         <p>If you would like to support Saiwars, please message me. All funds will go toward game development and server costs. Support will never provide gameplay advantages.</p>
         <h3>Discord</h3>
         <p class="info-discord">thesaiyajin</p>
+      </div>
+    </div>
+
+    <div class="info-modal-backdrop" id="changelog-modal" role="dialog" aria-modal="true" aria-labelledby="changelog-modal-title" hidden onclick="closeChangelogModalFromBackdrop(event)">
+      <div class="info-modal-panel">
+        <div class="info-modal-heading">
+          <h2 id="changelog-modal-title">Changelog</h2>
+          <button class="info-modal-close" type="button" aria-label="Close changelog" onclick="closeChangelogModal()">×</button>
+        </div>
+        <div id="changelog-entries" class="changelog-entries" aria-live="polite"></div>
       </div>
     </div>
 
@@ -98,7 +109,7 @@
       <div class="section-card" id="barracks-section">
         <h3>🏟 Train Soldiers</h3>
         <p class="cost-line">Training discount: <strong id="training-discount">0%</strong></p>
-        <p class="cost-line">Total cost: <strong id="training-total-cost">50🌾 + 20⚙️ + 1👥</strong></p>
+        <p class="cost-line">Total cost: <strong id="training-total-cost">50🌾 + 25⚙️ + 20👥</strong></p>
         <div class="row-center">
           <button class="btn-circle" onclick="changeTrain(-10)">−10</button>
           <button class="btn-circle" onclick="changeTrain(-1)">−</button>

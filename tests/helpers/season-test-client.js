@@ -31,7 +31,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
     seasonTerritoryOwnership: new Set(),
     players,
     territories,
-    buildings: new Map([...players.keys()].map((id) => [id, { farm: 5, lumbermill: 5, ironmine: 5, barracks: 5 }])),
+    buildings: new Map([...players.keys()].map((id) => [id, { farm: 5, lumbermill: 5, ironmine: 5, barracks: 5, storage: 5 }])),
     factionLeaders: new Map([['blue', 1], ['red', 2], ['green', 3]]),
     adminActions: [],
     queryLog: [],
@@ -182,6 +182,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
           building.lumbermill = params[1];
           building.ironmine = params[2];
           building.barracks = params[3];
+          building.storage = params[4];
         }
         return { rows: [] };
       }

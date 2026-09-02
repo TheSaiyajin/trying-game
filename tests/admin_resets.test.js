@@ -118,11 +118,11 @@ function createResetClient(initialState, options = {}) {
         return { rows: [], rowCount: player ? 1 : 0 };
       }
 
-      if (text.startsWith('UPDATE buildings') && text.includes('WHERE player_id = $5')) {
-        const [farm, lumbermill, ironmine, barracks, playerId] = params;
+      if (text.startsWith('UPDATE buildings') && text.includes('WHERE player_id = $6')) {
+        const [farm, lumbermill, ironmine, barracks, storage, playerId] = params;
         const buildings = state.buildings.get(playerId);
         if (buildings) {
-          Object.assign(buildings, { farm, lumbermill, ironmine, barracks });
+          Object.assign(buildings, { farm, lumbermill, ironmine, barracks, storage });
         }
         return { rows: [], rowCount: buildings ? 1 : 0 };
       }
@@ -141,10 +141,10 @@ function createResetClient(initialState, options = {}) {
         return { rows: [], rowCount: state.players.size };
       }
 
-      if (text.startsWith('UPDATE buildings') && !text.includes('WHERE player_id = $5')) {
-        const [farm, lumbermill, ironmine, barracks] = params;
+      if (text.startsWith('UPDATE buildings') && !text.includes('WHERE player_id = $6')) {
+        const [farm, lumbermill, ironmine, barracks, storage] = params;
         for (const buildings of state.buildings.values()) {
-          Object.assign(buildings, { farm, lumbermill, ironmine, barracks });
+          Object.assign(buildings, { farm, lumbermill, ironmine, barracks, storage });
         }
         return { rows: [], rowCount: state.buildings.size };
       }
@@ -195,8 +195,8 @@ function buildResetState() {
       [2, { id: 2, username: 'Rook', password_hash: 'hash-rook', role: 'member', resource_food: 111, resource_wood: 222, resource_iron: 333, resource_manpower: 444, soldiers: 12 }],
     ]),
     buildings: new Map([
-      [1, { player_id: 1, farm: 9, lumbermill: 8, ironmine: 7, barracks: 6 }],
-      [2, { player_id: 2, farm: 5, lumbermill: 4, ironmine: 3, barracks: 2 }],
+      [1, { player_id: 1, farm: 9, lumbermill: 8, ironmine: 7, barracks: 6, storage: 5 }],
+      [2, { player_id: 2, farm: 5, lumbermill: 4, ironmine: 3, barracks: 2, storage: 4 }],
     ]),
     territories: new Map([
       ['b1', { id: 'b1', owner_faction: 'red', defense_troops: 99 }],
@@ -261,7 +261,7 @@ test('reset player only affects the selected player progress', async () => {
   assert.equal(client.state.players.get(2).soldiers, STARTING_PLAYER_RESOURCES.soldiers);
   assert.equal(client.state.territoryDefenders.size, 0);
   assert.equal(client.state.territories.get('b1').defense_troops, 89);
-  assert.deepEqual(client.state.buildings.get(1), { player_id: 1, farm: 9, lumbermill: 8, ironmine: 7, barracks: 6 });
+  assert.deepEqual(client.state.buildings.get(1), { player_id: 1, farm: 9, lumbermill: 8, ironmine: 7, barracks: 6, storage: 5 });
   assert.deepEqual(client.state.buildings.get(2), { player_id: 2, ...STARTING_BUILDING_LEVELS });
   assert.equal(client.state.adminActions.at(-1).actionName, 'reset_player');
 });
