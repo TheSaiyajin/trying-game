@@ -58,12 +58,14 @@ jobs:
         run: |
           ssh "$VPS_USER@$VPS_HOST" << 'EOF'
             set -e
-            cd /var/www/trying-game-indev
 
-            git -c safe.directory=/var/www/trying-game-indev fetch origin indev
-            git -c safe.directory=/var/www/trying-game-indev reset --hard origin/indev
-            sed -i "s/__BUILD_VERSION__/$(git -c safe.directory=/var/www/trying-game-indev rev-parse --short HEAD)/g" index.html
-            npm ci
+            sudo -u game git -C /var/www/trying-game-indev fetch origin indev
+            sudo -u game git -C /var/www/trying-game-indev reset --hard origin/indev
+
+            BUILD_VERSION="$(sudo -u game git -C /var/www/trying-game-indev rev-parse --short HEAD)"
+            sudo -u game sed -i "s/__BUILD_VERSION__/${BUILD_VERSION}/g" /var/www/trying-game-indev/index.html
+            sudo -u game npm --prefix /var/www/trying-game-indev ci
+
             sudo systemctl restart saiwars-indev
 
             sleep 2
