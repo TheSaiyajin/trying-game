@@ -534,6 +534,73 @@ function closeInfoModalFromBackdrop(event) {
   if (event.target === event.currentTarget) closeInfoModal();
 }
 
+async function loadChangelog() {
+  const response = await fetch(`changelog.json?${Date.now()}`, { cache: 'no-store' });
+  if (!response.ok) throw new Error('Could not load changelog.');
+  const entries = await response.json();
+  if (!Array.isArray(entries)) throw new Error('Invalid changelog.');
+  return entries;
+}
+
+function renderChangelogEntries(entries) {
+  const container = document.getElementById('changelog-entries');
+  if (!container) return;
+  container.replaceChildren();
+
+  entries.forEach((entry) => {
+    if (!entry || typeof entry.title !== 'string' || !Array.isArray(entry.changes)) return;
+    const article = document.createElement('article');
+    article.className = 'changelog-entry';
+    const heading = document.createElement('h3');
+    heading.textContent = entry.title;
+    const list = document.createElement('ul');
+    entry.changes.forEach((change) => {
+      if (typeof change !== 'string') return;
+      const item = document.createElement('li');
+      item.textContent = change;
+      list.appendChild(item);
+    });
+    article.append(heading, list);
+    container.appendChild(article);
+  });
+
+  if (!container.childElementCount) {
+    const message = document.createElement('p');
+    message.textContent = 'No changelog entries are available yet.';
+    container.appendChild(message);
+  }
+}
+
+async function openChangelogModal() {
+  const modal = document.getElementById('changelog-modal');
+  const container = document.getElementById('changelog-entries');
+  if (!modal || !container) return;
+  modal.hidden = false;
+  modal.querySelector('.info-modal-close')?.focus();
+
+  const loading = document.createElement('p');
+  loading.textContent = 'Loading changelog...';
+  container.replaceChildren(loading);
+  try {
+    renderChangelogEntries(await loadChangelog());
+  } catch (error) {
+    const message = document.createElement('p');
+    message.textContent = 'The changelog is unavailable right now. Please try again later.';
+    container.replaceChildren(message);
+  }
+}
+
+function closeChangelogModal() {
+  const modal = document.getElementById('changelog-modal');
+  if (!modal) return;
+  modal.hidden = true;
+  document.getElementById('changelog-btn')?.focus();
+}
+
+function closeChangelogModalFromBackdrop(event) {
+  if (event.target === event.currentTarget) closeChangelogModal();
+}
+
 // Periodic 60s poll while logged in. This is what picks up a season rollover/faction
 // reassignment that happened while the player stayed on the page (setGameStateFromSnapshot
 // already refreshes the map legend, scoreboard, and chat when the faction changes). Only a
@@ -2041,7 +2108,10 @@ if (typeof document !== 'undefined') {
     enablePullToRefreshFallback();
 
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') closeInfoModal();
+      if (event.key === 'Escape') {
+        closeInfoModal();
+        closeChangelogModal();
+      }
     });
 
     const authForm = document.getElementById('auth-form');
@@ -2106,6 +2176,9 @@ if (typeof module !== 'undefined') {
     renderMapLegend,
     mapTerritories,
     calculateTrainingCost,
+    loadChangelog,
+    renderChangelogEntries,
+    openChangelogModal,
     updateTrainingCostDisplay,
     trainSoldiers,
     selectTerritory,
