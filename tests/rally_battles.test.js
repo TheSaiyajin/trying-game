@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   RALLY_DURATION_MS,
   getActiveRallies,
@@ -149,4 +151,15 @@ test('active rally snapshots expose totals and only the requesting player contri
     totalAttackers: 50,
     myContribution: 20,
   });
+});
+
+test('existing databases add rally columns before creating indexes that use them', () => {
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'backend', 'schema.sql'), 'utf8');
+  const migrations = fs.readFileSync(path.join(__dirname, '..', 'backend', 'db.js'), 'utf8');
+  assert.doesNotMatch(schema, /INDEX[^\n]+attack_targets[^\n]+resolves_at/i);
+  assert.ok(
+    migrations.indexOf('ADD COLUMN IF NOT EXISTS resolves_at')
+      < migrations.indexOf('idx_attack_targets_due'),
+    'resolves_at must be migrated before its index is created'
+  );
 });
