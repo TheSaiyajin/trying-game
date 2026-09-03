@@ -33,7 +33,7 @@ function createTrainingClient(state) {
         await previousLock;
         return { rows: params[0] === state.player.id ? [{ ...state.player }] : [] };
       }
-      if (text.startsWith('SELECT owner_faction')) return { rows: [] };
+      if (text.startsWith('SELECT owner_faction') || text.startsWith('SELECT t.owner_faction')) return { rows: [] };
       if (text.startsWith('UPDATE players')) {
         const [food, iron, manpower, soldiers] = params;
         state.player.resource_food -= food;

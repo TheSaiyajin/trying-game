@@ -17,7 +17,12 @@ async function performSoldierTraining(client, { playerId, count }) {
     if (!player.faction) throw new TrainingError(400, 'Choose a faction before training troops.');
 
     const territoriesResult = await client.query(
-      'SELECT owner_faction, bonus_type, bonus_value, storage_bonus, is_fortress FROM territories'
+      `SELECT t.owner_faction, t.bonus_type, t.bonus_value, t.storage_bonus, t.is_fortress,
+              EXISTS (
+                SELECT 1 FROM attack_targets at
+                WHERE at.territory_id = t.id AND at.phase = 'active'
+              ) AS contested
+       FROM territories t`
     );
     const territoryBonuses = getFactionTerritoryBonuses(territoriesResult.rows, player.faction);
     const trainingMultiplier = Math.max(0.4, 1 - (territoryBonuses.training || 0));

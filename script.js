@@ -75,6 +75,8 @@ function mapTerritories(rawTerritories) {
       adj: Array.isArray(territory.neighbors) ? territory.neighbors : [],
       fortress: !!(territory.fortress ?? territory.is_fortress),
       capital: !!(territory.capital ?? territory.is_capital),
+      contested: !!territory.contested,
+      protectedUntil: territory.protectedUntil || territory.protected_until || null,
     };
   });
   return entryMap;
@@ -88,9 +90,16 @@ function mapRallies(rawRallies) {
       attackerFaction: rally.attackerFaction,
       defenderFaction: rally.defenderFaction,
       startedBy: rally.startedBy,
+      phase: rally.phase || 'rally',
       resolvesAt: rally.resolvesAt,
+      nextTickAt: rally.nextTickAt || null,
+      roundNumber: Number(rally.roundNumber || 0),
       totalAttackers: Number(rally.totalAttackers || 0),
       myContribution: Number(rally.myContribution || 0),
+      attackersLost: Number(rally.attackersLost || 0),
+      defendersLost: Number(rally.defendersLost || 0),
+      attackBonus: Number(rally.attackBonus || 0),
+      defenseBonus: Number(rally.defenseBonus || 0),
     };
   });
   return rallies;
@@ -727,6 +736,7 @@ function renderFactionBonuses() {
     ['food', '🌾 Food Production', '+', '%'], ['wood', '🪵 Wood Production', '+', '%'],
     ['iron', '⚙️ Iron Production', '+', '%'], ['manpower', '👥 Manpower Production', '+', '%'],
     ['training', '⚔️ Training Cost', '-', '%'], ['storage', '📦 Storage', '+', '%'],
+    ['attack', '🗡️ Attack Strength', '+', '%'], ['defense', '🛡️ Defense Strength', '+', '%'],
     ['fortressTroops', '🏰 Fortress Generation', '+', '/min'], ['allResources', '✨ All Resources', '+', '%'],
   ].map(([key, label, prefix, suffix]) => {
     const combinedValue = Number(bonuses[key] || 0);
@@ -952,6 +962,7 @@ function createHexPoints(cx, cy, radius = 28) {
 function canAttack(id, gameState = G) {
   const territory = gameState.territories[id];
   if (!territory || territory.capital || territory.owner === gameState.player.faction) return false;
+  if (territory.protectedUntil && new Date(territory.protectedUntil).getTime() > Date.now()) return false;
   const rally = gameState.rallies?.[id];
   if (rally && rally.attackerFaction !== gameState.player.faction) return false;
   return territory.adj.some((neighborId) => gameState.territories[neighborId] && gameState.territories[neighborId].owner === gameState.player.faction);
@@ -1244,16 +1255,31 @@ function renderSelectedRallyStatus() {
   }
 
   status.style.display = 'flex';
-  document.getElementById('rally-status-title').textContent = `⏳ ${ownerLabel(rally.attackerFaction)} rally`;
+  const isPreparing = rally.phase === 'rally';
+  document.getElementById('rally-status-title').textContent = isPreparing
+    ? `🤫 Hidden ${ownerLabel(rally.attackerFaction)} rally`
+    : `⚔️ ${ownerLabel(rally.attackerFaction)} live battle`;
   const remaining = new Date(rally.resolvesAt).getTime() - Date.now();
-  document.getElementById('rally-status-countdown').textContent = remaining > 0
-    ? formatRallyCountdown(rally.resolvesAt)
-    : 'Resolving…';
-  document.getElementById('rally-status-troops').textContent = `Attackers: ${rally.totalAttackers} · Defenders: ${territory.troops}`;
+  const phaseCountdown = remaining > 0 ? formatRallyCountdown(rally.resolvesAt) : 'Advancing…';
+  const nextRound = !isPreparing && rally.nextTickAt
+    ? ` · Next losses ${formatRallyCountdown(rally.nextTickAt)}`
+    : '';
+  document.getElementById('rally-status-countdown').textContent = isPreparing
+    ? `Auto-launches in ${phaseCountdown}`
+    : `Ends in ${phaseCountdown}${nextRound}`;
+  const attackBuff = rally.attackBonus > 0 ? ` (+${Math.round(rally.attackBonus * 100)}%)` : '';
+  const defenseBuff = rally.defenseBonus > 0 ? ` (+${Math.round(rally.defenseBonus * 100)}%)` : '';
+  document.getElementById('rally-status-troops').textContent = `Attackers: ${rally.totalAttackers}${attackBuff} · Defenders: ${territory.troops}${defenseBuff}`;
   const personal = document.getElementById('rally-status-personal');
   personal.textContent = rally.attackerFaction === G.player.faction
-    ? `Your contribution: ${rally.myContribution}`
-    : 'Reinforce this territory before time runs out.';
+    ? isPreparing
+      ? `Your rally troops: ${rally.myContribution} · Enemy cannot see this rally.`
+      : `Your troops still fighting: ${rally.myContribution}`
+    : 'Reinforce this territory before the next casualty round.';
+  const launchButton = document.getElementById('launch-rally-button');
+  if (launchButton) {
+    launchButton.style.display = isPreparing && Number(rally.startedBy) === Number(G.player.id) ? 'block' : 'none';
+  }
 }
 
 function tickRallyCountdowns() {
@@ -1274,14 +1300,23 @@ function selectTerritory(id, { preserveTroopInputs = false } = {}) {
   const stationed = Number((G.player.stationedTroops || {})[id] || 0);
   document.getElementById('tp-stationed').textContent = stationed;
   const rally = G.rallies[id] || null;
+  const protectedMinutes = territory.protectedUntil
+    ? Math.max(0, Math.ceil((new Date(territory.protectedUntil).getTime() - Date.now()) / 60000))
+    : 0;
   document.getElementById('tp-battle-rule').textContent = territory.capital
     ? 'Protected capital — cannot be attacked or occupied.'
     : rally
-      ? 'Rally resolves when the timer reaches zero'
+      ? rally.phase === 'rally'
+        ? 'Hidden rally preparation — starter can launch early'
+        : 'Live battle — both sides lose troops every minute'
+      : protectedMinutes > 0
+        ? `Protected from attacks for ${protectedMinutes} more minutes`
       : territory.owner === 'neutral'
         ? 'Neutral attacks resolve immediately'
-        : 'Enemy attacks open a 10-minute rally';
-  document.getElementById('tp-bonus').textContent = formatBonusLabel(territory.bonus, territory.bonusValue);
+        : 'Choose a solo attack or a hidden rally';
+  document.getElementById('tp-bonus').textContent = territory.contested
+    ? `${formatBonusLabel(territory.bonus, territory.bonusValue)} — inactive during battle`
+    : formatBonusLabel(territory.bonus, territory.bonusValue);
   document.getElementById('tp-neighbors').textContent = (territory.adj || []).map((neighborId) => G.territories[neighborId]?.name || neighborId).join(', ');
 
   const attackSection = document.getElementById('attack-section');
@@ -1289,11 +1324,17 @@ function selectTerritory(id, { preserveTroopInputs = false } = {}) {
   const recallSection = document.getElementById('recall-section');
   const attackLabel = document.getElementById('attack-action-label');
   const attackButton = document.getElementById('attack-action-button');
+  const rallyButton = document.getElementById('start-rally-button');
   renderSelectedRallyStatus();
   if (canAttack(id)) {
     attackSection.style.display = 'block';
-    if (attackLabel) attackLabel.textContent = rally ? '⚔️ Join Rally' : '⚔️ Attack';
-    if (attackButton) attackButton.textContent = rally ? '⚔️ Add Troops to Rally' : territory.owner === 'neutral' ? '⚔️ Attack Territory' : '⚔️ Start 10-Minute Rally';
+    if (attackLabel) attackLabel.textContent = rally
+      ? rally.phase === 'rally' ? '🤫 Hidden Rally' : '⚔️ Reinforce Attack'
+      : '⚔️ Attack';
+    if (attackButton) attackButton.textContent = rally
+      ? rally.phase === 'rally' ? '🤫 Add Troops to Rally' : '⚔️ Reinforce Attack'
+      : territory.owner === 'neutral' ? '⚔️ Attack Territory' : '⚔️ Start Solo Attack';
+    if (rallyButton) rallyButton.style.display = !rally && territory.owner !== 'neutral' ? 'block' : 'none';
     defendSection.style.display = 'none';
     if (recallSection) recallSection.style.display = 'none';
     if (!preserveTroopInputs) {
@@ -1302,13 +1343,14 @@ function selectTerritory(id, { preserveTroopInputs = false } = {}) {
     }
   } else if (territory.owner === G.player.faction) {
     attackSection.style.display = 'none';
+    if (rallyButton) rallyButton.style.display = 'none';
     defendSection.style.display = 'block';
     if (!preserveTroopInputs) {
       defendSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
       setTroopInput('defend-count', defendSendCount);
     }
     if (recallSection) {
-      if (stationed > 0) {
+      if (stationed > 0 && rally?.phase !== 'active') {
         recallSection.style.display = 'block';
         if (!preserveTroopInputs) {
           recallSendCount = Math.max(1, Math.min(1, stationed));
@@ -1320,6 +1362,7 @@ function selectTerritory(id, { preserveTroopInputs = false } = {}) {
     }
   } else {
     attackSection.style.display = 'none';
+    if (rallyButton) rallyButton.style.display = 'none';
     defendSection.style.display = 'none';
     if (recallSection) recallSection.style.display = 'none';
   }
@@ -1345,6 +1388,8 @@ function formatBonusLabel(bonusType, bonusValue) {
     iron: `⚙️ +${pct}% Iron Production`,
     manpower: `👥 +${pct}% Manpower Production`,
     training: `⚔️ -${pct}% Training Cost`,
+    attack: `🗡️ +${pct}% Attack Strength`,
+    defense: `🛡️ +${pct}% Defense Strength`,
     fortress: '🏰 Fortress — +1 Troop/min up to 250 city reserve',
     storage: `📦 +${pct}% Storage`,
     resource: `✨ +${pct}% All Resources`,
@@ -1355,7 +1400,7 @@ function formatBonusLabel(bonusType, bonusValue) {
 
 function getBonusIcon(bonusType) {
   return {
-    food: '🌾', wood: '🪵', iron: '⚙️', manpower: '👥', training: '⚔️', storage: '📦', fortress: '🏰', resource: '✨',
+    food: '🌾', wood: '🪵', iron: '⚙️', manpower: '👥', training: '⚔️', storage: '📦', fortress: '🏰', resource: '✨', attack: '🗡️', defense: '🛡️',
   }[String(bonusType || '').toLowerCase()] || '';
 }
 
@@ -1371,7 +1416,7 @@ function changeAttack(delta) {
   setTroopInput('attack-count', attackSendCount);
 }
 
-async function launchAttack() {
+async function launchAttack(mode = 'solo') {
   if (!selectedTerritoryId) {
     showToast('❌ Select a territory first.');
     return;
@@ -1391,7 +1436,7 @@ async function launchAttack() {
   try {
     const response = await apiFetch('/game/attack', {
       method: 'POST',
-      body: JSON.stringify({ territoryId: selectedTerritoryId, soldiers }),
+      body: JSON.stringify({ territoryId: selectedTerritoryId, soldiers, mode }),
     });
     setGameStateFromSnapshot(response.state);
     const result = response.outcome;
@@ -1403,8 +1448,10 @@ async function launchAttack() {
     }
     if (response.rally) {
       showToast(response.rallyCreated
-        ? '⏳ Rally started. Allies have 10 minutes to join.'
-        : `⚔️ ${response.sent} troops added to the rally.`);
+        ? response.rally.phase === 'rally'
+          ? '🤫 Hidden rally started. Allies have 10 minutes to join.'
+          : '⚔️ Live battle started. Casualties begin in one minute.'
+        : `⚔️ ${response.sent} troops added.`);
     } else {
       showToast(result?.victory ? '✅ Territory captured.' : '⚠️ Neutral attack resolved by troop count.');
     }
@@ -1412,6 +1459,22 @@ async function launchAttack() {
     renderMap();
     updateResourceBar();
     if (selectedTerritoryId) selectTerritory(selectedTerritoryId);
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function launchPreparedRally() {
+  if (!selectedTerritoryId) return;
+  try {
+    const response = await apiFetch('/game/launch-rally', {
+      method: 'POST',
+      body: JSON.stringify({ territoryId: selectedTerritoryId }),
+    });
+    setGameStateFromSnapshot(response.state);
+    showToast('⚔️ Rally launched. The live battle has begun.');
+    renderMap();
+    selectTerritory(selectedTerritoryId);
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }
@@ -2255,6 +2318,8 @@ if (typeof module !== 'undefined') {
     changeAttack,
     changeDefend,
     changeRecall,
+    launchAttack,
+    launchPreparedRally,
     formatCountdown,
     formatRallyCountdown,
     tickRallyCountdowns,

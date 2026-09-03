@@ -699,6 +699,7 @@ html, body {
 }
 .rally-status strong { color: var(--accent-gold); }
 #rally-status-countdown { font-variant-numeric: tabular-nums; }
+#start-rally-button { margin-top: 6px; }
 
 .divider { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 .attack-hint { font-size: 14px; font-weight: 700; color: var(--accent-red); margin-bottom: 4px; }
