@@ -1,5 +1,14 @@
 [
   {
+    "title": "Timed rally battles",
+    "changes": [
+      "Enemy territory attacks now open a 10-minute rally.",
+      "Faction allies can add troops before the battle begins.",
+      "Defenders can reinforce the territory during the countdown.",
+      "Neutral territory attacks still resolve immediately."
+    ]
+  },
+  {
     "title": "Storage and resource balancing",
     "changes": [
       "Added a Storage building that increases resource capacity.",

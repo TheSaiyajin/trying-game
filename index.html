@@ -172,9 +172,16 @@
             <div class="tp-item tp-wide"><span class="tp-label">Neighbors</span><span id="tp-neighbors">—</span></div>
           </div>
 
+          <div class="rally-status" id="rally-status" style="display:none;" aria-live="polite">
+            <strong id="rally-status-title">⏳ Rally active</strong>
+            <span id="rally-status-countdown">10:00</span>
+            <span id="rally-status-troops">Attackers: 0 · Defenders: 0</span>
+            <span id="rally-status-personal" class="info-text"></span>
+          </div>
+
           <div id="attack-section" style="display:none;">
             <hr class="divider"/>
-            <p class="attack-hint">⚔️ Attack</p>
+            <p class="attack-hint" id="attack-action-label">⚔️ Attack</p>
             <div class="territory-quantity-row">
               <button class="btn-small" onclick="changeAttack(-10)">−10</button>
               <input class="train-count troop-count-input" id="attack-count" type="number" inputmode="numeric" min="1" step="1" value="10" aria-label="Soldiers to attack with" />
@@ -182,7 +189,7 @@
               <button class="btn-small" onclick="changeAttack('half')">50%</button>
               <button class="btn-small" onclick="changeAttack('max')">MAX</button>
             </div>
-            <button class="btn-primary wide btn-attack" onclick="launchAttack()">⚔️ Attack Territory</button>
+            <button class="btn-primary wide btn-attack" id="attack-action-button" onclick="launchAttack()">⚔️ Attack Territory</button>
           </div>
 
           <div id="defend-section" style="display:none;">

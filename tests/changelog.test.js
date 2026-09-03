@@ -95,7 +95,16 @@ test('changelog loading failure shows a friendly message without throwing', asyn
 
 test('initial changelog entry contains only simple player-facing information', () => {
   const entries = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'changelog.json'), 'utf8'));
-  assert.deepEqual(entries, [{
+  assert.deepEqual(entries[0], {
+    title: 'Timed rally battles',
+    changes: [
+      'Enemy territory attacks now open a 10-minute rally.',
+      'Faction allies can add troops before the battle begins.',
+      'Defenders can reinforce the territory during the countdown.',
+      'Neutral territory attacks still resolve immediately.',
+    ],
+  });
+  assert.deepEqual(entries[1], {
     title: 'Storage and resource balancing',
     changes: [
       'Added a Storage building that increases resource capacity.',
@@ -105,6 +114,6 @@ test('initial changelog entry contains only simple player-facing information', (
       'Made faction bonus information clearer.',
       'All Resources bonuses now improve production without increasing storage capacity.',
     ],
-  }]);
+  });
   assert.deepEqual(Object.keys(entries[0]), ['title', 'changes']);
 });
