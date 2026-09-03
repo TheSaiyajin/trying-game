@@ -160,6 +160,16 @@ test('joining creates one private city tile and faction queries never expose ene
   assert.equal(client.state.factionCityTiles.length, 4, 'rejoining must not duplicate a city tile');
 });
 
+test('season joining gives repeated PostgreSQL parameters explicit database types', () => {
+  const seasonSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'season.js'), 'utf8');
+  const cityInsert = seasonSource.match(/INSERT INTO faction_city_tiles[\s\S]*?ON CONFLICT \(season_id, player_id\) DO NOTHING/);
+
+  assert.ok(cityInsert, 'faction city insertion query must exist');
+  assert.match(cityInsert[0], /\$1::integer/);
+  assert.match(cityInsert[0], /\$2::integer/);
+  assert.match(cityInsert[0], /\$3::varchar\(16\)/);
+});
+
 test('map UI separates the war map from non-combat faction city tiles', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const script = fs.readFileSync(path.join(__dirname, '..', 'script.js'), 'utf8');

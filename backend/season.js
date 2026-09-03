@@ -313,9 +313,9 @@ async function ensurePlayerFactionAssignment(client, { seasonId, playerId, resou
     );
     await client.query(
       `INSERT INTO faction_city_tiles (season_id, player_id, faction, slot_index)
-       SELECT $1, $2, $3, COALESCE(MAX(slot_index), -1) + 1
+       SELECT $1::integer, $2::integer, $3::varchar(16), COALESCE(MAX(slot_index), -1) + 1
        FROM faction_city_tiles
-       WHERE season_id = $1 AND faction = $3
+       WHERE season_id = $1::integer AND faction = $3::varchar(16)
        ON CONFLICT (season_id, player_id) DO NOTHING`,
       [seasonId, playerId, faction]
     );
