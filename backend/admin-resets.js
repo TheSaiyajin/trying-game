@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { logAdminAction } = require('./admin-write-operations');
 const { clearPlayerStationedDefenders } = require('./defender-garrisons');
+const mapRegistry = require('../map-registry');
+const topologySql = require('./topology-sql');
 
 const STARTING_PLAYER_RESOURCES = Object.freeze({
   food: 500,
@@ -34,7 +36,19 @@ function getWorldResetSeedSql(seedSql = null) {
 }
 
 async function applyWorldSeed(client, options = {}) {
-  await client.query(getWorldResetSeedSql(options.seedSql));
+  if (options.seedSql) {
+    await client.query(getWorldResetSeedSql(options.seedSql));
+    return;
+  }
+  const active = await client.query(`SELECT map_key FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1`);
+  const selectedMap = mapRegistry.getMap(options.mapKey || active.rows[0]?.map_key);
+  await client.query(topologySql.buildTerritoryValuesSQL(selectedMap.key));
+  await client.query(topologySql.buildNeighborValuesSQL(selectedMap.key));
+  await client.query(
+    `INSERT INTO topology_version (id, version, map_key) VALUES (1, $1, $2)
+     ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, map_key = EXCLUDED.map_key, updated_at = NOW()`,
+    [selectedMap.topology.TOPOLOGY_VERSION, selectedMap.key]
+  );
 }
 
 async function runAdminTransaction(client, operation) {

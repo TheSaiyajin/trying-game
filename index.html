@@ -150,7 +150,14 @@
 
     <!-- --- SCREEN 2: WORLD MAP --- -->
     <div class="screen" id="screen-map">
-      <h2 class="screen-title">🗺️ World Map</h2>
+      <h2 class="screen-title">🗺️ Maps</h2>
+
+      <div class="map-view-tabs" role="tablist" aria-label="Map views">
+        <button class="map-view-tab active" id="map-view-world-tab" role="tab" aria-selected="true" onclick="showMapView('world')">War Map</button>
+        <button class="map-view-tab" id="map-view-faction-tab" role="tab" aria-selected="false" onclick="showMapView('faction')">Faction Homeland</button>
+      </div>
+
+      <div id="world-map-view" class="map-view-panel active" role="tabpanel">
 
       <div class="scoreboard" id="scoreboard">
         <div class="scoreboard-row scoreboard-top">
@@ -252,6 +259,23 @@
       <div class="battle-popup" id="battle-popup" style="display:none;">
         <p id="battle-result-text"></p>
         <button class="btn-primary" onclick="closeBattlePopup()">OK</button>
+      </div>
+      </div>
+
+      <div id="faction-map-view" class="map-view-panel" role="tabpanel">
+        <div class="section-card faction-map-card">
+          <div class="faction-map-heading">
+            <div>
+              <h3 id="faction-map-title">Faction Homeland</h3>
+              <p class="info-text" id="faction-map-description">Each joined member receives one private city tile.</p>
+            </div>
+            <span class="admin-badge" id="faction-map-count">0 cities</span>
+          </div>
+          <div class="faction-map-container">
+            <svg id="faction-map-svg" viewBox="0 0 800 620" preserveAspectRatio="xMidYMid meet" aria-label="Faction member city map"></svg>
+          </div>
+          <p class="info-text faction-map-note">City tiles cannot be attacked and provide no score, territory bonuses, or supply-line advantage.</p>
+        </div>
       </div>
     </div>
 
@@ -368,6 +392,8 @@
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="world-topology.js?v=__BUILD_VERSION__"></script>
+  <script src="crownlands-topology.js?v=__BUILD_VERSION__"></script>
+  <script src="map-registry.js?v=__BUILD_VERSION__"></script>
   <script src="script.js?v=__BUILD_VERSION__"></script>
 </body>
 </html>

@@ -21,6 +21,7 @@ const DEFAULT_STATE = {
   },
   territories: {},
   rallies: {},
+  factionMap: { faction: null, cities: [] },
   chatMessages: [],
   season: null,
 };
@@ -40,12 +41,16 @@ let activeActivityTab = 'feed';
 let seasonGateClockOffset = 0;
 let seasonGateRefreshPending = false;
 let seasonJoinInFlight = false;
+let activeMapView = 'world';
 
 // Canonical topology module (world-topology.js): required directly under Node (tests),
 // exposed as window.WORLD_TOPOLOGY when loaded via <script> in the browser.
 const WORLD_TOPOLOGY = (typeof module !== 'undefined' && typeof require === 'function')
   ? require('./world-topology')
   : (typeof window !== 'undefined' ? window.WORLD_TOPOLOGY : undefined);
+const MAP_REGISTRY = (typeof module !== 'undefined' && typeof require === 'function')
+  ? require('./map-registry')
+  : (typeof window !== 'undefined' ? window.MAP_REGISTRY : undefined);
 
 function showToast(msg) {
   const old = document.querySelector('.toast');
@@ -80,6 +85,9 @@ function mapTerritories(rawTerritories) {
       capital: !!(territory.capital ?? territory.is_capital),
       contested: !!territory.contested,
       protectedUntil: territory.protectedUntil || territory.protected_until || null,
+      scoreValue: Number(territory.scoreValue ?? territory.score_value ?? 1),
+      mapX: Number(territory.mapX ?? territory.map_x ?? 0),
+      mapY: Number(territory.mapY ?? territory.map_y ?? 0),
     };
   });
   return entryMap;
@@ -160,7 +168,7 @@ function renderScoreboard() {
     return;
   }
 
-  seasonEl.textContent = `Season ${season.seasonNumber}`;
+  seasonEl.textContent = `Season ${season.seasonNumber} · ${season.mapName || 'Three Frontiers'}`;
   countdownEl.textContent = formatCountdown(new Date(season.endsAt).getTime() - Date.now());
 
   const scores = season.scores || { blue: 0, red: 0, green: 0 };
@@ -200,6 +208,7 @@ async function renderSeasonHistory() {
       return `
         <div class="season-history-row">
           <strong>Season ${s.seasonNumber}</strong>
+          <span class="info-text">🗺️ ${s.mapName || 'Three Frontiers'}</span>
           <span class="info-text">${new Date(s.startsAt).toISOString().slice(0, 10)} → ${new Date(s.endsAt).toISOString().slice(0, 10)} UTC</span>
           <span>🔵${s.blueScore ?? 0} 🔴${s.redScore ?? 0} 🟢${s.greenScore ?? 0}</span>
           <span class="season-history-result">${resultLabel}</span>
@@ -233,6 +242,7 @@ function setGameStateFromSnapshot(snapshot) {
     },
     territories: mapTerritories(snapshot.world?.territories || snapshot.territories || []),
     rallies: mapRallies(snapshot.world?.rallies || []),
+    factionMap: snapshot.world?.factionMap || { faction: snapshot.player?.faction || null, cities: [] },
     // A season/faction change invalidates any cached chat: never show the previous
     // faction's messages, even briefly, while the new season's chat loads.
     chatMessages: previousFaction && previousFaction === G.player?.faction ? (G.chatMessages || []) : [],
@@ -244,6 +254,7 @@ function setGameStateFromSnapshot(snapshot) {
   updateFactionTheme();
   renderFactionBonuses();
   renderScoreboard();
+  renderFactionMap();
   if (previousFaction && snapshot.player?.faction && previousFaction !== snapshot.player.faction) {
     G.chatMessages = [];
     document.getElementById('chat-messages')?.replaceChildren();
@@ -522,7 +533,9 @@ function renderSeasonGate(snapshot) {
   const confirmation = document.getElementById('season-joined-confirmation');
   const adminStartButton = document.getElementById('season-admin-start-btn');
 
-  if (label) label.textContent = started ? `SEASON ${season.seasonNumber} · LIVE` : `SEASON ${season.seasonNumber} · REGISTRATION OPEN`;
+  if (label) label.textContent = started
+    ? `SEASON ${season.seasonNumber} · ${season.mapName || 'Three Frontiers'} · LIVE`
+    : `SEASON ${season.seasonNumber} · ${season.mapName || 'Three Frontiers'} · REGISTRATION OPEN`;
   if (title) {
     title.textContent = started
       ? `Season ${season.seasonNumber} is underway`
@@ -829,7 +842,7 @@ function showScreen(name, { persist = true } = {}) {
   const storageKey = getScreenStorageKey(G.player);
   if (persist && storageKey) localStorage.setItem(storageKey, name);
   if (name === 'city') renderCity();
-  if (name === 'map') { renderMap(); renderScoreboard(); }
+  if (name === 'map') { renderMap(); renderFactionMap(); renderScoreboard(); showMapView(activeMapView); }
   if (name === 'activity') renderActivity();
   if (name === 'chat') { renderFactionChat({ scrollToNewest: true }); renderFactionMembers(); }
   if (name === 'admin') renderAdminPanel();
@@ -1057,10 +1070,17 @@ function sortTerritoryIds(ids) {
 }
 
 function buildTerritoryLayout(territoriesById) {
-  // Delegates to the canonical topology module (world-topology.js) so the rendered map
-  // always matches the graph actually stored in PostgreSQL — never a hand-tuned layout
-  // that can drift from world-seed.sql/the migration.
-  const layout = { ...WORLD_TOPOLOGY.buildLayout() };
+  const selectedMap = MAP_REGISTRY?.getMap?.(G.season?.mapKey);
+  const topology = selectedMap?.topology || WORLD_TOPOLOGY;
+  // The selected season map supplies the canonical layout. Server-provided coordinates
+  // take priority so rendering still follows the authoritative active-world rows.
+  const layout = { ...topology.buildLayout() };
+  Object.values(territoriesById).forEach((territory) => {
+    if (Number.isFinite(territory.mapX) && Number.isFinite(territory.mapY)
+      && (territory.mapX !== 0 || territory.mapY !== 0)) {
+      layout[territory.id] = { cx: territory.mapX, cy: territory.mapY };
+    }
+  });
   Object.keys(layout).forEach((id) => {
     if (!(id in territoriesById)) delete layout[id];
   });
@@ -1076,7 +1096,7 @@ function buildTerritoryLayout(territoriesById) {
     layout[id] = { cx: 60 + (col * 100), cy: 700 + (row * 92) };
   });
 
-  const { width, height } = WORLD_TOPOLOGY.LAYOUT_VIEWBOX;
+  const { width, height } = topology.LAYOUT_VIEWBOX;
   return { layout, viewBox: `0 0 ${width} ${height}` };
 }
 
@@ -1098,6 +1118,107 @@ function canAttack(id, gameState = G) {
   const rally = gameState.rallies?.[id];
   if (rally && rally.attackerFaction !== gameState.player.faction) return false;
   return territory.adj.some((neighborId) => gameState.territories[neighborId] && gameState.territories[neighborId].owner === gameState.player.faction);
+}
+
+function showMapView(view) {
+  activeMapView = view === 'faction' ? 'faction' : 'world';
+  document.getElementById('world-map-view')?.classList.toggle('active', activeMapView === 'world');
+  document.getElementById('faction-map-view')?.classList.toggle('active', activeMapView === 'faction');
+  const worldTab = document.getElementById('map-view-world-tab');
+  const factionTab = document.getElementById('map-view-faction-tab');
+  worldTab?.classList.toggle('active', activeMapView === 'world');
+  factionTab?.classList.toggle('active', activeMapView === 'faction');
+  worldTab?.setAttribute('aria-selected', String(activeMapView === 'world'));
+  factionTab?.setAttribute('aria-selected', String(activeMapView === 'faction'));
+  if (activeMapView === 'faction') renderFactionMap();
+  else renderMap();
+}
+
+function buildFactionCityCoordinates(count) {
+  const coordinates = [];
+  const directions = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
+  for (let radius = 1; coordinates.length < count; radius += 1) {
+    let q = 0;
+    let r = -radius;
+    for (const [dq, dr] of directions) {
+      for (let step = 0; step < radius && coordinates.length < count; step += 1) {
+        coordinates.push({ q, r });
+        q += dq;
+        r += dr;
+      }
+    }
+  }
+  return coordinates;
+}
+
+function renderFactionMap() {
+  const svg = document.getElementById('faction-map-svg');
+  if (!svg) return;
+  svg.replaceChildren();
+
+  const faction = String(G.factionMap?.faction || G.player?.faction || 'unassigned').toLowerCase();
+  const cities = [...(G.factionMap?.cities || [])].sort((a, b) => Number(a.slotIndex) - Number(b.slotIndex));
+  const title = document.getElementById('faction-map-title');
+  const count = document.getElementById('faction-map-count');
+  if (title) title.textContent = `${faction.charAt(0).toUpperCase()}${faction.slice(1)} Homeland`;
+  if (count) count.textContent = `${cities.length} ${cities.length === 1 ? 'city' : 'cities'}`;
+
+  const center = { x: 400, y: 310 };
+  const hexSize = 30;
+  const axialToPoint = ({ q, r }) => ({
+    x: center.x + (Math.sqrt(3) * 35 * (q + (r / 2))),
+    y: center.y + (1.5 * 35 * r),
+  });
+  const cityCoordinates = buildFactionCityCoordinates(cities.length);
+  const nodes = [{ key: 'capital', q: 0, r: 0, point: center }].concat(cities.map((city, index) => ({
+    key: `city-${city.playerId}`,
+    city,
+    ...cityCoordinates[index],
+    point: axialToPoint(cityCoordinates[index]),
+  })));
+  const nodeByCoordinate = new Map(nodes.map((node) => [`${node.q},${node.r}`, node]));
+  const neighborSteps = [[1, 0], [0, 1], [-1, 1]];
+
+  nodes.forEach((node) => {
+    neighborSteps.forEach(([dq, dr]) => {
+      const neighbor = nodeByCoordinate.get(`${node.q + dq},${node.r + dr}`);
+      if (!neighbor) return;
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', node.point.x);
+      line.setAttribute('y1', node.point.y);
+      line.setAttribute('x2', neighbor.point.x);
+      line.setAttribute('y2', neighbor.point.y);
+      line.setAttribute('class', 'faction-city-link');
+      svg.appendChild(line);
+    });
+  });
+
+  nodes.forEach((node) => {
+    const isCapital = node.key === 'capital';
+    const isOwnCity = Number(node.city?.playerId) === Number(G.player?.id);
+    const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    polygon.setAttribute('points', createHexPoints(node.point.x, node.point.y, isCapital ? 36 : hexSize));
+    polygon.setAttribute('class', `faction-city-tile faction-city-${faction}${isCapital ? ' faction-city-capital' : ''}${isOwnCity ? ' own-city' : ''}`);
+    svg.appendChild(polygon);
+
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', node.point.x);
+    label.setAttribute('y', node.point.y + (isCapital ? 5 : 3));
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('class', 'faction-city-label');
+    label.textContent = isCapital ? '👑 Capital' : String(node.city.username || 'City').slice(0, 14);
+    svg.appendChild(label);
+
+    if (isOwnCity) {
+      const marker = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      marker.setAttribute('x', node.point.x);
+      marker.setAttribute('y', node.point.y + 18);
+      marker.setAttribute('text-anchor', 'middle');
+      marker.setAttribute('class', 'faction-city-own-label');
+      marker.textContent = 'YOU';
+      svg.appendChild(marker);
+    }
+  });
 }
 
 function renderMap() {
@@ -1987,6 +2108,7 @@ async function renderAdminSeasonInfo() {
     container.innerHTML = `
       <div class="admin-territory-row">
         <strong>Season ${s.seasonNumber}</strong>
+        <span class="admin-badge">🗺️ ${s.mapName || 'Three Frontiers'}</span>
         <span class="admin-badge">ends ${new Date(s.endsAt).toISOString()}</span>
       </div>
       <div class="admin-territory-row">

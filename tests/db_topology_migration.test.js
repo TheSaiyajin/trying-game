@@ -3,13 +3,15 @@ const assert = require('node:assert/strict');
 const topology = require('../world-topology');
 const { applyTopologyMigrationIfNeeded } = require('../backend/db');
 
-function createFakeClient({ initialVersion = 0, territoryCount = 33 } = {}) {
+function createFakeClient({ initialVersion = 0, initialMapKey = 'three-frontiers', activeMapKey = 'three-frontiers', territoryCount = 33 } = {}) {
   const calls = [];
   let version = initialVersion;
+  let mapKey = initialMapKey;
 
   return {
     calls,
     getVersion: () => version,
+    getMapKey: () => mapKey,
     async query(sql, params = []) {
       const text = sql.trim().replace(/\s+/g, ' ');
       calls.push(text);
@@ -17,8 +19,11 @@ function createFakeClient({ initialVersion = 0, territoryCount = 33 } = {}) {
       if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') {
         return { rows: [] };
       }
-      if (text === 'SELECT version FROM topology_version WHERE id = 1 FOR UPDATE') {
-        return { rows: [{ version }], rowCount: 1 };
+      if (text.startsWith("SELECT map_key FROM seasons WHERE status = 'active'")) {
+        return { rows: [{ map_key: activeMapKey }], rowCount: 1 };
+      }
+      if (text === 'SELECT version, map_key FROM topology_version WHERE id = 1 FOR UPDATE') {
+        return { rows: [{ version, map_key: mapKey }], rowCount: 1 };
       }
       if (text === 'SELECT COUNT(*) AS cnt FROM territories') {
         return { rows: [{ cnt: String(territoryCount) }] };
@@ -31,6 +36,7 @@ function createFakeClient({ initialVersion = 0, territoryCount = 33 } = {}) {
       }
       if (text.startsWith('INSERT INTO topology_version')) {
         version = Number(params[0]);
+        mapKey = params[1];
         return { rows: [] };
       }
 
@@ -46,6 +52,7 @@ test('legacy-topology migration only touches territory_neighbors and topology_ve
 
   assert.equal(result.migrated, true);
   assert.equal(result.currentVersion, topology.TOPOLOGY_VERSION);
+  assert.equal(result.mapKey, 'three-frontiers');
   assert.ok(client.calls.some((sql) => sql === 'DELETE FROM territory_neighbors'));
   assert.ok(client.calls.some((sql) => sql.startsWith('INSERT INTO territory_neighbors')));
   assert.ok(client.calls.some((sql) => sql.startsWith('INSERT INTO topology_version')));
@@ -78,7 +85,7 @@ test('legacy-topology migration is idempotent: running it twice does not duplica
   assert.equal(first.migrated, true);
   assert.equal(second.migrated, false);
   assert.equal(second.currentVersion, topology.TOPOLOGY_VERSION);
-  // The second run should only issue the version check queries (BEGIN, SELECT version,
+  // The second run should only issue the active-map/version checks
   // COMMIT) -- no additional DELETE/INSERT into territory_neighbors.
   const callsAfterSecond = client.calls.slice(callsAfterFirst);
   assert.ok(!callsAfterSecond.some((sql) => sql === 'DELETE FROM territory_neighbors'));

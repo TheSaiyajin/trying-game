@@ -3,6 +3,7 @@ const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
+const mapRegistry = require('../map-registry');
 const { connect, getClient, initializeDatabase } = require('./db');
 const { issueToken, verifyToken, hashPassword, verifyPassword } = require('./auth');
 const {
@@ -61,6 +62,7 @@ const {
   getSeasonMembership,
   hasSeasonStarted,
   computeScores,
+  getFactionCityTiles,
 } = require('./season');
 const { getCurrentUtcDayBounds } = require('./season-time');
 const { resolveTrustProxySetting } = require('./trust-proxy');
@@ -297,6 +299,9 @@ async function getTerritoriesSnapshot(db = null) {
     capital: !!row.is_capital,
     contested: !!row.contested,
     protectedUntil: row.protected_until || null,
+    scoreValue: Number(row.score_value),
+    mapX: Number(row.map_x),
+    mapY: Number(row.map_y),
     neighbors: row.neighbors || [],
   }));
 }
@@ -563,6 +568,9 @@ async function getPlayerWorldState(playerId, season = null) {
   const rallies = season
     ? await getActiveRallies(db, { seasonId: season.id, playerId, playerFaction: player.faction })
     : [];
+  const factionCities = season
+    ? await getFactionCityTiles(db, { seasonId: season.id, faction: player.faction })
+    : [];
 
   return {
     player: {
@@ -593,6 +601,10 @@ async function getPlayerWorldState(playerId, season = null) {
     world: {
       territories,
       rallies,
+      factionMap: {
+        faction: player.faction,
+        cities: factionCities,
+      },
       players: players.rows.map((row) => ({
         id: row.id,
         username: row.username,
@@ -609,6 +621,7 @@ async function buildSeasonSummary(db, season, territories = [], now = new Date()
   const liveScores = computeScores(territories);
   const memberCounts = await getFactionMemberCounts(db, season.id);
   const started = hasSeasonStarted(season, now);
+  const selectedMap = mapRegistry.getMap(season.map_key);
   return {
     seasonNumber: season.season_number,
     startsAt: season.starts_at,
@@ -618,6 +631,8 @@ async function buildSeasonSummary(db, season, territories = [], now = new Date()
     scores: liveScores,
     memberCounts,
     joinedCount: memberCounts.blue + memberCounts.red + memberCounts.green,
+    mapKey: selectedMap.key,
+    mapName: selectedMap.name,
   };
 }
 
@@ -1374,7 +1389,7 @@ app.get('/api/game/season-history', requireAuth, asyncHandler(async (req, res) =
   const db = await connect();
   const limit = Math.min(20, Math.max(1, Number(req.query.limit || 10)));
   const result = await db.query(
-    `SELECT season_number, starts_at, ends_at, status, blue_score, red_score, green_score, result, completed_at
+    `SELECT season_number, starts_at, ends_at, status, map_key, blue_score, red_score, green_score, result, completed_at
      FROM seasons
      WHERE season_number > 0 AND status = 'completed'
      ORDER BY season_number DESC
@@ -1391,6 +1406,8 @@ app.get('/api/game/season-history', requireAuth, asyncHandler(async (req, res) =
       greenScore: row.green_score,
       result: row.result,
       completedAt: row.completed_at,
+      mapKey: mapRegistry.getMap(row.map_key).key,
+      mapName: mapRegistry.getMap(row.map_key).name,
     })),
   });
 }));
@@ -1410,6 +1427,8 @@ app.get('/api/admin/season', requireAuth, requireAdmin, asyncHandler(async (req,
       hasStarted: hasSeasonStarted(season),
       memberCounts,
       liveScores: computeScores(territories),
+      mapKey: mapRegistry.getMap(season.map_key).key,
+      mapName: mapRegistry.getMap(season.map_key).name,
     },
   });
 }));

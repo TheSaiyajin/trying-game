@@ -99,6 +99,7 @@
         defense: CAPITAL_DEFENSE,
         bonusType: 'resource',
         isCapital: true,
+        scoreValue: 0,
         ...bonusFields('resource', false),
       });
 
@@ -110,6 +111,7 @@
           defense: HOME_DEFENSE,
           bonusType,
           isCapital: false,
+          scoreValue: 1,
           ...bonusFields(bonusType, false),
         });
       });
@@ -122,6 +124,7 @@
           defense: FRONTIER_DEFENSE,
           bonusType,
           isCapital: false,
+          scoreValue: 1,
           ...bonusFields(bonusType, false),
         });
       });
@@ -136,6 +139,7 @@
           defense: BORDER_DEFENSE,
           bonusType,
           isCapital: false,
+          scoreValue: 1,
           ...bonusFields(bonusType, false),
         });
       });
@@ -150,6 +154,7 @@
         defense: CORE_DEFENSE,
         bonusType,
         isCapital: false,
+        scoreValue: 2,
         ...bonusFields(bonusType, true),
       });
     });

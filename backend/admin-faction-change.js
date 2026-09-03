@@ -95,6 +95,20 @@ async function changePlayerFaction(client, { actorId, playerId, faction }) {
      ON CONFLICT (season_id, player_id) DO UPDATE SET faction = EXCLUDED.faction`,
     [playerId, faction]
   );
+  await client.query(
+    `DELETE FROM faction_city_tiles
+     WHERE player_id = $1
+       AND season_id IN (SELECT id FROM seasons WHERE status = 'active')`,
+    [playerId]
+  );
+  await client.query(
+    `INSERT INTO faction_city_tiles (season_id, player_id, faction, slot_index)
+     SELECT s.id, $1, $2,
+            COALESCE((SELECT MAX(slot_index) + 1 FROM faction_city_tiles WHERE season_id = s.id AND faction = $2), 0)
+     FROM seasons s WHERE s.status = 'active'
+     ON CONFLICT (season_id, player_id) DO NOTHING`,
+    [playerId, faction]
+  );
   await client.query('UPDATE faction_leaders SET player_id = NULL WHERE player_id = $1', [playerId]);
   await client.query(
     `UPDATE territory_defenders td

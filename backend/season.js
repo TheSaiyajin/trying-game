@@ -2,7 +2,8 @@
 // assignment, and scoring. Every function here takes a caller-supplied `client` (pool or a
 // dedicated checked-out connection) so it stays unit-testable with a fake client, matching
 // the rest of this codebase (admin-write-operations.js, admin-resets.js, etc.).
-const topology = require('../world-topology');
+const classicTopology = require('../world-topology');
+const mapRegistry = require('../map-registry');
 const topologySql = require('./topology-sql');
 const { STARTING_PLAYER_RESOURCES, STARTING_BUILDING_LEVELS } = require('./admin-resets');
 const { logAdminAction } = require('./admin-write-operations');
@@ -17,7 +18,7 @@ const SEASON_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const PRESEASON_DURATION_MS = 24 * 60 * 60 * 1000;
 
 const VALID_FACTIONS = ['blue', 'red', 'green'];
-const CORE_ID_SET = new Set(topology.CORE_IDS);
+const CORE_ID_SET = new Set(classicTopology.CORE_IDS);
 
 async function getActiveSeason(client) {
   const result = await client.query(`SELECT * FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1`);
@@ -42,16 +43,16 @@ async function getSeasonMembership(client, seasonId, playerId) {
 // the one just completed today, hit the UNIQUE constraint, and silently left zero active
 // seasons. This always runs inside runSeasonRollover's advisory-locked transaction, so
 // concurrent callers can never compute/insert the same next number.
-async function createSeasonRow(client, { startsAt, endsAt }) {
+async function createSeasonRow(client, { startsAt, endsAt, mapKey = mapRegistry.DEFAULT_MAP_KEY }) {
   const nextNumberResult = await client.query(
     'SELECT COALESCE(MAX(season_number), 0) + 1 AS next_number FROM seasons WHERE season_number > 0'
   );
   const seasonNumber = Number(nextNumberResult.rows[0].next_number);
   const inserted = await client.query(
-    `INSERT INTO seasons (season_number, starts_at, ends_at, status)
-     VALUES ($1, $2, $3, 'active')
+    `INSERT INTO seasons (season_number, starts_at, ends_at, status, map_key)
+     VALUES ($1, $2, $3, 'active', $4)
      RETURNING *`,
-    [seasonNumber, startsAt, endsAt]
+    [seasonNumber, startsAt, endsAt, mapRegistry.getMap(mapKey).key]
   );
   const season = inserted.rows[0];
   await client.query(
@@ -63,8 +64,8 @@ async function createSeasonRow(client, { startsAt, endsAt }) {
   return season;
 }
 
-// Capitals score nothing and stay protected; core territories (from the canonical topology,
-// never frontend/visual data) are worth double a normal territory. Accepts either raw
+// Capitals score nothing. Each versioned map supplies a server-authoritative score value
+// (normal territory 1, classic cores 2, Crownlands Crown 3). Accepts either raw
 // DB-shaped territories (owner_faction/is_capital) or snapshot-shaped ones (owner/capital),
 // matching the dual-shape pattern already used by getFactionTerritoryBonuses.
 function computeScores(territories) {
@@ -74,7 +75,10 @@ function computeScores(territories) {
     if (isCapital) continue;
     const ownerFaction = territory.owner_faction || territory.owner;
     if (!VALID_FACTIONS.includes(ownerFaction)) continue;
-    scores[ownerFaction] += CORE_ID_SET.has(territory.id) ? 2 : 1;
+    const scoreValue = territory.score_value ?? territory.scoreValue;
+    scores[ownerFaction] += scoreValue === undefined
+      ? (CORE_ID_SET.has(territory.id) ? 2 : 1)
+      : Math.max(0, Number(scoreValue) || 0);
   }
   return scores;
 }
@@ -86,7 +90,7 @@ function determineResult(scores) {
 }
 
 async function calculateSeasonScores(client) {
-  const result = await client.query('SELECT id, owner_faction, is_capital FROM territories');
+  const result = await client.query('SELECT id, owner_faction, is_capital, score_value FROM territories');
   const scores = computeScores(result.rows);
   return { scores, result: determineResult(scores) };
 }
@@ -106,15 +110,21 @@ async function getFactionMemberCounts(client, seasonId) {
 // Resets everything seasonal (territories/neighbors reseeded from the canonical topology,
 // resources, soldiers, buildings, defenders, attack/battle state, and faction assignment) but
 // never touches accounts, password hashes, admin roles, season history, or season_wins.
-async function resetSeasonalGameplay(client) {
+async function resetSeasonalGameplay(client, { mapKey = mapRegistry.DEFAULT_MAP_KEY } = {}) {
+  const selectedMap = mapRegistry.getMap(mapKey);
   await client.query('DELETE FROM attack_contributions');
   await client.query('DELETE FROM attack_targets');
   await client.query('DELETE FROM territory_defenders');
   await client.query('DELETE FROM battle_history');
   await client.query('DELETE FROM territory_neighbors');
   await client.query('DELETE FROM territories');
-  await client.query(topologySql.buildTerritoryValuesSQL());
-  await client.query(topologySql.buildNeighborValuesSQL());
+  await client.query(topologySql.buildTerritoryValuesSQL(selectedMap.key));
+  await client.query(topologySql.buildNeighborValuesSQL(selectedMap.key));
+  await client.query(
+    `INSERT INTO topology_version (id, version, map_key) VALUES (1, $1, $2)
+     ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, map_key = EXCLUDED.map_key, updated_at = NOW()`,
+    [selectedMap.topology.TOPOLOGY_VERSION, selectedMap.key]
+  );
 
   await client.query(
     `UPDATE players
@@ -185,7 +195,8 @@ async function runSeasonRollover(client, { actorId = null, now = new Date(), for
         );
       }
 
-      await resetSeasonalGameplay(client);
+      const nextMapKey = mapRegistry.getNextMapKey(current.map_key || mapRegistry.DEFAULT_MAP_KEY);
+      await resetSeasonalGameplay(client, { mapKey: nextMapKey });
       finishedSeason = { ...current, blue_score: scores.blue, red_score: scores.red, green_score: scores.green, result };
 
       if (actorId !== null) {
@@ -205,7 +216,10 @@ async function runSeasonRollover(client, { actorId = null, now = new Date(), for
       ? new Date(now.getTime() + PRESEASON_DURATION_MS)
       : now;
     const endsAt = new Date(startsAt.getTime() + SEASON_DURATION_MS);
-    const newSeason = await createSeasonRow(client, { startsAt, endsAt });
+    const mapKey = current
+      ? mapRegistry.getNextMapKey(current.map_key || mapRegistry.DEFAULT_MAP_KEY)
+      : mapRegistry.DEFAULT_MAP_KEY;
+    const newSeason = await createSeasonRow(client, { startsAt, endsAt, mapKey });
     await client.query('COMMIT');
     return { rotated: true, season: newSeason, finishedSeason };
   } catch (error) {
@@ -297,6 +311,14 @@ async function ensurePlayerFactionAssignment(client, { seasonId, playerId, resou
        ON CONFLICT (season_id, player_id) DO NOTHING`,
       [seasonId, playerId, faction]
     );
+    await client.query(
+      `INSERT INTO faction_city_tiles (season_id, player_id, faction, slot_index)
+       SELECT $1, $2, $3, COALESCE(MAX(slot_index), -1) + 1
+       FROM faction_city_tiles
+       WHERE season_id = $1 AND faction = $3
+       ON CONFLICT (season_id, player_id) DO NOTHING`,
+      [seasonId, playerId, faction]
+    );
     // Existing game logic reads players.faction (and army_name) directly; keep them in sync
     // as a cache of the authoritative current-season assignment so attack/defense/chat/
     // production code needs no rewrite. faction is never trusted on its own for authorization
@@ -335,6 +357,24 @@ async function ensurePlayerFactionAssignment(client, { seasonId, playerId, resou
   }
 }
 
+async function getFactionCityTiles(client, { seasonId, faction }) {
+  if (!VALID_FACTIONS.includes(faction)) return [];
+  const result = await client.query(
+    `SELECT fct.player_id, fct.faction, fct.slot_index, fct.created_at, p.username
+     FROM faction_city_tiles fct
+     INNER JOIN players p ON p.id = fct.player_id
+     WHERE fct.season_id = $1 AND fct.faction = $2
+     ORDER BY fct.slot_index, fct.player_id`,
+    [seasonId, faction]
+  );
+  return result.rows.map((row) => ({
+    playerId: Number(row.player_id),
+    username: row.username,
+    faction: row.faction,
+    slotIndex: Number(row.slot_index),
+  }));
+}
+
 module.exports = {
   ROLLOVER_LOCK_KEY,
   ASSIGNMENT_LOCK_KEY,
@@ -356,4 +396,5 @@ module.exports = {
   hasSeasonStarted,
   getActiveSeason,
   createSeasonRow,
+  getFactionCityTiles,
 };

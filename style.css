@@ -1237,6 +1237,25 @@ html, body {
 .territory.selected { stroke: #fff !important; stroke-width: 3.5 !important; filter: brightness(1.35); }
 .territory-bonus-icon { font-size: 11px; }
 
+.map-view-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.map-view-tab { flex: 1; min-height: 36px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card2); color: var(--text-muted); font-weight: 700; cursor: pointer; }
+.map-view-tab.active { color: var(--text-main); border-color: var(--faction-accent-bright); background: color-mix(in srgb, var(--faction-accent) 24%, var(--bg-card2)); }
+.map-view-panel { display: none; }
+.map-view-panel.active { display: block; }
+#world-map-view.active { min-height: 0; }
+.faction-map-card { margin: 0; }
+.faction-map-heading { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.faction-map-heading h3 { margin-bottom: 3px; }
+.faction-map-container { width: 100%; min-height: 360px; height: min(62vh, 680px); overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--faction-map-bg); }
+#faction-map-svg { display: block; width: 100%; height: 100%; }
+.faction-city-link { stroke: color-mix(in srgb, var(--faction-accent-bright) 52%, #6e7681); stroke-width: 3; opacity: 0.65; }
+.faction-city-tile { stroke: var(--faction-accent-bright); stroke-width: 2; fill: var(--faction-accent); }
+.faction-city-capital { fill: color-mix(in srgb, var(--faction-accent) 60%, #05080d); stroke-width: 3; }
+.faction-city-tile.own-city { stroke: var(--accent-gold); stroke-width: 4; filter: drop-shadow(0 0 6px rgba(227, 179, 65, 0.8)); }
+.faction-city-label { fill: #f0f6fc; font-size: 10px; font-weight: 700; pointer-events: none; }
+.faction-city-own-label { fill: var(--accent-gold); font-size: 8px; font-weight: 800; pointer-events: none; }
+.faction-map-note { margin-top: 8px; text-align: center; }
+
 #screen-chat.active { display: flex; flex-direction: column; gap: 10px; }
 #screen-chat .screen-title { flex: none; margin-bottom: 0; }
 #screen-chat > .section-card { margin-bottom: 0; }
@@ -1256,7 +1275,11 @@ html, body {
   .building-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .building-card { margin-bottom: 0; }
   #screen-map.active { display: flex; flex-direction: column; overflow: hidden; }
-  #screen-map > .screen-title, #screen-map > .scoreboard, #screen-map > .map-legend { flex: none; }
+  #screen-map > .screen-title, #screen-map > .map-view-tabs { flex: none; }
+  #world-map-view.active, #faction-map-view.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  #world-map-view > .scoreboard, #world-map-view > .map-legend { flex: none; }
+  #faction-map-view .faction-map-card { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  #faction-map-view .faction-map-container { flex: 1; min-height: 0; height: auto; }
   .map-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 14px; align-items: stretch; flex: 1; min-height: 0; overflow: hidden; }
   .map-container { display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; height: 100%; padding: 12px; margin-bottom: 0; overflow: hidden; box-sizing: border-box; }
   #map-svg { width: 100%; height: 100%; min-width: 0; max-width: 100%; max-height: 100%; }

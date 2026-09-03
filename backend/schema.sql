@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS territories (
   is_capital BOOLEAN NOT NULL DEFAULT FALSE,
   resource_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0,
   storage_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0,
+  score_value INTEGER NOT NULL DEFAULT 1,
+  map_x INTEGER NOT NULL DEFAULT 0,
+  map_y INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_battle_at TIMESTAMPTZ,
   protected_until TIMESTAMPTZ
@@ -145,12 +148,23 @@ CREATE TABLE IF NOT EXISTS seasons (
   starts_at TIMESTAMPTZ NOT NULL,
   ends_at TIMESTAMPTZ NOT NULL,
   status VARCHAR(16) NOT NULL DEFAULT 'active',
+  map_key VARCHAR(64) NOT NULL DEFAULT 'three-frontiers',
   blue_score INTEGER,
   red_score INTEGER,
   green_score INTEGER,
   result VARCHAR(16),
   completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS faction_city_tiles (
+  season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  faction VARCHAR(16) NOT NULL,
+  slot_index INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (season_id, player_id),
+  UNIQUE (season_id, faction, slot_index)
 );
 
 CREATE TABLE IF NOT EXISTS player_season_stats (
@@ -181,3 +195,4 @@ CREATE INDEX IF NOT EXISTS idx_attack_contrib_territory ON attack_contributions(
 CREATE INDEX IF NOT EXISTS idx_defenders_territory ON territory_defenders(territory_id);
 CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time ON faction_chat_messages(faction, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_player_season_stats_rankings ON player_season_stats(season_id);
+CREATE INDEX IF NOT EXISTS idx_faction_city_tiles_season_faction ON faction_city_tiles(season_id, faction, slot_index);
