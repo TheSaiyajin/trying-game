@@ -63,6 +63,7 @@
     if (isCore) {
       if (bonusType === 'fortress') return { bonusValue: 0.25, resourceBonus: 0, storageBonus: 0, isFortress: true };
       if (bonusType === 'storage') return { bonusValue: 0.25, resourceBonus: 0, storageBonus: 0.25, isFortress: false };
+      if (bonusType === 'attack' || bonusType === 'defense') return { bonusValue: 0.15, resourceBonus: 0, storageBonus: 0, isFortress: false };
       return { bonusValue: 0.15, resourceBonus: 0.15, storageBonus: 0, isFortress: false };
     }
     switch (bonusType) {
@@ -73,6 +74,9 @@
         return { bonusValue: 0.10, resourceBonus: 0.10, storageBonus: 0, isFortress: false };
       case 'training':
         return { bonusValue: 0.05, resourceBonus: 0.05, storageBonus: 0, isFortress: false };
+      case 'attack':
+      case 'defense':
+        return { bonusValue: 0.10, resourceBonus: 0, storageBonus: 0, isFortress: false };
       case 'resource':
         return { bonusValue: 0.10, resourceBonus: 0.10, storageBonus: 0, isFortress: false };
       case 'fortress':

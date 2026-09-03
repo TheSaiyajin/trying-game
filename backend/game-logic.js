@@ -63,11 +63,24 @@ function getUpgradeCost(buildingKey, level) {
 }
 
 function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
-  const bonuses = { food: 0, wood: 0, iron: 0, manpower: 0, training: 0, storage: 0, fortressTroops: 0, allResources: 0 };
+  const bonuses = {
+    food: 0,
+    wood: 0,
+    iron: 0,
+    manpower: 0,
+    training: 0,
+    storage: 0,
+    attack: 0,
+    defense: 0,
+    fortressTroops: 0,
+    allResources: 0,
+  };
 
   for (const territory of territories) {
     const ownerFaction = territory.owner_faction || territory.owner;
-    if (ownerFaction !== faction) continue;
+    // A territory under attack is contested and grants no faction bonus until
+    // the live battle ends. This applies to economic and combat bonus types.
+    if (ownerFaction !== faction || territory.contested) continue;
     const bonusType = String(territory.bonus_type || territory.bonus || '').toLowerCase();
     const bonusValue = Number(territory.bonus_value ?? territory.bonusValue ?? 0);
     const storageBonus = territory.storage_bonus ?? territory.storageBonus;
@@ -77,6 +90,8 @@ function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
     if (bonusType === 'iron') bonuses.iron += bonusValue;
     if (bonusType === 'manpower') bonuses.manpower += bonusValue;
     if (bonusType === 'training') bonuses.training += bonusValue;
+    if (bonusType === 'attack') bonuses.attack += bonusValue;
+    if (bonusType === 'defense') bonuses.defense += bonusValue;
     if (bonusType === 'storage') {
       bonuses.storage += storageBonus !== undefined && storageBonus !== null
         ? Number(storageBonus) || 0

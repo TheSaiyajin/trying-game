@@ -49,6 +49,7 @@ const { resolveBattle } = require('./resolve-battle');
 const {
   getActiveRallies,
   getExpiredRallyTerritoryIds,
+  launchRally,
   startOrJoinRally,
 } = require('./rally-battles');
 const {
@@ -96,7 +97,7 @@ app.use(rateLimit({
 
 app.use('/api', (req, res, next) => {
   const isStateMutation = req.method !== 'GET' && (
-    /^\/game\/(upgrade-building|train-soldiers|defend|recall-defenders|attack)$/.test(req.path)
+    /^\/game\/(upgrade-building|train-soldiers|defend|recall-defenders|attack|launch-rally)$/.test(req.path)
     || req.path.startsWith('/admin/')
   );
   if (isStateMutation) {
@@ -234,6 +235,10 @@ async function getTerritoriesSnapshot(db = null) {
   const queryable = db || await connect();
   const result = await queryable.query(`
     SELECT t.*,
+      EXISTS (
+        SELECT 1 FROM attack_targets at
+        WHERE at.territory_id = t.id AND at.phase = 'active'
+      ) AS contested,
       COALESCE(ARRAY_AGG(n.neighbor_id ORDER BY n.neighbor_id) FILTER (WHERE n.neighbor_id IS NOT NULL), ARRAY[]::varchar[]) AS neighbors
     FROM territories t
     LEFT JOIN territory_neighbors n ON n.territory_id = t.id
@@ -255,6 +260,8 @@ async function getTerritoriesSnapshot(db = null) {
     storageBonus: Number(row.storage_bonus),
     fortress: !!row.is_fortress,
     capital: !!row.is_capital,
+    contested: !!row.contested,
+    protectedUntil: row.protected_until || null,
     neighbors: row.neighbors || [],
   }));
 }
@@ -514,7 +521,7 @@ async function getPlayerWorldState(playerId, season = null) {
     stationedTroops[row.territory_id] = Number(row.troops);
   }
   const rallies = season
-    ? await getActiveRallies(db, { seasonId: season.id, playerId })
+    ? await getActiveRallies(db, { seasonId: season.id, playerId, playerFaction: player.faction })
     : [];
 
   return {
@@ -807,6 +814,10 @@ app.post('/api/game/defend', requireAuth, asyncHandler(async (req, res) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
+    const activeBattle = await client.query(
+      'SELECT phase FROM attack_targets WHERE territory_id = $1 FOR UPDATE',
+      [territoryId]
+    );
     const territory = await client.query('SELECT * FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
     if (!territory.rows[0]) {
       await client.query('ROLLBACK');
@@ -841,6 +852,16 @@ app.post('/api/game/defend', requireAuth, asyncHandler(async (req, res) => {
       `UPDATE territories SET defense_troops = $1 WHERE id = $2`,
       [defenseState.totalDefenseTroops + troops, territoryId]
     );
+    if (activeBattle.rows[0]?.phase === 'active') {
+      await client.query(
+        `INSERT INTO battle_defender_contributions (territory_id, player_id, faction, contribution)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (territory_id, player_id)
+         DO UPDATE SET contribution = battle_defender_contributions.contribution + EXCLUDED.contribution,
+                       faction = EXCLUDED.faction`,
+        [territoryId, player.id, player.faction, troops]
+      );
+    }
     await addPlayerSeasonStats(client, req.currentSeason.id, player.id, {
       reinforcement_troops_sent: troops,
     });
@@ -868,6 +889,14 @@ app.post('/api/game/recall-defenders', requireAuth, asyncHandler(async (req, res
   const client = await getClient();
   try {
     await client.query('BEGIN');
+    const activeBattle = await client.query(
+      'SELECT phase FROM attack_targets WHERE territory_id = $1 FOR UPDATE',
+      [territoryId]
+    );
+    if (activeBattle.rows[0]?.phase === 'active') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Defenders cannot be recalled during an active battle.' });
+    }
     const territory = await client.query('SELECT defense_troops FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
     if (!territory.rows[0]) {
       await client.query('ROLLBACK');
@@ -925,6 +954,7 @@ app.post('/api/game/recall-defenders', requireAuth, asyncHandler(async (req, res
 app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
   const territoryId = String(req.body.territoryId || '').trim();
   const soldiers = req.body.soldiers;
+  const mode = String(req.body.mode || 'rally').trim().toLowerCase();
 
   const client = await getClient();
   let result;
@@ -945,6 +975,7 @@ app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
         territoryId,
         soldiers,
         seasonId: req.currentSeason.id,
+        mode,
       });
   } catch (error) {
     if (error instanceof AttackError) {
@@ -965,6 +996,24 @@ app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
     rally: result.rally || null,
     rallyCreated: Boolean(result.rally && result.created),
   });
+}));
+
+app.post('/api/game/launch-rally', requireAuth, asyncHandler(async (req, res) => {
+  const territoryId = String(req.body.territoryId || '').trim();
+  if (!territoryId) return res.status(400).json({ error: 'Territory required.' });
+
+  const client = await getClient();
+  try {
+    await launchRally(client, { territoryId, playerId: req.user.userId });
+  } catch (error) {
+    if (error instanceof AttackError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
+  res.json({ ok: true, launched: true, state: snapshot, territoryId });
 }));
 
 app.get('/api/game/faction-chat', requireAuth, asyncHandler(async (req, res) => {

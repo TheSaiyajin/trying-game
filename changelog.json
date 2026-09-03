@@ -1,5 +1,15 @@
 [
   {
+    "title": "Live battles and hidden rallies",
+    "changes": [
+      "Choose between an immediate solo attack and a hidden faction rally.",
+      "Live battles now cause troop losses every minute.",
+      "Territory bonuses pause while that territory is contested.",
+      "Attack and defense bonuses can strengthen future armies.",
+      "Territories are protected for 30 minutes after a battle ends."
+    ]
+  },
+  {
     "title": "Timed rally battles",
     "changes": [
       "Enemy territory attacks now open a 10-minute rally.",

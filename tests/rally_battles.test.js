@@ -7,6 +7,7 @@ const {
   getActiveRallies,
   startOrJoinRally,
 } = require('../backend/rally-battles');
+const { BATTLE_DURATION_MS, BATTLE_ROUND_MS } = require('../backend/battle-rules');
 
 function createRallyClient() {
   const players = new Map([
@@ -45,7 +46,18 @@ function createRallyClient() {
           season_id: params[4],
           created_at: params[5],
           resolves_at: params[6],
+          phase: params[7],
+          battle_started_at: params[8],
+          next_tick_at: params[9],
         };
+        return { rows: [rally] };
+      }
+      if (text.startsWith('DELETE FROM battle_defender_contributions')) return { rows: [] };
+      if (text.startsWith('INSERT INTO battle_defender_contributions')) return { rows: [] };
+      if (text.startsWith('SELECT t.*')) return { rows: [territory] };
+      if (text.startsWith('UPDATE attack_targets SET attack_bonus')) {
+        rally.attack_bonus = params[1];
+        rally.defense_bonus = params[2];
         return { rows: [rally] };
       }
       if (text.startsWith('UPDATE players')) {
@@ -68,7 +80,7 @@ function createRallyClient() {
   };
 }
 
-test('enemy attack starts a persisted 10-minute rally and reserves the troops', async () => {
+test('enemy attack can start a hidden 10-minute rally and reserve troops', async () => {
   const client = createRallyClient();
   const now = new Date('2026-09-02T12:00:00.000Z');
 
@@ -83,8 +95,25 @@ test('enemy attack starts a persisted 10-minute rally and reserves the troops', 
   assert.equal(result.created, true);
   assert.equal(result.rally.totalAttackers, 30);
   assert.equal(result.rally.myContribution, 30);
+  assert.equal(result.rally.phase, 'rally');
   assert.equal(new Date(result.rally.resolvesAt).getTime() - now.getTime(), RALLY_DURATION_MS);
   assert.equal(client.players.get(1).soldiers, 70);
+});
+
+test('solo attack skips preparation and starts a 20-minute live battle', async () => {
+  const client = createRallyClient();
+  const now = new Date('2026-09-02T12:00:00.000Z');
+  const result = await startOrJoinRally(client, {
+    playerId: 1,
+    territoryId: 'r2',
+    soldiers: 30,
+    seasonId: 7,
+    mode: 'solo',
+    now,
+  });
+  assert.equal(result.rally.phase, 'active');
+  assert.equal(new Date(result.rally.resolvesAt).getTime() - now.getTime(), BATTLE_DURATION_MS);
+  assert.equal(new Date(result.rally.nextTickAt).getTime() - now.getTime(), BATTLE_ROUND_MS);
 });
 
 test('faction allies join the same rally without extending its deadline', async () => {
@@ -122,7 +151,7 @@ test('a third faction cannot take over an active rally', async () => {
       seasonId: 7,
       now: new Date('2026-09-02T12:01:00.000Z'),
     }),
-    (error) => error.status === 409 && /Another faction/.test(error.message)
+    (error) => error.status === 409 && /cannot be attacked/.test(error.message)
   );
   assert.equal(client.players.get(3).soldiers, 80);
 });
@@ -135,21 +164,31 @@ test('active rally snapshots expose totals and only the requesting player contri
         faction: 'blue',
         defender_faction: 'red',
         started_by: 1,
+        phase: 'active',
         resolves_at: '2026-09-02T12:10:00.000Z',
+        next_tick_at: '2026-09-02T11:51:00.000Z',
+        round_number: '3',
         total_attackers: '50',
         my_contribution: '20',
       }] };
     },
   };
-  const rallies = await getActiveRallies(fakeClient, { seasonId: 7, playerId: 2 });
+  const rallies = await getActiveRallies(fakeClient, { seasonId: 7, playerId: 2, playerFaction: 'blue' });
   assert.deepEqual(rallies[0], {
     territoryId: 'r2',
     attackerFaction: 'blue',
     defenderFaction: 'red',
     startedBy: 1,
+    phase: 'active',
     resolvesAt: '2026-09-02T12:10:00.000Z',
+    nextTickAt: '2026-09-02T11:51:00.000Z',
+    roundNumber: 3,
     totalAttackers: 50,
     myContribution: 20,
+    attackersLost: 0,
+    defendersLost: 0,
+    attackBonus: 0,
+    defenseBonus: 0,
   });
 });
 
@@ -162,4 +201,11 @@ test('existing databases add rally columns before creating indexes that use them
       < migrations.indexOf('idx_attack_targets_due'),
     'resolves_at must be migrated before its index is created'
   );
+  assert.ok(
+    migrations.indexOf('ADD COLUMN IF NOT EXISTS next_tick_at')
+      < migrations.indexOf('idx_attack_targets_tick_due'),
+    'next_tick_at must be migrated before its index is created'
+  );
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'backend', 'rally-battles.js'), 'utf8'),
+    /at\.phase = 'active' OR at\.faction = \$3/);
 });

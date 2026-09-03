@@ -177,6 +177,7 @@
             <span id="rally-status-countdown">10:00</span>
             <span id="rally-status-troops">Attackers: 0 · Defenders: 0</span>
             <span id="rally-status-personal" class="info-text"></span>
+            <button class="btn-primary wide" id="launch-rally-button" type="button" onclick="launchPreparedRally()" style="display:none;">⚔️ Launch Rally Now</button>
           </div>
 
           <div id="attack-section" style="display:none;">
@@ -189,7 +190,8 @@
               <button class="btn-small" onclick="changeAttack('half')">50%</button>
               <button class="btn-small" onclick="changeAttack('max')">MAX</button>
             </div>
-            <button class="btn-primary wide btn-attack" id="attack-action-button" onclick="launchAttack()">⚔️ Attack Territory</button>
+            <button class="btn-primary wide btn-attack" id="attack-action-button" onclick="launchAttack('solo')">⚔️ Solo Attack</button>
+            <button class="btn-secondary wide" id="start-rally-button" onclick="launchAttack('rally')">⏳ Start Hidden Rally</button>
           </div>
 
           <div id="defend-section" style="display:none;">

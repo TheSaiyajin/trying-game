@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS territories (
   resource_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0,
   storage_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_battle_at TIMESTAMPTZ
+  last_battle_at TIMESTAMPTZ,
+  protected_until TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS territory_neighbors (
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS attack_contributions (
   territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
   player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   contribution INTEGER NOT NULL DEFAULT 0,
+  initial_contribution INTEGER NOT NULL DEFAULT 0,
   faction VARCHAR(16) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -97,7 +99,23 @@ CREATE TABLE IF NOT EXISTS attack_targets (
   defender_faction VARCHAR(16) NOT NULL,
   season_id INTEGER NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  resolves_at TIMESTAMPTZ NOT NULL
+  resolves_at TIMESTAMPTZ NOT NULL,
+  phase VARCHAR(16) NOT NULL DEFAULT 'rally',
+  battle_started_at TIMESTAMPTZ,
+  next_tick_at TIMESTAMPTZ,
+  round_number INTEGER NOT NULL DEFAULT 0,
+  attackers_lost INTEGER NOT NULL DEFAULT 0,
+  defenders_lost INTEGER NOT NULL DEFAULT 0,
+  attack_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0,
+  defense_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS battle_defender_contributions (
+  territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
+  player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  faction VARCHAR(16) NOT NULL,
+  contribution INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (territory_id, player_id)
 );
 
 CREATE TABLE IF NOT EXISTS faction_leaders (
