@@ -43,6 +43,32 @@
     </div>
   </div>
 
+  <main class="season-gate" id="season-gate" style="display:none;" aria-labelledby="season-gate-title">
+    <div class="season-gate-card">
+      <div class="season-gate-emblem" aria-hidden="true">⚔️</div>
+      <p class="season-gate-label" id="season-gate-label">UPCOMING SEASON</p>
+      <h1 id="season-gate-title">Season starts in</h1>
+      <div class="season-gate-countdown" id="season-gate-countdown" aria-label="Time until season starts">24:00:00</div>
+      <p class="season-gate-message" id="season-gate-message">Join before the countdown ends to be ready from the first minute.</p>
+      <p class="season-gate-joined-count" id="season-gate-joined-count">0 players joined</p>
+
+      <button class="btn-primary wide season-join-btn" id="season-join-btn" type="button" onclick="joinCurrentSeason()">
+        ⚔️ Join Season
+      </button>
+      <div class="season-joined-confirmation" id="season-joined-confirmation" hidden>
+        <span aria-hidden="true">✓</span>
+        <strong>You joined the season</strong>
+        <small>Wait for the countdown—the game will open automatically.</small>
+      </div>
+
+      <p class="season-gate-note">Factions are assigned automatically to keep teams balanced. Players may also join after the season starts.</p>
+      <button class="btn-secondary wide season-admin-start" id="season-admin-start-btn" type="button" onclick="adminStartSeasonNow()" hidden>
+        Start Season Now (Admin)
+      </button>
+      <button class="season-gate-logout" type="button" onclick="logoutPlayer()">Log out</button>
+    </div>
+  </main>
+
   <div id="game-shell" class="game-shell" style="display:none;">
     <!-- ===================== TOP BAR ===================== -->
     <header class="top-bar">

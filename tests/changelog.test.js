@@ -96,6 +96,15 @@ test('changelog loading failure shows a friendly message without throwing', asyn
 test('initial changelog entry contains only simple player-facing information', () => {
   const entries = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'changelog.json'), 'utf8'));
   assert.deepEqual(entries[0], {
+    title: 'Season registration',
+    changes: [
+      'Added a 24-hour registration screen before each new season.',
+      'Players can join early and wait for the game to open automatically.',
+      'Players who miss registration can still join after the season starts.',
+      'Factions are assigned automatically to keep teams balanced.',
+    ],
+  });
+  assert.deepEqual(entries[1], {
     title: 'Live battles and hidden rallies',
     changes: [
       'Choose between an immediate solo attack and a hidden faction rally.',
@@ -105,7 +114,7 @@ test('initial changelog entry contains only simple player-facing information', (
       'Territories are protected for 30 minutes after a battle ends.',
     ],
   });
-  assert.deepEqual(entries[1], {
+  assert.deepEqual(entries[2], {
     title: 'Timed rally battles',
     changes: [
       'Enemy territory attacks now open a 10-minute rally.',
@@ -114,7 +123,7 @@ test('initial changelog entry contains only simple player-facing information', (
       'Neutral territory attacks still resolve immediately.',
     ],
   });
-  assert.deepEqual(entries[2], {
+  assert.deepEqual(entries[3], {
     title: 'Storage and resource balancing',
     changes: [
       'Added a Storage building that increases resource capacity.',

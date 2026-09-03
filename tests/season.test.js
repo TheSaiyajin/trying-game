@@ -12,7 +12,11 @@ const {
   runSeasonRollover,
   ensureCurrentSeason,
   forceFinishCurrentSeason,
+  startCurrentSeasonNow,
   ensurePlayerFactionAssignment,
+  hasSeasonStarted,
+  PRESEASON_DURATION_MS,
+  SEASON_DURATION_MS,
   createSeasonRow,
 } = require('../backend/season');
 
@@ -482,7 +486,7 @@ test('the seasons table enforces a real unique constraint on season_number (defe
   );
 });
 
-test('automatic rollover creates each new season with a seven-day duration', async () => {
+test('automatic rollover creates a 24-hour join window followed by seven playable days', async () => {
   const client = createSeasonTestClient({ players: buildPlayers([]), territories: buildTerritories() });
   const midnight = new Date('2026-09-10T00:00:00.000Z');
 
@@ -494,19 +498,59 @@ test('automatic rollover creates each new season with a seven-day duration', asy
 
   assert.notEqual(second.id, first.id);
   assert.equal(second.season_number, first.season_number + 1);
-  assert.equal(new Date(second.ends_at).toISOString(), '2026-09-24T00:00:00.000Z');
+  assert.equal(new Date(second.starts_at).toISOString(), '2026-09-18T00:00:00.000Z');
+  assert.equal(new Date(second.ends_at).toISOString(), '2026-09-25T00:00:00.000Z');
+  assert.equal(new Date(second.starts_at).getTime() - nextStart.getTime(), PRESEASON_DURATION_MS);
+  assert.equal(new Date(second.ends_at).getTime() - new Date(second.starts_at).getTime(), SEASON_DURATION_MS);
+  assert.equal(hasSeasonStarted(second, nextStart), false);
   assert.equal(client.state.seasons.filter((s) => s.status === 'active').length, 1);
 });
 
-test('force-finished seasons create a new seven-day season from the finish time', async () => {
+test('force-finished seasons open registration for 24 hours without shortening the next season', async () => {
   const client = createSeasonTestClient({ players: buildPlayers([]), territories: buildTerritories() });
   await ensureCurrentSeason(client, { now: new Date('2026-09-10T00:00:00.000Z') });
 
   const finishedAt = new Date('2026-09-12T15:30:00.000Z');
   const { season } = await forceFinishCurrentSeason(client, { actorId: 1, now: finishedAt });
 
-  assert.equal(new Date(season.starts_at).toISOString(), '2026-09-12T15:30:00.000Z');
-  assert.equal(new Date(season.ends_at).toISOString(), '2026-09-19T15:30:00.000Z');
+  assert.equal(new Date(season.starts_at).toISOString(), '2026-09-13T15:30:00.000Z');
+  assert.equal(new Date(season.ends_at).toISOString(), '2026-09-20T15:30:00.000Z');
+});
+
+test('pre-season joins start their resource clock at the scheduled start, not during waiting', async () => {
+  const client = createSeasonTestClient({ players: buildPlayers([{ id: 1 }]), territories: buildTerritories() });
+  await ensureCurrentSeason(client, { now: new Date('2026-09-10T00:00:00.000Z') });
+  const { season } = await forceFinishCurrentSeason(client, { actorId: 1, now: new Date('2026-09-12T12:00:00.000Z') });
+
+  await ensurePlayerFactionAssignment(client, {
+    seasonId: season.id,
+    playerId: 1,
+    resourceStartAt: season.starts_at,
+  });
+
+  assert.equal(client.state.players.get(1).resource_last_updated.toISOString(), new Date(season.starts_at).toISOString());
+  assert.equal(hasSeasonStarted(season, new Date('2026-09-13T11:59:59.000Z')), false);
+  assert.equal(hasSeasonStarted(season, new Date('2026-09-13T12:00:00.000Z')), true);
+});
+
+test('Sai can start a preparing season early while preserving seven playable days', async () => {
+  const client = createSeasonTestClient({ players: buildPlayers([{ id: 1 }]), territories: buildTerritories() });
+  await ensureCurrentSeason(client, { now: new Date('2026-09-10T00:00:00.000Z') });
+  const { season } = await forceFinishCurrentSeason(client, { actorId: 1, now: new Date('2026-09-12T12:00:00.000Z') });
+  await ensurePlayerFactionAssignment(client, {
+    seasonId: season.id,
+    playerId: 1,
+    resourceStartAt: season.starts_at,
+  });
+
+  const startedAt = new Date('2026-09-12T12:30:00.000Z');
+  const result = await startCurrentSeasonNow(client, { actorId: 1, now: startedAt });
+
+  assert.equal(result.started, true);
+  assert.equal(new Date(result.season.starts_at).toISOString(), startedAt.toISOString());
+  assert.equal(new Date(result.season.ends_at).getTime() - startedAt.getTime(), SEASON_DURATION_MS);
+  assert.equal(client.state.players.get(1).resource_last_updated.toISOString(), startedAt.toISOString());
+  assert.ok(client.state.adminActions.some((entry) => entry.actionName === 'season_start_now'));
 });
 
 // ===================== Registration cannot choose a faction =====================

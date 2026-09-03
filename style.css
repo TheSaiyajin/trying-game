@@ -227,6 +227,148 @@ html, body {
   display: none;
 }
 
+/* ---------- Pre-season gate ---------- */
+.season-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 190;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: 22px;
+  background:
+    radial-gradient(circle at 50% 12%, rgba(227, 179, 65, 0.17), transparent 28%),
+    radial-gradient(circle at 18% 85%, rgba(31, 111, 235, 0.15), transparent 35%),
+    linear-gradient(160deg, #080b11 0%, #101725 52%, #080c13 100%);
+}
+
+.season-gate-card {
+  position: relative;
+  width: min(100%, 540px);
+  overflow: hidden;
+  padding: 34px 34px 26px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(26, 32, 44, 0.97), rgba(14, 19, 28, 0.98));
+  border: 1px solid rgba(227, 179, 65, 0.34);
+  border-radius: 20px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.58), inset 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.season-gate-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--accent-gold), transparent);
+}
+
+.season-gate-emblem {
+  display: grid;
+  place-items: center;
+  width: 66px;
+  height: 66px;
+  margin: 0 auto 15px;
+  border: 1px solid rgba(227, 179, 65, 0.45);
+  border-radius: 50%;
+  background: rgba(227, 179, 65, 0.09);
+  box-shadow: 0 0 32px rgba(227, 179, 65, 0.12);
+  font-size: 30px;
+}
+
+.season-gate-label {
+  color: var(--accent-gold);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+}
+
+.season-gate h1 {
+  margin-top: 6px;
+  color: var(--text-main);
+  font-size: clamp(25px, 6vw, 38px);
+  line-height: 1.15;
+}
+
+.season-gate-countdown {
+  margin: 20px 0 15px;
+  color: #fff1b5;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: clamp(36px, 10vw, 62px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.035em;
+  text-shadow: 0 0 28px rgba(227, 179, 65, 0.24);
+}
+
+.season-gate-message {
+  max-width: 420px;
+  margin: 0 auto;
+  color: #bcc6d5;
+}
+
+.season-gate-joined-count {
+  display: inline-block;
+  margin: 17px 0 12px;
+  padding: 5px 10px;
+  color: #d8e1ee;
+  background: rgba(139, 148, 158, 0.1);
+  border: 1px solid rgba(139, 148, 158, 0.2);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.season-join-btn {
+  min-height: 52px;
+  margin-top: 0;
+  font-size: 16px;
+}
+
+.season-joined-confirmation {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  width: 100%;
+  padding: 13px 15px;
+  text-align: left;
+  color: #d8f8df;
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid rgba(63, 185, 80, 0.36);
+  border-radius: 10px;
+}
+
+.season-joined-confirmation[hidden] { display: none; }
+.season-joined-confirmation > span { grid-row: 1 / 3; align-self: center; color: #65d879; font-size: 28px; font-weight: 800; }
+.season-joined-confirmation strong { font-size: 15px; }
+.season-joined-confirmation small { color: #9fc7a8; }
+
+.season-gate-note {
+  margin-top: 16px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.season-admin-start { margin-top: 14px; }
+.season-gate-logout {
+  margin-top: 16px;
+  padding: 6px 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.season-gate-logout:hover { color: var(--text-main); }
+
+@media (max-width: 520px) {
+  .season-gate { align-items: center; padding: 14px; }
+  .season-gate-card { padding: 25px 17px 20px; border-radius: 16px; }
+  .season-gate-emblem { width: 56px; height: 56px; margin-bottom: 12px; font-size: 25px; }
+  .season-gate-countdown { margin-top: 17px; }
+}
+
 .boot-loading {
   position: fixed;
   inset: 0;

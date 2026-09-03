@@ -222,7 +222,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
       }
 
       if (text.startsWith('UPDATE players SET faction = $1, faction_locked = TRUE, army_name = $2, resource_food = $3')) {
-        const [faction, armyName, food, wood, iron, manpower, soldiers, playerId] = params;
+        const [faction, armyName, food, wood, iron, manpower, soldiers, resourceStartAt, playerId] = params;
         const player = state.players.get(playerId);
         if (player) {
           player.faction = faction;
@@ -233,7 +233,30 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
           player.resource_iron = iron;
           player.resource_manpower = manpower;
           player.soldiers = soldiers;
-          player.resource_last_updated = new Date();
+          player.resource_last_updated = new Date(resourceStartAt);
+        }
+        return { rows: [] };
+      }
+
+      if (text.startsWith('UPDATE seasons SET starts_at = $1, ends_at = $2 WHERE id = $3 RETURNING *')) {
+        const [startsAt, endsAt, seasonId] = params;
+        const season = state.seasons.find((row) => row.id === seasonId);
+        if (season) {
+          season.starts_at = startsAt;
+          season.ends_at = endsAt;
+        }
+        return { rows: season ? [{ ...season }] : [], rowCount: season ? 1 : 0 };
+      }
+
+      if (text.startsWith('UPDATE players p SET resource_last_updated = $1 FROM season_memberships sm')) {
+        const [resourceStartAt, seasonId] = params;
+        const joinedIds = new Set(
+          state.seasonMemberships
+            .filter((membership) => membership.season_id === seasonId)
+            .map((membership) => membership.player_id)
+        );
+        for (const [playerId, player] of state.players.entries()) {
+          if (joinedIds.has(playerId)) player.resource_last_updated = new Date(resourceStartAt);
         }
         return { rows: [] };
       }

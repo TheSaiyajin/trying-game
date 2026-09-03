@@ -1,5 +1,14 @@
 [
   {
+    "title": "Season registration",
+    "changes": [
+      "Added a 24-hour registration screen before each new season.",
+      "Players can join early and wait for the game to open automatically.",
+      "Players who miss registration can still join after the season starts.",
+      "Factions are assigned automatically to keep teams balanced."
+    ]
+  },
+  {
     "title": "Live battles and hidden rallies",
     "changes": [
       "Choose between an immediate solo attack and a hidden faction rally.",
