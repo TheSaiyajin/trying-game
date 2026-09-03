@@ -1,5 +1,11 @@
 [
   {
+    "title": "Season joining fix",
+    "changes": [
+      "Fixed an issue that could prevent players from joining a new season."
+    ]
+  },
+  {
     "title": "Season maps and faction homelands",
     "changes": [
       "Added a new 64-territory map with balanced routes and bonuses.",
