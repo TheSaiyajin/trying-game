@@ -28,6 +28,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
   const state = {
     seasons: [],
     seasonMemberships: [],
+    factionCityTiles: [],
     seasonTerritoryOwnership: new Set(),
     players,
     territories,
@@ -35,6 +36,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
     factionLeaders: new Map([['blue', 1], ['red', 2], ['green', 3]]),
     adminActions: [],
     queryLog: [],
+    topologyVersion: null,
   };
   const mutexes = new Map();
   let pendingLockRelease = null;
@@ -74,7 +76,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
       }
 
       if (text.startsWith('INSERT INTO seasons')) {
-        const [seasonNumber, startsAt, endsAt] = params;
+        const [seasonNumber, startsAt, endsAt, mapKey = 'three-frontiers'] = params;
         if (state.seasons.some((s) => s.season_number === seasonNumber)) {
           throw new Error(`duplicate key value violates unique constraint "seasons_season_number_key" (${seasonNumber})`);
         }
@@ -84,6 +86,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
           starts_at: startsAt,
           ends_at: endsAt,
           status: 'active',
+          map_key: mapKey,
           blue_score: null,
           red_score: null,
           green_score: null,
@@ -104,7 +107,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         return { rows: [] };
       }
 
-      if (text.startsWith('SELECT id, owner_faction, is_capital FROM territories')) {
+      if (text.startsWith('SELECT id, owner_faction, is_capital')) {
         return { rows: [...state.territories.values()] };
       }
 
@@ -132,6 +135,32 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         return { rows: [] };
       }
 
+      if (text.startsWith('INSERT INTO faction_city_tiles')) {
+        const [seasonId, playerId, faction] = params;
+        if (!state.factionCityTiles.some((tile) => tile.season_id === seasonId && tile.player_id === playerId)) {
+          const slots = state.factionCityTiles
+            .filter((tile) => tile.season_id === seasonId && tile.faction === faction)
+            .map((tile) => tile.slot_index);
+          state.factionCityTiles.push({
+            season_id: seasonId,
+            player_id: playerId,
+            faction,
+            slot_index: slots.length ? Math.max(...slots) + 1 : 0,
+            created_at: new Date(),
+          });
+        }
+        return { rows: [] };
+      }
+
+      if (text.startsWith('SELECT fct.player_id, fct.faction, fct.slot_index')) {
+        const [seasonId, faction] = params;
+        const rows = state.factionCityTiles
+          .filter((tile) => tile.season_id === seasonId && tile.faction === faction)
+          .sort((a, b) => a.slot_index - b.slot_index)
+          .map((tile) => ({ ...tile, username: state.players.get(tile.player_id)?.username }));
+        return { rows };
+      }
+
       if (text === 'DELETE FROM attack_contributions'
         || text === 'DELETE FROM attack_targets'
         || text === 'DELETE FROM territory_defenders'
@@ -150,16 +179,27 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
       }
 
       if (text.startsWith('INSERT INTO territories')) {
-        // Re-seed with the canonical topology (mirrors what topology-sql.js generates).
-        const topology = require('../../world-topology');
+        const registry = require('../../map-registry');
+        const mapKey = text.includes('Crown of Sai') ? 'crownlands-64' : 'three-frontiers';
+        const topology = registry.getMap(mapKey).topology;
         topology.buildTerritories().forEach((t) => {
-          state.territories.set(t.id, { id: t.id, owner_faction: t.ownerFaction, is_capital: t.isCapital });
+          state.territories.set(t.id, {
+            id: t.id,
+            owner_faction: t.ownerFaction,
+            is_capital: t.isCapital,
+            score_value: t.scoreValue,
+          });
         });
         return { rows: [] };
       }
 
       if (text.startsWith('INSERT INTO territory_neighbors')) {
         state.territoryNeighborsSeeded = true;
+        return { rows: [] };
+      }
+
+      if (text.startsWith('INSERT INTO topology_version')) {
+        state.topologyVersion = { version: Number(params[0]), map_key: params[1] };
         return { rows: [] };
       }
 

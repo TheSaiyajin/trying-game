@@ -96,6 +96,15 @@ test('changelog loading failure shows a friendly message without throwing', asyn
 test('initial changelog entry contains only simple player-facing information', () => {
   const entries = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'changelog.json'), 'utf8'));
   assert.deepEqual(entries[0], {
+    title: 'Season maps and faction homelands',
+    changes: [
+      'Added a new 64-territory map with balanced routes and bonuses.',
+      'Different maps can now rotate between seasons.',
+      'Added a faction homeland where every joined player receives a personal city tile.',
+      'Faction city tiles are safe and do not affect battles, bonuses, or season score.',
+    ],
+  });
+  assert.deepEqual(entries[1], {
     title: 'Season registration',
     changes: [
       'Added a 24-hour registration screen before each new season.',
@@ -104,7 +113,7 @@ test('initial changelog entry contains only simple player-facing information', (
       'Factions are assigned automatically to keep teams balanced.',
     ],
   });
-  assert.deepEqual(entries[1], {
+  assert.deepEqual(entries[2], {
     title: 'Live battles and hidden rallies',
     changes: [
       'Choose between an immediate solo attack and a hidden faction rally.',
@@ -114,7 +123,7 @@ test('initial changelog entry contains only simple player-facing information', (
       'Territories are protected for 30 minutes after a battle ends.',
     ],
   });
-  assert.deepEqual(entries[2], {
+  assert.deepEqual(entries[3], {
     title: 'Timed rally battles',
     changes: [
       'Enemy territory attacks now open a 10-minute rally.',
@@ -123,7 +132,7 @@ test('initial changelog entry contains only simple player-facing information', (
       'Neutral territory attacks still resolve immediately.',
     ],
   });
-  assert.deepEqual(entries[3], {
+  assert.deepEqual(entries[4], {
     title: 'Storage and resource balancing',
     changes: [
       'Added a Storage building that increases resource capacity.',

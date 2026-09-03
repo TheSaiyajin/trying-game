@@ -1,5 +1,14 @@
 [
   {
+    "title": "Season maps and faction homelands",
+    "changes": [
+      "Added a new 64-territory map with balanced routes and bonuses.",
+      "Different maps can now rotate between seasons.",
+      "Added a faction homeland where every joined player receives a personal city tile.",
+      "Faction city tiles are safe and do not affect battles, bonuses, or season score."
+    ]
+  },
+  {
     "title": "Season registration",
     "changes": [
       "Added a 24-hour registration screen before each new season.",
