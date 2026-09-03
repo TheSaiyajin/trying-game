@@ -145,8 +145,9 @@ test('restores Map before revealing the game shell', withFrontendGlobals(async (
     if (String(url).includes('/api/me')) return jsonResponse(200, { id: 42, username: 'Player1', role: 'member' });
     if (String(url).includes('/api/game/state')) {
       return jsonResponse(200, {
-        player: { id: 42, username: 'Player1', faction: 'blue', role: 'member' },
+        player: { id: 42, username: 'Player1', faction: 'blue', role: 'member', joinedSeason: true },
         world: { territories: [] },
+        season: { seasonNumber: 2, hasStarted: true, startsAt: new Date(Date.now() - 1000).toISOString(), endsAt: new Date(Date.now() + 3600000).toISOString() },
       });
     }
     return jsonResponse(404, {});
@@ -389,17 +390,30 @@ test('ensureSession still deletes the token if the retry itself comes back 401',
   assert.equal(getToken(), '');
 }));
 
-// ===================== loadGame: never bounces to a manual faction-selection screen =====================
+// ===================== loadGame: explicit season join gate =====================
 
-test('loadGame retries instead of showing registration when the faction is briefly missing (e.g. mid rollover)', withFrontendGlobals(async () => {
-  const calls = [];
+test('loadGame shows the pre-season gate without logging out or retry-looping', withFrontendGlobals(async () => {
+  const elements = new Map();
+  global.document.getElementById = (id) => {
+    if (!elements.has(id)) elements.set(id, createFakeElement());
+    return elements.get(id);
+  };
   let stateCallCount = 0;
   global.fetch = async (url) => {
-    calls.push(url);
     if (String(url).includes('/api/me')) return jsonResponse(200, { username: 'Player1', role: 'member' });
     if (String(url).includes('/api/game/state')) {
       stateCallCount += 1;
-      return jsonResponse(200, { player: { faction: null }, world: { territories: [] } });
+      return jsonResponse(200, {
+        player: { username: 'Player1', faction: null, role: 'member', joinedSeason: false },
+        world: { territories: [] },
+        season: {
+          seasonNumber: 8,
+          hasStarted: false,
+          startsAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          joinedCount: 3,
+        },
+        serverTime: Date.now(),
+      });
     }
     return jsonResponse(404, {});
   };
@@ -413,11 +427,60 @@ test('loadGame retries instead of showing registration when the faction is brief
     await loadGame();
 
     assert.equal(stateCallCount, 1);
-    assert.equal(getToken(), 'token-abc'); // never logged out just because faction is pending
-    assert.ok(scheduled.some((s) => s.fn === loadGame || s.ms === 750), 'loadGame should schedule a retry');
+    assert.equal(getToken(), 'token-abc');
+    assert.equal(elements.get('season-gate').style.display, 'grid');
+    assert.equal(elements.get('game-shell').style.display, 'none');
+    assert.equal(elements.get('season-join-btn').hidden, false);
+    assert.equal(scheduled.length, 0, 'the gate should wait normally instead of starting a retry loop');
   } finally {
     global.setTimeout = previousSetTimeout;
   }
+}));
+
+test('pre-season screen switches from Join to a joined confirmation', withFrontendGlobals(async () => {
+  const elements = new Map();
+  global.document.getElementById = (id) => {
+    if (!elements.has(id)) elements.set(id, createFakeElement());
+    return elements.get(id);
+  };
+  const { renderSeasonGate, shouldShowSeasonGate } = loadScriptModule();
+  const startsAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const season = { seasonNumber: 9, hasStarted: false, startsAt, joinedCount: 4 };
+
+  renderSeasonGate({ player: { role: 'member', joinedSeason: false }, season, serverTime: Date.now() });
+  assert.equal(elements.get('season-gate-title').textContent, 'Season starts in');
+  assert.equal(elements.get('season-join-btn').hidden, false);
+  assert.equal(elements.get('season-joined-confirmation').hidden, true);
+  assert.equal(elements.get('season-gate-joined-count').textContent, '4 players joined');
+  assert.match(elements.get('season-gate-countdown').textContent, /^23:59:5\d$|^24:00:00$/);
+  assert.equal(shouldShowSeasonGate({ player: { joinedSeason: false }, season }), true);
+
+  renderSeasonGate({ player: { role: 'member', joinedSeason: true }, season, serverTime: Date.now() });
+  assert.equal(elements.get('season-gate-title').textContent, "You're ready for Season 9");
+  assert.equal(elements.get('season-join-btn').hidden, true);
+  assert.equal(elements.get('season-joined-confirmation').hidden, false);
+}));
+
+test('late players still see Join after the season is live', withFrontendGlobals(async () => {
+  const elements = new Map();
+  global.document.getElementById = (id) => {
+    if (!elements.has(id)) elements.set(id, createFakeElement());
+    return elements.get(id);
+  };
+  const { renderSeasonGate, shouldShowSeasonGate } = loadScriptModule();
+  const snapshot = {
+    player: { role: 'member', joinedSeason: false },
+    season: { seasonNumber: 9, hasStarted: true, startsAt: new Date(Date.now() - 1000).toISOString(), joinedCount: 7 },
+    serverTime: Date.now(),
+  };
+
+  renderSeasonGate(snapshot);
+
+  assert.equal(elements.get('season-gate-title').textContent, 'Season 9 is underway');
+  assert.equal(elements.get('season-gate-countdown').textContent, 'LIVE');
+  assert.equal(elements.get('season-join-btn').hidden, false);
+  assert.equal(shouldShowSeasonGate(snapshot), true);
+  assert.equal(shouldShowSeasonGate({ ...snapshot, player: { joinedSeason: true } }), false);
 }));
 
 test('loadGame keeps the session and retries on a temporary /me failure instead of logging out', withFrontendGlobals(async () => {
@@ -457,9 +520,9 @@ test('a background refresh after midnight rollover updates the new faction witho
   global.fetch = async (url) => {
     if (String(url).includes('/api/game/state')) {
       return jsonResponse(200, {
-        player: { faction: 'green', username: 'Player1' },
+        player: { faction: 'green', username: 'Player1', joinedSeason: true },
         world: { territories: [] },
-        season: { seasonNumber: 7, endsAt: new Date(Date.now() + 3600000).toISOString(), scores: { blue: 0, red: 0, green: 0 }, memberCounts: { blue: 1, red: 1, green: 1 } },
+        season: { seasonNumber: 7, hasStarted: true, endsAt: new Date(Date.now() + 3600000).toISOString(), scores: { blue: 0, red: 0, green: 0 }, memberCounts: { blue: 1, red: 1, green: 1 } },
       });
     }
     if (String(url).includes('/api/game/faction-chat')) {
@@ -493,6 +556,7 @@ test('a live tick updates city and open territory soldier counts without replaci
   global.fetch = async () => jsonResponse(200, {
     player: {
       faction: 'blue',
+      joinedSeason: true,
       soldiers: 75,
       resources: {},
       buildings: {},
@@ -501,6 +565,7 @@ test('a live tick updates city and open territory soldier counts without replaci
     world: {
       territories: [{ id: 'A1', name: 'Alpha', owner: 'blue', defense: 44, neighbors: [] }],
     },
+    season: { seasonNumber: 2, hasStarted: true, endsAt: new Date(Date.now() + 3600000).toISOString() },
   });
 
   const { setGameStateFromSnapshot, selectTerritory, refreshGameStateInBackground, setToken } = loadScriptModule();

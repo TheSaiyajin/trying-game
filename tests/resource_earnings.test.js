@@ -3,15 +3,24 @@ const assert = require('node:assert/strict');
 const { STARTING_PLAYER_RESOURCES } = require('../backend/admin-resets');
 const { applyOfflineResourceEarnings, runGlobalResourceTick } = require('../backend/server');
 
-function createResourceClient(playerRows, territories = []) {
+function createResourceClient(playerRows, territories = [], options = {}) {
   const players = new Map(playerRows.map((player) => [player.id, { ...player }]));
   const stats = { buildingQueries: 0 };
+  const seasonStartsAt = options.seasonStartsAt || new Date(Date.now() - 60 * 1000);
+  const seasonEndsAt = options.seasonEndsAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   return {
     players,
     stats,
     async query(sql, params = []) {
       const text = String(sql).trim().replace(/\s+/g, ' ');
+
+      if (text.startsWith("SELECT * FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1")) {
+        return {
+          rows: [{ id: 1, season_number: 1, status: 'active', starts_at: seasonStartsAt, ends_at: seasonEndsAt }],
+          rowCount: 1,
+        };
+      }
 
       if (text === 'SELECT * FROM players WHERE id = $1') {
         const player = players.get(params[0]);
@@ -88,6 +97,20 @@ test('factionless players receive no offline earnings', async () => {
 
   assert.equal(result.resource_food, STARTING_PLAYER_RESOURCES.food);
   assert.equal(result.soldiers, STARTING_PLAYER_RESOURCES.soldiers);
+  assert.equal(client.stats.buildingQueries, 0);
+});
+
+test('resource ticks remain paused throughout the pre-season join window', async () => {
+  const client = createResourceClient(
+    [defaultPlayer({ faction: 'blue' })],
+    [],
+    { seasonStartsAt: new Date(Date.now() + 24 * 60 * 60 * 1000) }
+  );
+
+  const result = await runGlobalResourceTick(client, { suppressErrors: false });
+
+  assert.deepEqual(result, { skipped: true, reason: 'preseason' });
+  assert.equal(client.players.get(1).resource_food, STARTING_PLAYER_RESOURCES.food);
   assert.equal(client.stats.buildingQueries, 0);
 });
 

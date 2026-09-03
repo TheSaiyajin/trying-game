@@ -37,6 +37,9 @@ let realtimeRefreshTimer = null;
 let realtimeRefreshInFlight = false;
 let realtimeRefreshQueued = false;
 let activeActivityTab = 'feed';
+let seasonGateClockOffset = 0;
+let seasonGateRefreshPending = false;
+let seasonJoinInFlight = false;
 
 // Canonical topology module (world-topology.js): required directly under Node (tests),
 // exposed as window.WORLD_TOPOLOGY when loaded via <script> in the browser.
@@ -241,7 +244,7 @@ function setGameStateFromSnapshot(snapshot) {
   updateFactionTheme();
   renderFactionBonuses();
   renderScoreboard();
-  if (previousFaction && previousFaction !== snapshot.player?.faction) {
+  if (previousFaction && snapshot.player?.faction && previousFaction !== snapshot.player.faction) {
     G.chatMessages = [];
     document.getElementById('chat-messages')?.replaceChildren();
     renderFactionChat({ scrollToNewest: true });
@@ -398,6 +401,11 @@ function setGameShellVisible(isVisible) {
   if (shell) shell.style.display = isVisible ? 'block' : 'none';
 }
 
+function setSeasonGateVisible(isVisible) {
+  const gate = document.getElementById('season-gate');
+  if (gate) gate.style.display = isVisible ? 'grid' : 'none';
+}
+
 function hideBootLoading() {
   const bootLoading = document.getElementById('boot-loading');
   if (bootLoading) bootLoading.style.display = 'none';
@@ -411,7 +419,17 @@ function showBootLoading() {
 function hideAuthScreen() {
   const authScreen = document.getElementById('auth-screen');
   if (authScreen) authScreen.style.display = 'none';
+  setSeasonGateVisible(false);
   setGameShellVisible(true);
+  hideBootLoading();
+}
+
+function showSeasonGate() {
+  const authScreen = document.getElementById('auth-screen');
+  if (authScreen) authScreen.style.display = 'none';
+  stopFactionChatPolling();
+  setGameShellVisible(false);
+  setSeasonGateVisible(true);
   hideBootLoading();
 }
 
@@ -419,6 +437,7 @@ function showAuthScreen() {
   const authScreen = document.getElementById('auth-screen');
   if (authScreen) authScreen.style.display = 'flex';
   stopFactionChatPolling();
+  setSeasonGateVisible(false);
   setGameShellVisible(false);
   document.querySelectorAll('.screen').forEach((screen) => screen.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach((button) => button.classList.remove('active'));
@@ -483,8 +502,111 @@ function logoutPlayer() {
   showToast('🚪 Logged out.');
 }
 
+function shouldShowSeasonGate(snapshot) {
+  return !snapshot?.season?.hasStarted || !snapshot?.player?.joinedSeason;
+}
+
+function renderSeasonGate(snapshot) {
+  const season = snapshot?.season || {};
+  const player = snapshot?.player || {};
+  const joined = Boolean(player.joinedSeason);
+  const started = Boolean(season.hasStarted);
+  seasonGateClockOffset = Number(snapshot?.serverTime || Date.now()) - Date.now();
+
+  const label = document.getElementById('season-gate-label');
+  const title = document.getElementById('season-gate-title');
+  const countdown = document.getElementById('season-gate-countdown');
+  const message = document.getElementById('season-gate-message');
+  const joinedCount = document.getElementById('season-gate-joined-count');
+  const joinButton = document.getElementById('season-join-btn');
+  const confirmation = document.getElementById('season-joined-confirmation');
+  const adminStartButton = document.getElementById('season-admin-start-btn');
+
+  if (label) label.textContent = started ? `SEASON ${season.seasonNumber} · LIVE` : `SEASON ${season.seasonNumber} · REGISTRATION OPEN`;
+  if (title) {
+    title.textContent = started
+      ? `Season ${season.seasonNumber} is underway`
+      : (joined ? `You're ready for Season ${season.seasonNumber}` : 'Season starts in');
+  }
+  if (message) {
+    message.textContent = started
+      ? 'You can still join and will be placed in the faction with the fewest players.'
+      : (joined
+        ? 'Congratulations—you joined. Wait for the countdown and the game will open automatically.'
+        : 'Join now to be assigned to a balanced faction and start from the first minute.');
+  }
+  if (joinedCount) {
+    const count = Number(season.joinedCount || 0);
+    joinedCount.textContent = `${count} ${count === 1 ? 'player' : 'players'} joined`;
+  }
+  if (joinButton) {
+    joinButton.hidden = joined;
+    joinButton.disabled = seasonJoinInFlight;
+    joinButton.textContent = seasonJoinInFlight ? 'Joining…' : '⚔️ Join Season';
+  }
+  if (confirmation) confirmation.hidden = !joined;
+  if (adminStartButton) adminStartButton.hidden = started || !isAdminUser(player);
+  if (countdown) {
+    countdown.textContent = started
+      ? 'LIVE'
+      : formatCountdown(new Date(season.startsAt).getTime() - (Date.now() + seasonGateClockOffset));
+  }
+}
+
+function tickSeasonGateCountdown() {
+  const gate = document.getElementById('season-gate');
+  const countdown = document.getElementById('season-gate-countdown');
+  if (!gate || gate.style.display === 'none' || !countdown || !G.season) return;
+  if (G.season.hasStarted) {
+    countdown.textContent = 'LIVE';
+    return;
+  }
+
+  const remaining = new Date(G.season.startsAt).getTime() - (Date.now() + seasonGateClockOffset);
+  countdown.textContent = formatCountdown(remaining);
+  if (remaining <= 0 && !seasonGateRefreshPending) {
+    seasonGateRefreshPending = true;
+    loadGame().finally(() => { seasonGateRefreshPending = false; });
+  }
+}
+
+async function joinCurrentSeason() {
+  if (seasonJoinInFlight) return;
+  seasonJoinInFlight = true;
+  renderSeasonGate({ player: G.player, season: G.season, serverTime: Date.now() + seasonGateClockOffset });
+  try {
+    await apiFetch('/season/join', { method: 'POST', body: '{}' });
+    showToast('✅ You joined the season.');
+    await loadGame();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  } finally {
+    seasonJoinInFlight = false;
+    const button = document.getElementById('season-join-btn');
+    if (button) {
+      button.disabled = false;
+      button.textContent = '⚔️ Join Season';
+    }
+  }
+}
+
+async function adminStartSeasonNow() {
+  if (!confirm('Start this season now?\n\nThis ends the remaining registration countdown and begins the full seven-day season.')) return;
+  try {
+    const result = await apiFetch('/admin/season/start-now', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
+    });
+    showToast(`✅ ${result.message}`);
+    await loadGame();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
 async function loadGame() {
   setGameShellVisible(false);
+  setSeasonGateVisible(false);
   showBootLoading();
   let user;
   try {
@@ -510,15 +632,13 @@ async function loadGame() {
 
   try {
     const payload = await apiFetch('/game/state');
-    if (!payload.player?.faction) {
-      // Faction is assigned automatically on the server (see season.js); this only ever
-      // shows up as a brief gap right after registration or during a season rollover. Retry
-      // shortly instead of sending the player to a manual "choose your faction" screen.
-      setTimeout(loadGame, 750);
+    setGameStateFromSnapshot(payload);
+    if (shouldShowSeasonGate(payload)) {
+      renderSeasonGate(payload);
+      showSeasonGate();
+      connectRealtime();
       return;
     }
-
-    setGameStateFromSnapshot(payload);
 
     renderCity();
     renderMap();
@@ -633,9 +753,21 @@ async function refreshGameStateInBackground() {
   try {
     const payload = await apiFetch('/game/state');
     setGameStateFromSnapshot(payload);
+    if (shouldShowSeasonGate(payload)) {
+      renderSeasonGate(payload);
+      showSeasonGate();
+      return;
+    }
+
     renderCity();
     renderMap();
     updateResourceBar();
+    const gate = document.getElementById('season-gate');
+    if (gate?.style.display !== 'none') {
+      restoreSavedScreen(G.player);
+      hideAuthScreen();
+      startFactionChatPolling();
+    }
     const territoryPanel = document.getElementById('territory-panel');
     if (selectedTerritoryId && territoryPanel?.style.display !== 'none') {
       selectTerritory(selectedTerritoryId, { preserveTroopInputs: true });
@@ -1869,7 +2001,7 @@ async function renderAdminSeasonInfo() {
 }
 
 async function adminForceFinishSeason() {
-  if (!confirm('Force-finish the current season right now?\n\nThis finalizes scores, awards prestige to the winning faction, and immediately starts the next season using the same reset as automatic season rollover.')) return;
+  if (!confirm('Force-finish the current season right now?\n\nThis finalizes scores, awards prestige to the winner, resets seasonal progress, and opens the next season’s 24-hour registration window.')) return;
   try {
     const res = await apiFetch('/admin/season/force-finish', {
       method: 'POST',
@@ -2271,6 +2403,7 @@ if (typeof document !== 'undefined') {
         // Smooth HH:MM:SS countdown to the current season end; the season data
         // itself only refreshes with the 60s background poll above.
         setInterval(tickScoreboardCountdown, 1000);
+        setInterval(tickSeasonGateCountdown, 1000);
         setInterval(tickRallyCountdowns, 1000);
       } else {
         showAuthScreen();
@@ -2325,6 +2458,11 @@ if (typeof module !== 'undefined') {
     tickRallyCountdowns,
     formatScoreboardFaction,
     renderScoreboard,
+    shouldShowSeasonGate,
+    renderSeasonGate,
+    tickSeasonGateCountdown,
+    joinCurrentSeason,
+    adminStartSeasonNow,
     apiFetch,
     ensureSession,
     fetchCurrentUser,

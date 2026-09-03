@@ -14,12 +14,25 @@ const { buildArmyName } = require('./admin-faction-change');
 const ROLLOVER_LOCK_KEY = 837221001;
 const ASSIGNMENT_LOCK_KEY = 837221002;
 const SEASON_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+const PRESEASON_DURATION_MS = 24 * 60 * 60 * 1000;
 
 const VALID_FACTIONS = ['blue', 'red', 'green'];
 const CORE_ID_SET = new Set(topology.CORE_IDS);
 
 async function getActiveSeason(client) {
   const result = await client.query(`SELECT * FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1`);
+  return result.rows[0] || null;
+}
+
+function hasSeasonStarted(season, now = new Date()) {
+  return Boolean(season) && new Date(season.starts_at).getTime() <= new Date(now).getTime();
+}
+
+async function getSeasonMembership(client, seasonId, playerId) {
+  const result = await client.query(
+    'SELECT faction FROM season_memberships WHERE season_id = $1 AND player_id = $2',
+    [seasonId, playerId]
+  );
   return result.rows[0] || null;
 }
 
@@ -146,10 +159,6 @@ async function runSeasonRollover(client, { actorId = null, now = new Date(), for
 
     const activeResult = await client.query(`SELECT * FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1 FOR UPDATE`);
     const current = activeResult.rows[0] || null;
-    // Existing active seasons retain their scheduled end time. Only a newly created season
-    // receives the seven-day duration, including after a forced finish.
-    const endsAt = new Date(now.getTime() + SEASON_DURATION_MS);
-
     if (current && !force && new Date(current.ends_at) > now) {
       await client.query('COMMIT');
       return { rotated: false, season: current, finishedSeason: null };
@@ -189,7 +198,14 @@ async function runSeasonRollover(client, { actorId = null, now = new Date(), for
       }
     }
 
-    const newSeason = await createSeasonRow(client, { startsAt: now, endsAt });
+    // The first-ever season can start immediately. Every later season gets a full 24-hour
+    // registration window after the previous season ends. The seven playable days begin
+    // only after that window, so preparation never shortens the season itself.
+    const startsAt = current
+      ? new Date(now.getTime() + PRESEASON_DURATION_MS)
+      : now;
+    const endsAt = new Date(startsAt.getTime() + SEASON_DURATION_MS);
+    const newSeason = await createSeasonRow(client, { startsAt, endsAt });
     await client.query('COMMIT');
     return { rotated: true, season: newSeason, finishedSeason };
   } catch (error) {
@@ -214,29 +230,59 @@ async function forceFinishCurrentSeason(client, { actorId, now = new Date() } = 
   return runSeasonRollover(client, { actorId, now, force: true });
 }
 
+// Sai-only testing/operations control. This preserves the full seven-day playable duration
+// while shortening only the current preparation window. Joined players start earning from
+// the new timestamp, never from the original future start or from time spent waiting.
+async function startCurrentSeasonNow(client, { actorId, now = new Date() } = {}) {
+  await client.query('BEGIN');
+  try {
+    await client.query('SELECT pg_advisory_xact_lock($1)', [ROLLOVER_LOCK_KEY]);
+    const result = await client.query(
+      `SELECT * FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1 FOR UPDATE`
+    );
+    const season = result.rows[0] || null;
+    if (!season) throw new Error('No current season exists.');
+    if (hasSeasonStarted(season, now)) {
+      await client.query('COMMIT');
+      return { started: false, season };
+    }
+
+    const endsAt = new Date(now.getTime() + SEASON_DURATION_MS);
+    const updated = await client.query(
+      `UPDATE seasons SET starts_at = $1, ends_at = $2 WHERE id = $3 RETURNING *`,
+      [now, endsAt, season.id]
+    );
+    await client.query(
+      `UPDATE players p
+       SET resource_last_updated = $1
+       FROM season_memberships sm
+       WHERE sm.season_id = $2 AND sm.player_id = p.id`,
+      [now, season.id]
+    );
+    await logAdminAction(client, actorId, 'season_start_now', { seasonId: season.id });
+    await client.query('COMMIT');
+    return { started: true, season: updated.rows[0] };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  }
+}
+
 // Assigns a player to the smallest current-season faction on their first activity this
 // season, and never again. Ties are broken by rotating through the tied factions in a
 // stable order based on how many players have been assigned so far this season.
-async function ensurePlayerFactionAssignment(client, { seasonId, playerId }) {
-  const existing = await client.query(
-    'SELECT faction FROM season_memberships WHERE season_id = $1 AND player_id = $2',
-    [seasonId, playerId]
-  );
-  if (existing.rowCount) {
-    return existing.rows[0].faction;
-  }
+async function ensurePlayerFactionAssignment(client, { seasonId, playerId, resourceStartAt = new Date() }) {
+  const existing = await getSeasonMembership(client, seasonId, playerId);
+  if (existing) return existing.faction;
 
   await client.query('BEGIN');
   try {
     await client.query('SELECT pg_advisory_xact_lock($1)', [ASSIGNMENT_LOCK_KEY]);
 
-    const recheck = await client.query(
-      'SELECT faction FROM season_memberships WHERE season_id = $1 AND player_id = $2',
-      [seasonId, playerId]
-    );
-    if (recheck.rowCount) {
+    const recheck = await getSeasonMembership(client, seasonId, playerId);
+    if (recheck) {
       await client.query('COMMIT');
-      return recheck.rows[0].faction;
+      return recheck.faction;
     }
 
     const counts = await getFactionMemberCounts(client, seasonId);
@@ -265,8 +311,8 @@ async function ensurePlayerFactionAssignment(client, { seasonId, playerId }) {
            resource_iron = $5,
            resource_manpower = $6,
            soldiers = $7,
-           resource_last_updated = NOW()
-       WHERE id = $8`,
+           resource_last_updated = $8
+       WHERE id = $9`,
       [
         faction,
         buildArmyName(faction),
@@ -275,16 +321,14 @@ async function ensurePlayerFactionAssignment(client, { seasonId, playerId }) {
         STARTING_PLAYER_RESOURCES.iron,
         STARTING_PLAYER_RESOURCES.manpower,
         STARTING_PLAYER_RESOURCES.soldiers,
+        resourceStartAt,
         playerId,
       ]
     );
 
-    const finalRow = await client.query(
-      'SELECT faction FROM season_memberships WHERE season_id = $1 AND player_id = $2',
-      [seasonId, playerId]
-    );
+    const finalRow = await getSeasonMembership(client, seasonId, playerId);
     await client.query('COMMIT');
-    return finalRow.rows[0].faction;
+    return finalRow.faction;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;
@@ -294,6 +338,8 @@ async function ensurePlayerFactionAssignment(client, { seasonId, playerId }) {
 module.exports = {
   ROLLOVER_LOCK_KEY,
   ASSIGNMENT_LOCK_KEY,
+  PRESEASON_DURATION_MS,
+  SEASON_DURATION_MS,
   VALID_FACTIONS,
   CORE_ID_SET,
   computeScores,
@@ -304,7 +350,10 @@ module.exports = {
   runSeasonRollover,
   ensureCurrentSeason,
   forceFinishCurrentSeason,
+  startCurrentSeasonNow,
   ensurePlayerFactionAssignment,
+  getSeasonMembership,
+  hasSeasonStarted,
   getActiveSeason,
   createSeasonRow,
 };
