@@ -107,6 +107,9 @@ function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
     if (territory.is_fortress || territory.fortress || bonusType === 'fortress') bonuses.fortressTroops += 1;
   }
 
+  bonuses.attack = Math.min(0.25, bonuses.attack);
+  bonuses.defense = Math.min(0.25, bonuses.defense);
+
   return bonuses;
 }
 
@@ -152,9 +155,9 @@ function getTrainingCost(count = 0, multiplier = 1) {
   const factor = Number(multiplier) || 1;
   const minimum = amount > 0 ? 1 : 0;
   return {
-    food: Math.max(minimum, Math.round(50 * amount * factor)),
-    iron: Math.max(minimum, Math.round(25 * amount * factor)),
-    manpower: Math.max(minimum, Math.round(20 * amount * factor)),
+    food: Math.max(minimum, Math.ceil(50 * amount * factor)),
+    iron: Math.max(minimum, Math.ceil(25 * amount * factor)),
+    manpower: Math.max(minimum, Math.ceil(20 * amount * factor)),
   };
 }
 

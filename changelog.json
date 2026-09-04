@@ -1,5 +1,14 @@
 [
   {
+    "title": "Crownlands territory bonuses",
+    "changes": [
+      "Scout Posts improve faction attack damage.",
+      "Guard Posts improve faction counterattack damage.",
+      "Supply Hubs improve all faction resource production.",
+      "Territory attack and defense bonuses are capped at 25%."
+    ]
+  },
+  {
     "title": "Season joining fix",
     "changes": [
       "Fixed an issue that could prevent players from joining a new season."

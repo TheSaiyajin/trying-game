@@ -218,9 +218,8 @@ test('faction bonus UI shows the city reserve cap and ignores stationed troops',
 
   assert.match(elements.get('faction-bonuses').innerHTML, /Fortress reserve: 230\/250 · Active/);
   assert.match(elements.get('faction-bonuses').innerHTML, /Fortress Generation \+1\/min/);
-  assert.match(elements.get('faction-bonuses').innerHTML, /Food Production \+5%/);
-  assert.match(elements.get('faction-bonuses').innerHTML, /All Resources \+10%/);
-  assert.doesNotMatch(elements.get('faction-bonuses').innerHTML, /Food Production \+15%/);
+  assert.match(elements.get('faction-bonuses').innerHTML, /Food Production \+15%/);
+  assert.doesNotMatch(elements.get('faction-bonuses').innerHTML, /All Resources/);
 
   setGameStateFromSnapshot({
     player: { faction: 'blue', soldiers: 265, stationedTroops: { b1: 20 }, fortressTroopCap: 250 },

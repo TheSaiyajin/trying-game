@@ -31,10 +31,31 @@ test('attack and defense bonuses strengthen only their own side damage', () => {
     attackers: 100,
     defenders: 100,
     attackBonus: 0.2,
-    defenseBonus: 0.3,
+    defenseBonus: 0.2,
   }), {
-    attackersLost: 13,
+    attackersLost: 12,
     defendersLost: 12,
+  });
+});
+
+test('combat bonuses cap at 25% in territory totals and battle damage', () => {
+  const territories = [
+    { owner: 'blue', bonus: 'attack', bonusValue: 0.2 },
+    { owner: 'blue', bonus: 'attack', bonusValue: 0.2 },
+    { owner: 'blue', bonus: 'defense', bonusValue: 0.3 },
+  ];
+  const bonuses = getFactionTerritoryBonuses(territories, 'blue');
+
+  assert.equal(bonuses.attack, 0.25);
+  assert.equal(bonuses.defense, 0.25);
+  assert.deepEqual(calculateBattleRound({
+    attackers: 200,
+    defenders: 100,
+    attackBonus: 5,
+    defenseBonus: 5,
+  }), {
+    attackersLost: 12,
+    defendersLost: 25,
   });
 });
 

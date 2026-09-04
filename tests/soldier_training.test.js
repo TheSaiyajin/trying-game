@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { TrainingError, performSoldierTraining } = require('../backend/soldier-training');
+const { getTrainingCost } = require('../backend/game-logic');
 
 function createTrainingState(resources = {}) {
   return {
@@ -79,4 +80,12 @@ test('simultaneous training requests cannot overspend locked resources', async (
     iron: state.player.resource_iron,
     manpower: state.player.resource_manpower,
   }, { food: 0, iron: 0, manpower: 0 });
+});
+
+test('training discounts round every resource cost up', () => {
+  assert.deepEqual(getTrainingCost(1, 0.97), {
+    food: 49,
+    iron: 25,
+    manpower: 20,
+  });
 });

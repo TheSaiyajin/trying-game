@@ -5,6 +5,7 @@ const path = require('node:path');
 const {
   RALLY_DURATION_MS,
   getActiveRallies,
+  loadBattleBonuses,
   startOrJoinRally,
 } = require('../backend/rally-battles');
 const { BATTLE_DURATION_MS, BATTLE_ROUND_MS } = require('../backend/battle-rules');
@@ -208,4 +209,43 @@ test('existing databases add rally columns before creating indexes that use them
   );
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'backend', 'rally-battles.js'), 'utf8'),
     /at\.phase = 'active' OR at\.faction = \$3/);
+});
+
+test('target bonuses remain during hidden rally, pause while active, and return after battle', async () => {
+  let phase = 'rally';
+  const territories = [
+    { id: 'r2', owner_faction: 'red', bonus_type: 'defense', bonus_value: 0.10 },
+    { id: 'r3', owner_faction: 'red', bonus_type: 'defense', bonus_value: 0.05 },
+    { id: 'b2', owner_faction: 'blue', bonus_type: 'attack', bonus_value: 0.12 },
+  ];
+  const client = {
+    async query(sql) {
+      assert.match(sql, /at\.phase = 'active'/);
+      return {
+        rows: territories.map((territory) => ({
+          ...territory,
+          contested: territory.id === 'r2' && phase === 'active',
+        })),
+      };
+    },
+  };
+  const loadPercentages = async () => Object.fromEntries(
+    Object.entries(await loadBattleBonuses(client, 'blue', 'red'))
+      .map(([key, value]) => [key, Math.round(value * 100)])
+  );
+
+  assert.deepEqual(await loadPercentages(), {
+    attackBonus: 12,
+    defenseBonus: 15,
+  });
+  phase = 'active';
+  assert.deepEqual(await loadPercentages(), {
+    attackBonus: 12,
+    defenseBonus: 5,
+  });
+  phase = null;
+  assert.deepEqual(await loadPercentages(), {
+    attackBonus: 12,
+    defenseBonus: 15,
+  });
 });

@@ -4,8 +4,10 @@ const { getFactionTerritoryBonuses, getProductionFromBuildings } = require('../b
 const { seedWorldIfEmpty } = require('../backend/db');
 const {
   buildAuthPayload,
+  calculateTrainingCost,
   canAttack,
   getFactionLegendEntries,
+  getBattleBonusSummary,
   mapTerritories,
   isAdminUser,
 } = require('../script.js');
@@ -121,6 +123,7 @@ test('battle feed entries have required fields and no private resources', () => 
     defenders_lost: 18,
     attackers_surviving: 30,
     defenders_surviving: 0,
+    applied_bonuses: { attackBonus: 0.12, defenseBonus: 0.05 },
     winner: 'blue',
     owner_before: 'neutral',
     owner_after: 'blue',
@@ -133,6 +136,8 @@ test('battle feed entries have required fields and no private resources', () => 
   assert.ok('territory_name' in mockBattle);
   assert.ok('troops_sent' in mockBattle);
   assert.ok('winner' in mockBattle);
+  assert.equal(getBattleBonusSummary(mockBattle.applied_bonuses), 'Damage bonuses: Attack +12% · Counterattack +5%');
+  assert.equal(getBattleBonusSummary('{broken'), 'Damage bonuses: Attack +0% · Counterattack +0%');
   assert.ok('owner_before' in mockBattle);
   assert.ok('owner_after' in mockBattle);
   // No private resource fields
@@ -226,6 +231,21 @@ test('formatBonusLabel produces readable labels for all bonus types', () => {
   assert.equal(formatBonusLabel('defense', 0.15), '🛡️ +15% Defense Strength');
   assert.equal(formatBonusLabel('none', 0), '—');
   assert.equal(formatBonusLabel(null, 0), '—');
+});
+
+test('frontend training discounts match server ceil rounding', () => {
+  assert.deepEqual(calculateTrainingCost(1, 0.03), {
+    food: 49,
+    iron: 25,
+    manpower: 20,
+  });
+});
+
+test('Crownlands map legend names the new territory bonuses', () => {
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8');
+  assert.match(html, /Scout Post \+2% attack/);
+  assert.match(html, /Guard Post \+2% defense/);
+  assert.match(html, /Supply Hub \+2% production/);
 });
 
 test('admin UI visibility only allows Sai admin', () => {
