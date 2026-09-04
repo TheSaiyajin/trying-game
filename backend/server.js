@@ -813,6 +813,32 @@ app.get('/api/game/state', requireAuth, asyncHandler(async (req, res) => {
   });
 }));
 
+function buildBattleActivityText(battle) {
+  const factionName = (value) => `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+  const territory = battle.territory_name || battle.territory_id;
+  if (battle.owner_before !== battle.owner_after) {
+    return `${factionName(battle.owner_after)} captured ${territory} from ${factionName(battle.owner_before)}`;
+  }
+  return `${factionName(battle.winner)} defended ${territory} from ${factionName(battle.attacker_faction)}`;
+}
+
+app.get('/api/public/activity', asyncHandler(async (req, res) => {
+  const db = await connect();
+  const result = await db.query(`
+    SELECT bh.id, bh.attacker_faction, bh.winner, bh.owner_before, bh.owner_after,
+           bh.territory_id, t.name AS territory_name
+    FROM battle_history bh
+    LEFT JOIN territories t ON t.id = bh.territory_id
+    ORDER BY bh.id DESC
+    LIMIT 50
+  `);
+  const activities = result.rows.reverse().map((battle) => ({
+    id: Number(battle.id),
+    text: buildBattleActivityText(battle),
+  }));
+  res.json({ activities });
+}));
+
 app.get('/api/game/battles', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const db = await connect();
   const limit = Math.min(50, Math.max(1, Number(req.query.limit || 50)));
@@ -1513,4 +1539,9 @@ if (require.main === module) {
   });
 }
 
-module.exports = { applyOfflineResourceEarnings, runExpiredRallyResolution, runGlobalResourceTick };
+module.exports = {
+  applyOfflineResourceEarnings,
+  buildBattleActivityText,
+  runExpiredRallyResolution,
+  runGlobalResourceTick,
+};
