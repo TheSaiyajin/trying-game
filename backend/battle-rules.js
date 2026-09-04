@@ -9,7 +9,7 @@ function normalizeTroops(value) {
 }
 
 function normalizeCombatBonus(value) {
-  return Math.min(1, Math.max(0, Number(value) || 0));
+  return Math.min(0.25, Math.max(0, Number(value) || 0));
 }
 
 // Both losses are calculated from the troop totals at the start of the round,

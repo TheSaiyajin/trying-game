@@ -11,6 +11,11 @@ const {
   forceFinishCurrentSeason,
   getFactionCityTiles,
 } = require('../backend/season');
+const {
+  getFactionStorageCaps,
+  getFactionTerritoryBonuses,
+  getProductionFromBuildings,
+} = require('../backend/game-logic');
 const { createSeasonTestClient } = require('./helpers/season-test-client');
 
 function buildPlayers(count) {
@@ -83,9 +88,39 @@ test('Crownlands has three mirrored 21-tile regions and one central Crown', () =
     assert.equal(region.filter((territory) => territory.bonusType === 'wood').length, 2);
     assert.equal(region.filter((territory) => territory.bonusType === 'iron').length, 2);
     assert.equal(region.filter((territory) => territory.bonusType === 'manpower').length, 2);
-    assert.equal(region.filter((territory) => territory.bonusType === 'attack').length, 2);
-    assert.equal(region.filter((territory) => territory.bonusType === 'defense').length, 2);
+    assert.equal(region.filter((territory) => territory.bonusType === 'attack' && territory.bonusValue === 0.05).length, 2);
+    assert.equal(region.filter((territory) => territory.bonusType === 'defense' && territory.bonusValue === 0.05).length, 2);
     assert.equal(region.filter((territory) => territory.isFortress).length, 2);
+    assert.deepEqual(
+      region.slice(17).map((territory) => [territory.name, territory.bonusType, territory.bonusValue]),
+      [
+        [`${faction.charAt(0).toUpperCase()}${faction.slice(1)} Scout Post`, 'attack', 0.02],
+        [`${faction.charAt(0).toUpperCase()}${faction.slice(1)} Guard Post`, 'defense', 0.02],
+        [`${faction.charAt(0).toUpperCase()}${faction.slice(1)} Supply Hub`, 'resource', 0.02],
+      ]
+    );
+
+    const ownedRegion = region.map((territory) => ({
+      ...territory,
+      owner: faction,
+      bonus: territory.bonusType,
+    }));
+    const totals = getFactionTerritoryBonuses(ownedRegion, faction);
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, Math.round(value * 100)])),
+      {
+        food: 15,
+        wood: 15,
+        iron: 15,
+        manpower: 15,
+        training: 3,
+        storage: 10,
+        attack: 12,
+        defense: 12,
+        fortressTroops: 200,
+        allResources: 5,
+      }
+    );
   }
 });
 
@@ -124,6 +159,31 @@ test('Crownlands is connected, rotationally equal, spaced, and has no crossed ro
       assert.equal(segmentsProperlyIntersect(layout[a], layout[b], layout[c], layout[d]), false, `${a}-${b} crosses ${c}-${d}`);
     }
   }
+});
+
+test('a full Crownlands region grants 15% production but only 10% storage', () => {
+  const territoryById = new Map(crownlands.buildTerritories().map((territory) => [territory.id, territory]));
+  const ownedRegion = crownlands.REGION_IDS.blue.map((id) => ({
+    ...territoryById.get(id),
+    owner: 'blue',
+    bonus: territoryById.get(id).bonusType,
+  }));
+
+  assert.deepEqual(
+    getProductionFromBuildings(
+      { farm: 10, lumbermill: 10, ironmine: 10, barracks: 10 },
+      ownedRegion,
+      'blue',
+      true
+    ),
+    { food: 57, wood: 46, iron: 34, manpower: 23 }
+  );
+  assert.deepEqual(getFactionStorageCaps(ownedRegion, 'blue', { storage: 2 }), {
+    food: 16500,
+    wood: 16500,
+    iron: 16500,
+    manpower: 16500,
+  });
 });
 
 test('season rollover alternates maps without changing the currently running map', async () => {

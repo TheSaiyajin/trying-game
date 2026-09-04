@@ -829,6 +829,7 @@ app.get('/api/game/battles', requireAuth, requirePlayableSeason, asyncHandler(as
       bh.defenders_lost,
       bh.attackers_surviving,
       bh.defenders_surviving,
+      bh.applied_bonuses,
       bh.winner,
       bh.owner_before,
       bh.owner_after,

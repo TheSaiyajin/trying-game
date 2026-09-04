@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const topology = require('../world-topology');
-const { applyTopologyMigrationIfNeeded } = require('../backend/db');
+const crownlands = require('../crownlands-topology');
+const { applyActiveMapTerritoryBonusMetadata, applyTopologyMigrationIfNeeded } = require('../backend/db');
 
 function createFakeClient({ initialVersion = 0, initialMapKey = 'three-frontiers', activeMapKey = 'three-frontiers', territoryCount = 33 } = {}) {
   const calls = [];
@@ -115,4 +116,59 @@ test('legacy-topology migration rolls back and rethrows on failure', async () =>
   await assert.rejects(() => applyTopologyMigrationIfNeeded(client), /simulated failure/);
   assert.ok(client.calls.includes('ROLLBACK'));
   assert.equal(client.getVersion(), 0);
+});
+
+test('active-map bonus metadata migration is idempotent and preserves game state', async () => {
+  const territories = new Map(crownlands.buildTerritories().map((territory) => [territory.id, {
+    id: territory.id,
+    name: territory.id,
+    bonus_type: 'none',
+    bonus_value: 0,
+    resource_bonus: 0,
+    storage_bonus: 0,
+    is_fortress: false,
+    owner_faction: 'red',
+    defense_troops: 777,
+    score_value: territory.scoreValue,
+    map_x: 123,
+    map_y: 456,
+  }]));
+  const calls = [];
+  const client = {
+    async query(sql, params) {
+      const text = sql.trim().replace(/\s+/g, ' ');
+      calls.push(text);
+      assert.match(text, /^UPDATE territories SET name = \$1, bonus_type = \$2, bonus_value = \$3,/);
+      assert.doesNotMatch(text, /owner_faction|defense_troops|score_value|map_x|map_y/);
+      const row = territories.get(params[6]);
+      const keys = ['name', 'bonus_type', 'bonus_value', 'resource_bonus', 'storage_bonus', 'is_fortress'];
+      const changed = keys.some((key, index) => row[key] !== params[index]);
+      keys.forEach((key, index) => { row[key] = params[index]; });
+      return { rowCount: changed ? 1 : 0, rows: [] };
+    },
+  };
+
+  assert.equal(await applyActiveMapTerritoryBonusMetadata(client, crownlands), 64);
+  assert.equal(await applyActiveMapTerritoryBonusMetadata(client, crownlands), 0);
+  const scout = territories.get('b19');
+  assert.deepEqual({
+    name: scout.name,
+    bonusType: scout.bonus_type,
+    bonusValue: scout.bonus_value,
+    owner: scout.owner_faction,
+    defenders: scout.defense_troops,
+    score: scout.score_value,
+    x: scout.map_x,
+    y: scout.map_y,
+  }, {
+    name: 'Blue Scout Post',
+    bonusType: 'attack',
+    bonusValue: 0.02,
+    owner: 'red',
+    defenders: 777,
+    score: 1,
+    x: 123,
+    y: 456,
+  });
+  assert.equal(calls.length, 128);
 });

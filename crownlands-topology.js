@@ -25,14 +25,14 @@
     'food', 'wood', 'iron', 'manpower',
     'attack', 'defense', 'food', 'wood', 'iron', 'manpower',
     'storage', 'training', 'fortress', 'resource', 'attack', 'defense', 'fortress',
-    'none', 'none', 'none',
+    'attack', 'defense', 'resource',
   ];
 
   const SLOT_NAMES = [
     'Granary', 'Timber Camp', 'Ironworks', 'Muster Hall',
     'Vanguard Post', 'Shieldwall', 'Farmland', 'Lumber Yard', 'Ore Basin', 'Recruitment Camp',
     'Great Vault', 'Drill Grounds', 'North Fortress', 'Trade Hub', 'Assault Camp',
-    'Defender Keep', 'South Fortress', 'Watchtower', 'Crossroads', 'Outpost',
+    'Defender Keep', 'South Fortress', 'Scout Post', 'Guard Post', 'Supply Hub',
   ];
 
   function capitalize(word) {
@@ -77,6 +77,11 @@
 
       REGION_IDS[faction].forEach((id, slot) => {
         const bonusType = SLOT_BONUSES[slot];
+        const bonus = bonusFields(bonusType);
+        if (slot >= 17) {
+          bonus.bonusValue = 0.02;
+          if (bonusType === 'resource') bonus.resourceBonus = 0.02;
+        }
         territories.push({
           id,
           name: `${capitalize(faction)} ${SLOT_NAMES[slot]}`,
@@ -85,7 +90,7 @@
           bonusType,
           isCapital: false,
           scoreValue: 1,
-          ...bonusFields(bonusType),
+          ...bonus,
         });
       });
     });

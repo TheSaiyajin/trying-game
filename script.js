@@ -882,12 +882,9 @@ function renderFactionBonuses() {
     ['iron', '⚙️ Iron Production', '+', '%'], ['manpower', '👥 Manpower Production', '+', '%'],
     ['training', '⚔️ Training Cost', '-', '%'], ['storage', '📦 Storage', '+', '%'],
     ['attack', '🗡️ Attack Strength', '+', '%'], ['defense', '🛡️ Defense Strength', '+', '%'],
-    ['fortressTroops', '🏰 Fortress Generation', '+', '/min'], ['allResources', '✨ All Resources', '+', '%'],
+    ['fortressTroops', '🏰 Fortress Generation', '+', '/min'],
   ].map(([key, label, prefix, suffix]) => {
-    const combinedValue = Number(bonuses[key] || 0);
-    const value = ['food', 'wood', 'iron', 'manpower'].includes(key)
-      ? Math.max(0, combinedValue - Number(bonuses.allResources || 0))
-      : combinedValue;
+    const value = Number(bonuses[key] || 0);
     if (value <= 0) return null;
     return `<span>${label} ${prefix}${suffix === '%' ? Math.round(value * 100) : value}${suffix}</span>`;
   }).filter(Boolean)];
@@ -899,9 +896,9 @@ function calculateTrainingCost(count, trainingBonus = 0) {
   const multiplier = Math.max(0.4, 1 - (Number(trainingBonus) || 0));
   const minimum = amount > 0 ? 1 : 0;
   return {
-    food: Math.max(minimum, Math.round(50 * amount * multiplier)),
-    iron: Math.max(minimum, Math.round(25 * amount * multiplier)),
-    manpower: Math.max(minimum, Math.round(20 * amount * multiplier)),
+    food: Math.max(minimum, Math.ceil(50 * amount * multiplier)),
+    iron: Math.max(minimum, Math.ceil(25 * amount * multiplier)),
+    manpower: Math.max(minimum, Math.ceil(20 * amount * multiplier)),
   };
 }
 
@@ -1520,8 +1517,8 @@ function renderSelectedRallyStatus() {
   document.getElementById('rally-status-countdown').textContent = isPreparing
     ? `Auto-launches in ${phaseCountdown}`
     : `Ends in ${phaseCountdown}${nextRound}`;
-  const attackBuff = rally.attackBonus > 0 ? ` (+${Math.round(rally.attackBonus * 100)}%)` : '';
-  const defenseBuff = rally.defenseBonus > 0 ? ` (+${Math.round(rally.defenseBonus * 100)}%)` : '';
+  const attackBuff = rally.attackBonus > 0 ? ` (+${Math.round(rally.attackBonus * 100)}% attack damage)` : '';
+  const defenseBuff = rally.defenseBonus > 0 ? ` (+${Math.round(rally.defenseBonus * 100)}% counterattack damage)` : '';
   document.getElementById('rally-status-troops').textContent = `Attackers: ${rally.totalAttackers}${attackBuff} · Defenders: ${territory.troops}${defenseBuff}`;
   const personal = document.getElementById('rally-status-personal');
   personal.textContent = rally.attackerFaction === G.player.faction
@@ -1895,6 +1892,20 @@ function renderMyStats(container, stats) {
   container.appendChild(grid);
 }
 
+function getBattleBonusSummary(appliedBonuses) {
+  let bonuses = appliedBonuses;
+  if (typeof bonuses === 'string') {
+    try {
+      bonuses = JSON.parse(bonuses);
+    } catch {
+      bonuses = {};
+    }
+  }
+  const attack = Math.round(Math.max(0, Number(bonuses?.attackBonus) || 0) * 100);
+  const defense = Math.round(Math.max(0, Number(bonuses?.defenseBonus) || 0) * 100);
+  return `Damage bonuses: Attack +${attack}% · Counterattack +${defense}%`;
+}
+
 async function renderActivity() {
   const container = document.getElementById('activity-feed');
   if (!container) return;
@@ -1946,11 +1957,15 @@ async function renderActivity() {
       losses.className = 'activity-losses';
       losses.textContent = `Attackers lost: ${b.attackers_lost} · Defenders lost: ${b.defenders_lost}`;
 
+      const bonuses = document.createElement('div');
+      bonuses.className = 'activity-losses';
+      bonuses.textContent = getBattleBonusSummary(b.applied_bonuses);
+
       const time = document.createElement('div');
       time.className = 'activity-time';
       time.textContent = ts;
 
-      entry.append(headline, result, losses, time);
+      entry.append(headline, result, losses, bonuses, time);
       container.appendChild(entry);
     });
   } catch (error) {
@@ -2543,6 +2558,7 @@ if (typeof module !== 'undefined') {
   module.exports = {
     buildAuthPayload,
     getFactionLegendEntries,
+    getBattleBonusSummary,
     renderMapLegend,
     mapTerritories,
     mapRallies,

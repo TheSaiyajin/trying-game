@@ -51,6 +51,35 @@ async function getClient() {
   return pool.connect();
 }
 
+async function applyActiveMapTerritoryBonusMetadata(currentClient, topology) {
+  let updatedTerritories = 0;
+  for (const territory of topology.buildTerritories()) {
+    const result = await currentClient.query(
+      `UPDATE territories
+       SET name = $1, bonus_type = $2, bonus_value = $3,
+           resource_bonus = $4, storage_bonus = $5, is_fortress = $6
+       WHERE id = $7
+         AND (name IS DISTINCT FROM $1
+           OR bonus_type IS DISTINCT FROM $2
+           OR bonus_value IS DISTINCT FROM $3
+           OR resource_bonus IS DISTINCT FROM $4
+           OR storage_bonus IS DISTINCT FROM $5
+           OR is_fortress IS DISTINCT FROM $6)`,
+      [
+        territory.name,
+        territory.bonusType,
+        Number(territory.bonusValue || 0),
+        Number(territory.resourceBonus || 0),
+        Number(territory.storageBonus || 0),
+        Boolean(territory.isFortress),
+        territory.id,
+      ]
+    );
+    updatedTerritories += Number(result.rowCount || 0);
+  }
+  return updatedTerritories;
+}
+
 async function applySchemaMigrations(currentClient) {
   const migrationStatements = [
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NULL`,
@@ -226,6 +255,7 @@ async function applySchemaMigrations(currentClient) {
   const activeMapKey = mapRegistry.getMap(activeMapResult.rows[0]?.map_key).key;
   const activeTopology = mapRegistry.getMap(activeMapKey).topology;
   const activeLayout = activeTopology.buildLayout();
+  await applyActiveMapTerritoryBonusMetadata(currentClient, activeTopology);
   for (const territory of activeTopology.buildTerritories()) {
     await currentClient.query(
       `UPDATE territories SET score_value = $1, map_x = $2, map_y = $3 WHERE id = $4`,
@@ -440,6 +470,7 @@ module.exports = {
   pool,
   connect,
   getClient,
+  applyActiveMapTerritoryBonusMetadata,
   applySchemaMigrations,
   applyTopologyMigrationIfNeeded,
   initializeDatabase,
