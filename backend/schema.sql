@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS territories (
   is_capital BOOLEAN NOT NULL DEFAULT FALSE,
   resource_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0,
   storage_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0,
+  score_value INTEGER NOT NULL DEFAULT 1,
+  map_x INTEGER NOT NULL DEFAULT 0,
+  map_y INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_battle_at TIMESTAMPTZ
 );
@@ -46,6 +49,13 @@ CREATE TABLE IF NOT EXISTS territory_neighbors (
   territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
   neighbor_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
   PRIMARY KEY (territory_id, neighbor_id)
+);
+
+CREATE TABLE IF NOT EXISTS topology_version (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 0,
+  map_key VARCHAR(64) NOT NULL DEFAULT 'three-frontiers',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS territory_defenders (
@@ -122,6 +132,7 @@ CREATE TABLE IF NOT EXISTS seasons (
   starts_at TIMESTAMPTZ NOT NULL,
   ends_at TIMESTAMPTZ NOT NULL,
   status VARCHAR(16) NOT NULL DEFAULT 'active',
+  map_key VARCHAR(64) NOT NULL DEFAULT 'three-frontiers',
   blue_score INTEGER,
   red_score INTEGER,
   green_score INTEGER,

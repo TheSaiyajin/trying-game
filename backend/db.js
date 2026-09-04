@@ -2,7 +2,7 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 const { ADMIN_USERNAME } = require('./admin-policy');
-const topology = require('../world-topology');
+const mapRegistry = require('../map-registry');
 const topologySql = require('./topology-sql');
 const { ensureCurrentSeason } = require('./season');
 require('dotenv').config();
@@ -79,6 +79,9 @@ async function applySchemaMigrations(currentClient) {
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS is_capital BOOLEAN NOT NULL DEFAULT FALSE`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS resource_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS storage_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS score_value INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS map_x INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS map_y INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS last_battle_at TIMESTAMPTZ`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
@@ -104,8 +107,10 @@ async function applySchemaMigrations(currentClient) {
     `CREATE TABLE IF NOT EXISTS topology_version (
       id INTEGER PRIMARY KEY DEFAULT 1,
       version INTEGER NOT NULL DEFAULT 0,
+      map_key VARCHAR(64) NOT NULL DEFAULT 'three-frontiers',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
+    `ALTER TABLE topology_version ADD COLUMN IF NOT EXISTS map_key VARCHAR(64) NOT NULL DEFAULT 'three-frontiers'`,
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS season_wins INTEGER NOT NULL DEFAULT 0`,
     `CREATE TABLE IF NOT EXISTS seasons (
       id SERIAL PRIMARY KEY,
@@ -113,6 +118,7 @@ async function applySchemaMigrations(currentClient) {
       starts_at TIMESTAMPTZ NOT NULL,
       ends_at TIMESTAMPTZ NOT NULL,
       status VARCHAR(16) NOT NULL DEFAULT 'active',
+      map_key VARCHAR(64) NOT NULL DEFAULT 'three-frontiers',
       blue_score INTEGER,
       red_score INTEGER,
       green_score INTEGER,
@@ -120,6 +126,7 @@ async function applySchemaMigrations(currentClient) {
       completed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
+    `ALTER TABLE seasons ADD COLUMN IF NOT EXISTS map_key VARCHAR(64) NOT NULL DEFAULT 'three-frontiers'`,
     `CREATE INDEX IF NOT EXISTS idx_seasons_status ON seasons (status, id DESC)`,
     `CREATE TABLE IF NOT EXISTS season_memberships (
       season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
@@ -163,6 +170,27 @@ async function applySchemaMigrations(currentClient) {
         throw error;
       }
     }
+  }
+
+  // Preserve the running map while adding server-authoritative score/layout metadata.
+  // Existing deployments are the original Three Frontiers map; future resets insert all
+  // metadata directly from the selected versioned map definition.
+  const activeMapResult = await currentClient.query(
+    `SELECT map_key FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1`
+  );
+  const activeMapKey = mapRegistry.getMap(activeMapResult.rows[0]?.map_key).key;
+  const activeTopology = mapRegistry.getMap(activeMapKey).topology;
+  const activeLayout = activeTopology.buildLayout();
+  for (const territory of activeTopology.buildTerritories()) {
+    await currentClient.query(
+      `UPDATE territories SET score_value = $1, map_x = $2, map_y = $3 WHERE id = $4`,
+      [
+        Number(territory.scoreValue ?? (territory.isCapital ? 0 : 1)),
+        Number(activeLayout[territory.id]?.cx || 0),
+        Number(activeLayout[territory.id]?.cy || 0),
+        territory.id,
+      ]
+    );
   }
   await currentClient.query(`
     INSERT INTO season_territory_faction_ownership (season_id, territory_id, faction)
@@ -283,12 +311,18 @@ async function applyTopologyMigrationIfNeeded(externalClient = null) {
   const shouldRelease = !externalClient;
   try {
     await client.query('BEGIN');
-    const versionResult = await client.query('SELECT version FROM topology_version WHERE id = 1 FOR UPDATE');
+    const activeSeasonResult = await client.query(
+      `SELECT map_key FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1`
+    );
+    const mapKey = mapRegistry.getMap(activeSeasonResult.rows[0]?.map_key).key;
+    const topology = mapRegistry.getMap(mapKey).topology;
+    const versionResult = await client.query('SELECT version, map_key FROM topology_version WHERE id = 1 FOR UPDATE');
     const currentVersion = versionResult.rowCount ? Number(versionResult.rows[0].version) : 0;
+    const currentMapKey = versionResult.rowCount ? versionResult.rows[0].map_key : null;
 
-    if (currentVersion >= topology.TOPOLOGY_VERSION) {
+    if (currentMapKey === mapKey && currentVersion >= topology.TOPOLOGY_VERSION) {
       await client.query('COMMIT');
-      return { migrated: false, currentVersion };
+      return { migrated: false, currentVersion, mapKey };
     }
 
     const territoryCount = await client.query('SELECT COUNT(*) AS cnt FROM territories');
@@ -301,15 +335,15 @@ async function applyTopologyMigrationIfNeeded(externalClient = null) {
     // Only territory_neighbors is touched. Players, ownership, defenders, resources, chat,
     // factions, bonuses, and battle history are never modified by this migration.
     await client.query('DELETE FROM territory_neighbors');
-    await client.query(topologySql.buildNeighborValuesSQL());
+    await client.query(topologySql.buildNeighborValuesSQL(mapKey));
     await client.query(
-      `INSERT INTO topology_version (id, version) VALUES (1, $1)
-       ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, updated_at = NOW()`,
-      [topology.TOPOLOGY_VERSION]
+      `INSERT INTO topology_version (id, version, map_key) VALUES (1, $1, $2)
+       ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, map_key = EXCLUDED.map_key, updated_at = NOW()`,
+      [topology.TOPOLOGY_VERSION, mapKey]
     );
     await client.query('COMMIT');
     console.log(`Topology migrated: v${currentVersion} -> v${topology.TOPOLOGY_VERSION} (territory_neighbors replaced only).`);
-    return { migrated: true, previousVersion: currentVersion, currentVersion: topology.TOPOLOGY_VERSION };
+    return { migrated: true, previousVersion: currentVersion, currentVersion: topology.TOPOLOGY_VERSION, mapKey };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -329,12 +363,14 @@ async function seedWorldIfEmpty() {
   // (world-topology.js via topology-sql.js), not parsed from world-seed.sql, so a fresh
   // database can never drift from the same graph the migration and frontend use. This also
   // means world seeding can never contain a DELETE FROM players/buildings statement.
-  await pool.query(topologySql.buildTerritoryValuesSQL());
-  await pool.query(topologySql.buildNeighborValuesSQL());
+  const mapKey = mapRegistry.DEFAULT_MAP_KEY;
+  const topology = mapRegistry.getMap(mapKey).topology;
+  await pool.query(topologySql.buildTerritoryValuesSQL(mapKey));
+  await pool.query(topologySql.buildNeighborValuesSQL(mapKey));
   await pool.query(
-    `INSERT INTO topology_version (id, version) VALUES (1, $1)
-     ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, updated_at = NOW()`,
-    [topology.TOPOLOGY_VERSION]
+    `INSERT INTO topology_version (id, version, map_key) VALUES (1, $1, $2)
+     ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, map_key = EXCLUDED.map_key, updated_at = NOW()`,
+    [topology.TOPOLOGY_VERSION, mapKey]
   );
   console.log('World seeded from the canonical topology.');
 }

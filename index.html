@@ -43,6 +43,19 @@
     </div>
   </div>
 
+  <main id="season-gate" class="season-gate" style="display:none;">
+    <section class="season-gate-panel" aria-labelledby="season-gate-title">
+      <p class="season-gate-kicker">Upcoming campaign</p>
+      <h1 id="season-gate-title">SEASON — · MAP · REGISTRATION OPEN</h1>
+      <div id="season-gate-countdown" class="season-gate-countdown">--:--:--</div>
+      <p id="season-gate-countdown-label" class="season-gate-countdown-label">until the season begins</p>
+      <p id="season-gate-joined-count" class="season-gate-joined-count">0 players joined</p>
+      <button id="season-join-btn" class="btn-primary wide" type="button" onclick="joinSeason()">Join Season</button>
+      <p id="season-joined-confirmation" class="season-joined-confirmation" hidden>You are registered for this season.</p>
+      <button class="btn-small season-gate-logout" type="button" onclick="logoutPlayer()">Logout</button>
+    </section>
+  </main>
+
   <div id="game-shell" class="game-shell" style="display:none;">
     <!-- ===================== TOP BAR ===================== -->
     <header class="top-bar">
