@@ -481,7 +481,7 @@ test('the seasons table enforces a real unique constraint on season_number (defe
   );
 });
 
-test('automatic rollover creates each new season with a seven-day duration', async () => {
+test('automatic rollover creates a 24-hour registration window before seven playable days', async () => {
   const client = createSeasonTestClient({ players: buildPlayers([]), territories: buildTerritories() });
   const midnight = new Date('2026-09-10T00:00:00.000Z');
 
@@ -493,19 +493,20 @@ test('automatic rollover creates each new season with a seven-day duration', asy
 
   assert.notEqual(second.id, first.id);
   assert.equal(second.season_number, first.season_number + 1);
-  assert.equal(new Date(second.ends_at).toISOString(), '2026-09-24T00:00:00.000Z');
+  assert.equal(new Date(second.starts_at).toISOString(), '2026-09-18T00:00:00.000Z');
+  assert.equal(new Date(second.ends_at).toISOString(), '2026-09-25T00:00:00.000Z');
   assert.equal(client.state.seasons.filter((s) => s.status === 'active').length, 1);
 });
 
-test('force-finished seasons create a new seven-day season from the finish time', async () => {
+test('force-finished seasons create a 24-hour registration window before seven playable days', async () => {
   const client = createSeasonTestClient({ players: buildPlayers([]), territories: buildTerritories() });
   await ensureCurrentSeason(client, { now: new Date('2026-09-10T00:00:00.000Z') });
 
   const finishedAt = new Date('2026-09-12T15:30:00.000Z');
   const { season } = await forceFinishCurrentSeason(client, { actorId: 1, now: finishedAt });
 
-  assert.equal(new Date(season.starts_at).toISOString(), '2026-09-12T15:30:00.000Z');
-  assert.equal(new Date(season.ends_at).toISOString(), '2026-09-19T15:30:00.000Z');
+  assert.equal(new Date(season.starts_at).toISOString(), '2026-09-13T15:30:00.000Z');
+  assert.equal(new Date(season.ends_at).toISOString(), '2026-09-20T15:30:00.000Z');
 });
 
 // ===================== Registration cannot choose a faction =====================

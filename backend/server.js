@@ -3,6 +3,7 @@ const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
+const mapRegistry = require('../map-registry');
 const { connect, getClient, initializeDatabase } = require('./db');
 const { issueToken, verifyToken, hashPassword, verifyPassword } = require('./auth');
 const {
@@ -50,6 +51,8 @@ const {
   ensurePlayerFactionAssignment,
   forceFinishCurrentSeason,
   getFactionMemberCounts,
+  getSeasonMembership,
+  hasSeasonStarted,
   computeScores,
 } = require('./season');
 const { getCurrentUtcDayBounds } = require('./season-time');
@@ -114,11 +117,8 @@ function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
-// Verifies the JWT, then confirms/rotates the active season and (on a player's first
-// authenticated request of a season) assigns them to the currently smallest faction. This
-// runs before every authenticated route so gameplay authorization always reflects the
-// active season -- a still-logged-in player is transparently moved into the new season
-// without needing to log out, and previous-season membership can never authorize anything.
+// Verifies the JWT and confirms/rotates the current season. Joining is deliberately separate:
+// merely logging in must never enroll a player or bypass the pre-season Join button.
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -135,13 +135,40 @@ async function requireAuth(req, res, next) {
     const season = await ensureCurrentSeason(client);
     if (observedSeasonId !== null && observedSeasonId !== season.id) notifyStateChanged();
     observedSeasonId = season.id;
-    await ensurePlayerFactionAssignment(client, { seasonId: season.id, playerId: req.user.userId });
     req.currentSeason = season;
     next();
   } catch (error) {
     next(error);
   } finally {
     client.release();
+  }
+}
+
+async function getRequestSeasonMembership(req) {
+  if (req.currentSeasonMembership !== undefined) return req.currentSeasonMembership;
+  const db = await connect();
+  req.currentSeasonMembership = await getSeasonMembership(db, req.currentSeason.id, req.user.userId);
+  return req.currentSeasonMembership;
+}
+
+async function requirePlayableSeason(req, res, next) {
+  try {
+    if (!hasSeasonStarted(req.currentSeason)) {
+      return res.status(409).json({
+        error: 'The season has not started yet.',
+        code: 'SEASON_NOT_STARTED',
+        startsAt: req.currentSeason.starts_at,
+      });
+    }
+    if (!await getRequestSeasonMembership(req)) {
+      return res.status(403).json({
+        error: 'Join the current season before playing.',
+        code: 'SEASON_JOIN_REQUIRED',
+      });
+    }
+    next();
+  } catch (error) {
+    next(error);
   }
 }
 
@@ -248,6 +275,8 @@ async function getTerritoriesSnapshot(db = null) {
     storageBonus: Number(row.storage_bonus),
     fortress: !!row.is_fortress,
     capital: !!row.is_capital,
+    scoreValue: Number(row.score_value),
+    score_value: Number(row.score_value),
     neighbors: row.neighbors || [],
   }));
 }
@@ -283,6 +312,8 @@ async function applyOfflineResourceEarnings(playerId, db = null) {
   const queryable = db || await connect();
   const player = await getPlayerById(playerId, queryable);
   if (!player) return null;
+  const season = await ensureCurrentSeason(queryable);
+  if (!hasSeasonStarted(season)) return player;
 
   if (!validFactions.includes(player.faction)) {
     await queryable.query(
@@ -368,6 +399,10 @@ async function runGlobalResourceTick(db = null, options = {}) {
   const { suppressErrors = true } = options;
   try {
     const queryable = db || await connect();
+    const season = await ensureCurrentSeason(queryable);
+    if (!hasSeasonStarted(season)) {
+      return { skipped: true, reason: 'preseason' };
+    }
     const territories = await getTerritoriesSnapshot(queryable);
     const playersResult = await queryable.query(
       `SELECT id, faction, resource_food, resource_wood, resource_iron, resource_manpower, soldiers
@@ -421,6 +456,7 @@ async function runGlobalResourceTick(db = null, options = {}) {
       );
     }
     if (playersResult.rowCount > 0) notifyStateChanged();
+    return { skipped: false };
   } catch (error) {
     if (!suppressErrors) throw error;
     console.error('Resource tick failed:', error);
@@ -491,17 +527,23 @@ async function getPlayerWorldState(playerId, season = null) {
   };
 }
 
-async function buildSeasonSummary(db, season, territories) {
+async function buildSeasonSummary(db, season, territories = [], now = new Date()) {
   if (!season) return null;
   const liveScores = computeScores(territories);
   const memberCounts = await getFactionMemberCounts(db, season.id);
+  const started = hasSeasonStarted(season, now);
+  const selectedMap = mapRegistry.getMap(season.map_key);
   return {
     seasonNumber: season.season_number,
     startsAt: season.starts_at,
     endsAt: season.ends_at,
-    status: season.status,
+    status: started ? 'active' : 'preparing',
+    hasStarted: started,
     scores: liveScores,
     memberCounts,
+    joinedCount: memberCounts.blue + memberCounts.red + memberCounts.green,
+    mapKey: selectedMap.key,
+    mapName: selectedMap.name,
   };
 }
 
@@ -591,7 +633,17 @@ app.post('/api/login', asyncHandler(async (req, res) => {
 app.get('/api/me', requireAuth, asyncHandler(async (req, res) => {
   const player = await getPlayerById(req.user.userId);
   if (!player) return res.status(404).json({ error: 'Player not found.' });
-  res.json({ id: player.id, username: player.username, faction: player.faction, role: player.role, factionLocked: player.faction_locked, needsFactionSelection: !player.faction });
+  const membership = await getRequestSeasonMembership(req);
+  const started = hasSeasonStarted(req.currentSeason);
+  res.json({
+    id: player.id,
+    username: player.username,
+    faction: started && membership ? membership.faction : null,
+    role: player.role,
+    factionLocked: Boolean(started && membership),
+    joinedSeason: Boolean(membership),
+    needsSeasonJoin: !membership,
+  });
 }));
 
 // Disabled for normal players: factions are only ever assigned by the current season's
@@ -601,19 +653,64 @@ app.post('/api/player/faction', requireAuth, asyncHandler(async (req, res) => {
   res.status(403).json({ error: 'Faction is assigned automatically at the start of each season and cannot be chosen manually.' });
 }));
 
-app.get('/api/world', requireAuth, asyncHandler(async (req, res) => {
+app.post('/api/season/join', requireAuth, asyncHandler(async (req, res) => {
+  const client = await getClient();
+  let faction;
+  try {
+    const now = new Date();
+    const resourceStartAt = hasSeasonStarted(req.currentSeason, now)
+      ? now
+      : new Date(req.currentSeason.starts_at);
+    faction = await ensurePlayerFactionAssignment(client, {
+      seasonId: req.currentSeason.id,
+      playerId: req.user.userId,
+      resourceStartAt,
+    });
+  } finally {
+    client.release();
+  }
+  res.json({
+    joined: true,
+    seasonNumber: req.currentSeason.season_number,
+    startsAt: req.currentSeason.starts_at,
+    hasStarted: hasSeasonStarted(req.currentSeason),
+    faction: hasSeasonStarted(req.currentSeason) ? faction : null,
+  });
+}));
+
+app.get('/api/world', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
   if (!snapshot) return res.status(404).json({ error: 'Player not found.' });
   res.json(snapshot.world);
 }));
 
-app.get('/api/player/state', requireAuth, asyncHandler(async (req, res) => {
+app.get('/api/player/state', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
   if (!snapshot) return res.status(404).json({ error: 'Player not found.' });
   res.json(snapshot.player);
 }));
 
 app.get('/api/game/state', requireAuth, asyncHandler(async (req, res) => {
+  const db = await connect();
+  const player = await getPlayerById(req.user.userId, db);
+  if (!player) return res.status(404).json({ error: 'Player not found.' });
+  const membership = await getRequestSeasonMembership(req);
+  const now = new Date();
+  if (!membership || !hasSeasonStarted(req.currentSeason, now)) {
+    return res.json({
+      player: {
+        id: player.id,
+        username: player.username,
+        faction: null,
+        role: player.role,
+        joinedSeason: Boolean(membership),
+        needsSeasonJoin: !membership,
+      },
+      world: { territories: [], players: [] },
+      season: await buildSeasonSummary(db, req.currentSeason, [], now),
+      serverTime: now.getTime(),
+    });
+  }
   const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
   if (!snapshot) return res.status(404).json({ error: 'Player not found.' });
   res.json({
@@ -624,7 +721,7 @@ app.get('/api/game/state', requireAuth, asyncHandler(async (req, res) => {
   });
 }));
 
-app.get('/api/game/battles', requireAuth, asyncHandler(async (req, res) => {
+app.get('/api/game/battles', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const db = await connect();
   const limit = Math.min(50, Math.max(1, Number(req.query.limit || 50)));
   const result = await db.query(`
@@ -653,7 +750,7 @@ app.get('/api/game/battles', requireAuth, asyncHandler(async (req, res) => {
   res.json({ battles: result.rows });
 }));
 
-app.get('/api/game/activity-stats', requireAuth, asyncHandler(async (req, res) => {
+app.get('/api/game/activity-stats', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const db = await connect();
   const stats = await getSeasonStats(db, {
     seasonId: req.currentSeason.id,
@@ -662,7 +759,7 @@ app.get('/api/game/activity-stats', requireAuth, asyncHandler(async (req, res) =
   res.json(stats);
 }));
 
-app.post('/api/game/upgrade-building', requireAuth, asyncHandler(async (req, res) => {
+app.post('/api/game/upgrade-building', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const buildingKey = sanitizeBuildingName(req.body.building);
   if (!buildingKey) return res.status(400).json({ error: 'Invalid building.' });
 
@@ -695,7 +792,7 @@ app.post('/api/game/upgrade-building', requireAuth, asyncHandler(async (req, res
   res.json({ ok: true, state: snapshot });
 }));
 
-app.post('/api/game/train-soldiers', requireAuth, asyncHandler(async (req, res) => {
+app.post('/api/game/train-soldiers', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const count = parsePositiveInt(req.body.amount || 0, 0, 5000);
   if (count <= 0) return res.status(400).json({ error: 'Training amount must be positive.' });
 
@@ -721,7 +818,7 @@ app.post('/api/game/train-soldiers', requireAuth, asyncHandler(async (req, res) 
   res.json({ ok: true, state: snapshot, trainingCost: cost, trained: count });
 }));
 
-app.post('/api/game/defend', requireAuth, asyncHandler(async (req, res) => {
+app.post('/api/game/defend', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const territoryId = String(req.body.territoryId || '').trim();
   const troops = parsePositiveInt(req.body.troops || 0, 0, 5000);
   if (!territoryId) return res.status(400).json({ error: 'Territory required.' });
@@ -783,7 +880,7 @@ app.post('/api/game/defend', requireAuth, asyncHandler(async (req, res) => {
   res.json({ ok: true, state: snapshot, stationed: troops, territoryId });
 }));
 
-app.post('/api/game/recall-defenders', requireAuth, asyncHandler(async (req, res) => {
+app.post('/api/game/recall-defenders', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const territoryId = String(req.body.territoryId || '').trim();
   const troops = parsePositiveInt(req.body.troops || 0, 0, 5000);
   if (!territoryId) return res.status(400).json({ error: 'Territory required.' });
@@ -849,7 +946,7 @@ app.post('/api/game/recall-defenders', requireAuth, asyncHandler(async (req, res
   res.json({ ok: true, state: snapshot, recalled: troops, territoryId });
 }));
 
-app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
+app.post('/api/game/attack', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const territoryId = String(req.body.territoryId || '').trim();
   const soldiers = req.body.soldiers;
 
@@ -875,7 +972,7 @@ app.post('/api/game/attack', requireAuth, asyncHandler(async (req, res) => {
   res.json({ ok: true, state: snapshot, sent: result.sent, territoryId: result.territoryId, outcome: result.outcome });
 }));
 
-app.get('/api/game/faction-chat', requireAuth, asyncHandler(async (req, res) => {
+app.get('/api/game/faction-chat', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const player = await getCurrentAuthedPlayer(req);
   const db = await connect();
   const result = await getFactionChatMessagesForPlayer(db, player, req.currentSeason.id);
@@ -883,7 +980,7 @@ app.get('/api/game/faction-chat', requireAuth, asyncHandler(async (req, res) => 
   res.json({ faction: result.faction, seasonId: result.seasonId, messages: result.messages });
 }));
 
-app.get('/api/game/faction-members', requireAuth, asyncHandler(async (req, res) => {
+app.get('/api/game/faction-members', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const player = await getCurrentAuthedPlayer(req);
   const db = await connect();
   const result = await listFactionMembersForPlayer(db, player);
@@ -891,7 +988,7 @@ app.get('/api/game/faction-members', requireAuth, asyncHandler(async (req, res) 
   res.json({ faction: result.faction, total: result.total, members: result.members });
 }));
 
-app.post('/api/game/faction-chat', requireAuth, factionChatSendRateLimit, asyncHandler(async (req, res) => {
+app.post('/api/game/faction-chat', requireAuth, requirePlayableSeason, factionChatSendRateLimit, asyncHandler(async (req, res) => {
   const player = await getCurrentAuthedPlayer(req);
   const db = await connect();
   const result = await createFactionChatMessage(db, { player, seasonId: req.currentSeason.id, message: req.body.message });
@@ -900,7 +997,7 @@ app.post('/api/game/faction-chat', requireAuth, factionChatSendRateLimit, asyncH
   res.status(201).json({ faction: player.faction, message: result.message });
 }));
 
-app.post('/api/game/resolve-battle', requireAuth, asyncHandler(async (req, res) => {
+app.post('/api/game/resolve-battle', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const territoryId = String(req.body.territoryId || '').trim();
   if (!territoryId) return res.status(400).json({ error: 'No territory selected.' });
 

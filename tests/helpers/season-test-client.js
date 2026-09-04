@@ -35,6 +35,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
     factionLeaders: new Map([['blue', 1], ['red', 2], ['green', 3]]),
     adminActions: [],
     queryLog: [],
+    topologyVersion: null,
   };
   const mutexes = new Map();
   let pendingLockRelease = null;
@@ -66,6 +67,22 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         return { rows: active.slice(0, 1) };
       }
 
+      if (text.startsWith("SELECT map_key FROM seasons WHERE status = 'active'")) {
+        const active = state.seasons.filter((season) => season.status === 'active').sort((a, b) => b.id - a.id)[0];
+        return { rows: active ? [{ map_key: active.map_key }] : [], rowCount: active ? 1 : 0 };
+      }
+
+      if (text === 'SELECT version, map_key FROM topology_version WHERE id = 1 FOR UPDATE') {
+        return {
+          rows: state.topologyVersion ? [state.topologyVersion] : [],
+          rowCount: state.topologyVersion ? 1 : 0,
+        };
+      }
+
+      if (text === 'SELECT COUNT(*) AS cnt FROM territories') {
+        return { rows: [{ cnt: String(state.territories.size) }], rowCount: 1 };
+      }
+
       if (text.startsWith('SELECT COALESCE(MAX(season_number), 0) + 1 AS next_number FROM seasons')) {
         const maxNumber = state.seasons
           .filter((s) => s.season_number > 0)
@@ -74,7 +91,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
       }
 
       if (text.startsWith('INSERT INTO seasons')) {
-        const [seasonNumber, startsAt, endsAt] = params;
+        const [seasonNumber, startsAt, endsAt, mapKey = 'three-frontiers'] = params;
         if (state.seasons.some((s) => s.season_number === seasonNumber)) {
           throw new Error(`duplicate key value violates unique constraint "seasons_season_number_key" (${seasonNumber})`);
         }
@@ -84,6 +101,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
           starts_at: startsAt,
           ends_at: endsAt,
           status: 'active',
+          map_key: mapKey,
           blue_score: null,
           red_score: null,
           green_score: null,
@@ -104,7 +122,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         return { rows: [] };
       }
 
-      if (text.startsWith('SELECT id, owner_faction, is_capital FROM territories')) {
+      if (text.startsWith('SELECT id, owner_faction, is_capital')) {
         return { rows: [...state.territories.values()] };
       }
 
@@ -150,16 +168,27 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
       }
 
       if (text.startsWith('INSERT INTO territories')) {
-        // Re-seed with the canonical topology (mirrors what topology-sql.js generates).
-        const topology = require('../../world-topology');
+        const mapRegistry = require('../../map-registry');
+        const mapKey = text.includes("'Crown of Sai'") ? 'crownlands-64' : 'three-frontiers';
+        const topology = mapRegistry.getMap(mapKey).topology;
         topology.buildTerritories().forEach((t) => {
-          state.territories.set(t.id, { id: t.id, owner_faction: t.ownerFaction, is_capital: t.isCapital });
+          state.territories.set(t.id, {
+            id: t.id,
+            owner_faction: t.ownerFaction,
+            is_capital: t.isCapital,
+            score_value: Number(t.scoreValue ?? (t.isCapital ? 0 : 1)),
+          });
         });
         return { rows: [] };
       }
 
       if (text.startsWith('INSERT INTO territory_neighbors')) {
         state.territoryNeighborsSeeded = true;
+        return { rows: [] };
+      }
+
+      if (text.startsWith('INSERT INTO topology_version')) {
+        state.topologyVersion = { version: Number(params[0]), map_key: params[1] };
         return { rows: [] };
       }
 
@@ -221,7 +250,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
       }
 
       if (text.startsWith('UPDATE players SET faction = $1, faction_locked = TRUE, army_name = $2, resource_food = $3')) {
-        const [faction, armyName, food, wood, iron, manpower, soldiers, playerId] = params;
+        const [faction, armyName, food, wood, iron, manpower, soldiers, resourceLastUpdated, playerId] = params;
         const player = state.players.get(playerId);
         if (player) {
           player.faction = faction;
@@ -232,7 +261,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
           player.resource_iron = iron;
           player.resource_manpower = manpower;
           player.soldiers = soldiers;
-          player.resource_last_updated = new Date();
+          player.resource_last_updated = new Date(resourceLastUpdated);
         }
         return { rows: [] };
       }
