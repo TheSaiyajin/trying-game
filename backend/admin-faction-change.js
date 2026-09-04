@@ -91,7 +91,7 @@ async function changePlayerFaction(client, { actorId, playerId, faction }) {
   );
   await client.query(
     `INSERT INTO season_memberships (season_id, player_id, faction)
-     SELECT id, $1, $2 FROM seasons WHERE status = 'active'
+     SELECT id, $1::integer, $2::varchar(16) FROM seasons WHERE status = 'active'
      ON CONFLICT (season_id, player_id) DO UPDATE SET faction = EXCLUDED.faction`,
     [playerId, faction]
   );
@@ -103,8 +103,8 @@ async function changePlayerFaction(client, { actorId, playerId, faction }) {
   );
   await client.query(
     `INSERT INTO faction_city_tiles (season_id, player_id, faction, slot_index)
-     SELECT s.id, $1, $2,
-            COALESCE((SELECT MAX(slot_index) + 1 FROM faction_city_tiles WHERE season_id = s.id AND faction = $2), 0)
+     SELECT s.id, $1::integer, $2::varchar(16),
+            COALESCE((SELECT MAX(slot_index) + 1 FROM faction_city_tiles WHERE season_id = s.id AND faction = $2::varchar(16)), 0)
      FROM seasons s WHERE s.status = 'active'
      ON CONFLICT (season_id, player_id) DO NOTHING`,
     [playerId, faction]
