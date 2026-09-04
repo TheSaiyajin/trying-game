@@ -43,9 +43,9 @@ INSERT INTO territories (id, name, owner_faction, defense_troops, bonus_type, bo
   ('n25', 'Verdant Keep', 'neutral', 24, 'fortress', 0.2, TRUE, FALSE, 0, 0.1, 1, 377, 472),
   ('n26', 'Verdant Vault', 'neutral', 24, 'storage', 0.2, FALSE, FALSE, 0, 0.2, 1, 318, 428),
   ('n27', 'Verdant Market', 'neutral', 24, 'resource', 0.1, FALSE, FALSE, 0.1, 0.1, 1, 309, 354),
-  ('n28', 'Crown Bastion', 'neutral', 28, 'fortress', 0.25, TRUE, FALSE, 0, 0.15, 1, 400, 335),
-  ('n29', 'Crown Treasury', 'neutral', 28, 'storage', 0.25, FALSE, FALSE, 0, 0.25, 1, 439, 403),
-  ('n30', 'Crown Spire', 'neutral', 28, 'resource', 0.15, FALSE, FALSE, 0.15, 0.15, 1, 361, 403);
+  ('n28', 'Crown Bastion', 'neutral', 28, 'fortress', 0.25, TRUE, FALSE, 0, 0.15, 2, 400, 335),
+  ('n29', 'Crown Treasury', 'neutral', 28, 'storage', 0.25, FALSE, FALSE, 0, 0.25, 2, 439, 403),
+  ('n30', 'Crown Spire', 'neutral', 28, 'resource', 0.15, FALSE, FALSE, 0.15, 0.15, 2, 361, 403);
 
 INSERT INTO territory_neighbors (territory_id, neighbor_id) VALUES
   ('b1', 'n1'),

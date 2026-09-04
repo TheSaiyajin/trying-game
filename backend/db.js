@@ -171,6 +171,27 @@ async function applySchemaMigrations(currentClient) {
       }
     }
   }
+
+  // Preserve the running map while adding server-authoritative score/layout metadata.
+  // Existing deployments are the original Three Frontiers map; future resets insert all
+  // metadata directly from the selected versioned map definition.
+  const activeMapResult = await currentClient.query(
+    `SELECT map_key FROM seasons WHERE status = 'active' ORDER BY id DESC LIMIT 1`
+  );
+  const activeMapKey = mapRegistry.getMap(activeMapResult.rows[0]?.map_key).key;
+  const activeTopology = mapRegistry.getMap(activeMapKey).topology;
+  const activeLayout = activeTopology.buildLayout();
+  for (const territory of activeTopology.buildTerritories()) {
+    await currentClient.query(
+      `UPDATE territories SET score_value = $1, map_x = $2, map_y = $3 WHERE id = $4`,
+      [
+        Number(territory.scoreValue ?? (territory.isCapital ? 0 : 1)),
+        Number(activeLayout[territory.id]?.cx || 0),
+        Number(activeLayout[territory.id]?.cy || 0),
+        territory.id,
+      ]
+    );
+  }
   await currentClient.query(`
     INSERT INTO season_territory_faction_ownership (season_id, territory_id, faction)
     SELECT s.id, t.id, t.owner_faction

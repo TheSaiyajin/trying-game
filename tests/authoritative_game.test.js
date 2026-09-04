@@ -109,9 +109,13 @@ test('attacking with fewer troops removes the same number of defenders and fails
 
 test('legacy databases get the required player migration columns before registration runs', async () => {
   const sqlCalls = [];
+  const metadataUpdates = [];
   const fakeClient = {
-    async query(sql) {
+    async query(sql, params = []) {
       sqlCalls.push(String(sql));
+      if (sql.includes('UPDATE territories SET score_value')) {
+        metadataUpdates.push(params);
+      }
       if (sql.includes('information_schema.columns')) {
         return {
           rows: [
@@ -153,6 +157,16 @@ test('legacy databases get the required player migration columns before registra
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS player_season_stats')));
   assert.ok(sqlCalls.some((sql) => sql.includes('PRIMARY KEY (season_id, player_id)')));
   assert.ok(sqlCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS season_territory_faction_ownership')));
+
+  const metadataById = new Map(metadataUpdates.map((params) => [params[3], params]));
+  const layout = require('../world-topology').buildLayout();
+  for (const capitalId of ['b1', 'r1', 'g1']) {
+    assert.equal(metadataById.get(capitalId)[0], 0);
+  }
+  for (const coreId of ['n28', 'n29', 'n30']) {
+    assert.equal(metadataById.get(coreId)[0], 2);
+    assert.deepEqual(metadataById.get(coreId).slice(1, 3), [layout[coreId].cx, layout[coreId].cy]);
+  }
   assert.ok(sqlCalls.some((sql) => sql.includes('INSERT INTO season_territory_faction_ownership') && sql.includes("s.status = 'active'")));
   assert.equal(sqlCalls.some((sql) => sql.includes('INSERT INTO player_season_stats') && sql.includes('SELECT')), false);
 });
