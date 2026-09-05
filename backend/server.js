@@ -302,6 +302,7 @@ async function getTerritoriesSnapshot(db = null) {
     scoreValue: Number(row.score_value),
     mapX: Number(row.map_x),
     mapY: Number(row.map_y),
+    score_value: Number(row.score_value),
     neighbors: row.neighbors || [],
   }));
 }
@@ -347,6 +348,8 @@ async function applyOfflineResourceEarnings(playerId, db = null) {
   const queryable = db || await connect();
   const player = await getPlayerById(playerId, queryable);
   if (!player) return null;
+  const season = await ensureCurrentSeason(queryable);
+  if (!hasSeasonStarted(season)) return player;
 
   if (!validFactions.includes(player.faction)) {
     await queryable.query(
@@ -758,7 +761,6 @@ app.post('/api/season/join', requireAuth, asyncHandler(async (req, res) => {
   } finally {
     client.release();
   }
-
   res.json({
     joined: true,
     seasonNumber: req.currentSeason.season_number,
@@ -803,7 +805,6 @@ app.get('/api/game/state', requireAuth, asyncHandler(async (req, res) => {
       serverTime: now.getTime(),
     });
   }
-
   const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
   res.json({
     player: snapshot.player,
@@ -1183,6 +1184,25 @@ app.post('/api/game/faction-chat', requireAuth, requirePlayableSeason, factionCh
   if (!result.ok) return res.status(result.status).json({ error: result.error });
 
   res.status(201).json({ faction: player.faction, message: result.message });
+}));
+
+app.post('/api/game/resolve-battle', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
+  const territoryId = String(req.body.territoryId || '').trim();
+  if (!territoryId) return res.status(400).json({ error: 'No territory selected.' });
+
+  const player = await getPlayerById(req.user.userId);
+  if (!player) return res.status(404).json({ error: 'Player not found.' });
+  const db = await getClient();
+  try {
+    const result = await resolveBattle(db, { player, territoryId, seasonId: req.currentSeason.id });
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+    const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
+    res.json({ ok: true, outcome: result.outcome, state: snapshot });
+  } finally {
+    db.release();
+  }
 }));
 
 app.post('/api/admin/reset-world', requireAuth, requireAdmin, asyncHandler(async (req, res) => {

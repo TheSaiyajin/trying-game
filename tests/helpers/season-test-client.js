@@ -68,6 +68,22 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         return { rows: active.slice(0, 1) };
       }
 
+      if (text.startsWith("SELECT map_key FROM seasons WHERE status = 'active'")) {
+        const active = state.seasons.filter((season) => season.status === 'active').sort((a, b) => b.id - a.id)[0];
+        return { rows: active ? [{ map_key: active.map_key }] : [], rowCount: active ? 1 : 0 };
+      }
+
+      if (text === 'SELECT version, map_key FROM topology_version WHERE id = 1 FOR UPDATE') {
+        return {
+          rows: state.topologyVersion ? [state.topologyVersion] : [],
+          rowCount: state.topologyVersion ? 1 : 0,
+        };
+      }
+
+      if (text === 'SELECT COUNT(*) AS cnt FROM territories') {
+        return { rows: [{ cnt: String(state.territories.size) }], rowCount: 1 };
+      }
+
       if (text.startsWith('SELECT COALESCE(MAX(season_number), 0) + 1 AS next_number FROM seasons')) {
         const maxNumber = state.seasons
           .filter((s) => s.season_number > 0)
@@ -179,15 +195,15 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
       }
 
       if (text.startsWith('INSERT INTO territories')) {
-        const registry = require('../../map-registry');
+        const mapRegistry = require('../../map-registry');
         const mapKey = text.includes('Crown of Sai') ? 'crownlands-64' : 'three-frontiers';
-        const topology = registry.getMap(mapKey).topology;
+        const topology = mapRegistry.getMap(mapKey).topology;
         topology.buildTerritories().forEach((t) => {
           state.territories.set(t.id, {
             id: t.id,
             owner_faction: t.ownerFaction,
             is_capital: t.isCapital,
-            score_value: t.scoreValue,
+            score_value: Number(t.scoreValue ?? (t.isCapital ? 0 : 1)),
           });
         });
         return { rows: [] };

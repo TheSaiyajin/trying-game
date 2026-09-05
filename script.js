@@ -652,6 +652,10 @@ async function loadGame() {
       connectRealtime();
       return;
     }
+    if (!payload.player?.faction) {
+      setTimeout(loadGame, 750);
+      return;
+    }
 
     renderCity();
     renderMap();

@@ -50,6 +50,59 @@ html, body {
   padding: 18px;
 }
 
+.season-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 190;
+  place-items: center;
+  padding: 20px;
+  background:
+    linear-gradient(rgba(6, 10, 16, 0.82), rgba(13, 17, 23, 0.96)),
+    repeating-linear-gradient(135deg, #182230 0 2px, #111821 2px 16px);
+}
+
+.season-gate-panel {
+  width: min(100%, 560px);
+  padding: 32px 24px;
+  border: 1px solid rgba(227, 179, 65, 0.5);
+  border-radius: 8px;
+  background: rgba(17, 24, 33, 0.96);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  text-align: center;
+}
+
+.season-gate-kicker {
+  color: var(--accent-gold);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.season-gate-panel h1 {
+  margin: 10px 0 24px;
+  color: var(--text-main);
+  font-size: clamp(1.25rem, 5vw, 2rem);
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.season-gate-countdown {
+  color: #f8d874;
+  font-size: clamp(2rem, 10vw, 4rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.season-gate-countdown-label,
+.season-gate-joined-count,
+.season-joined-confirmation {
+  color: var(--text-dim);
+}
+
+.season-gate-joined-count { margin: 22px 0 14px; }
+.season-joined-confirmation { margin-top: 18px; color: var(--accent-green); font-weight: 700; }
+.season-gate-logout { margin-top: 20px; }
+
 .auth-card {
   width: min(100%, 380px);
   background: rgba(17, 24, 39, 0.94);

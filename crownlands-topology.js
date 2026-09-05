@@ -122,13 +122,13 @@
       const frontier = ids.slice(10, 20);
 
       home.forEach((id) => add(CAPITAL_ID[faction], id));
-      for (let i = 0; i < home.length - 1; i += 1) add(home[i], home[i + 1]);
-      for (let i = 0; i < middle.length - 1; i += 1) add(middle[i], middle[i + 1]);
-      for (let i = 0; i < 4; i += 1) {
-        add(frontier[i], frontier[i + 1]);
-        add(frontier[i + 5], frontier[i + 6]);
+      for (let index = 0; index < home.length - 1; index += 1) add(home[index], home[index + 1]);
+      for (let index = 0; index < middle.length - 1; index += 1) add(middle[index], middle[index + 1]);
+      for (let index = 0; index < 4; index += 1) {
+        add(frontier[index], frontier[index + 1]);
+        add(frontier[index + 5], frontier[index + 6]);
       }
-      for (let i = 0; i < 5; i += 1) add(frontier[i], frontier[i + 5]);
+      for (let index = 0; index < 5; index += 1) add(frontier[index], frontier[index + 5]);
 
       add(home[0], middle[0]); add(home[0], middle[1]);
       add(home[1], middle[1]); add(home[1], middle[2]);

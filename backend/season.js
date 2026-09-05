@@ -288,6 +288,7 @@ async function startCurrentSeasonNow(client, { actorId, now = new Date() } = {})
 async function ensurePlayerFactionAssignment(client, { seasonId, playerId, resourceStartAt = new Date() }) {
   const existing = await getSeasonMembership(client, seasonId, playerId);
   if (existing) return existing.faction;
+  if (existing) return existing.faction;
 
   await client.query('BEGIN');
   try {

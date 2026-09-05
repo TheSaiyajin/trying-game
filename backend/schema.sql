@@ -53,6 +53,13 @@ CREATE TABLE IF NOT EXISTS territory_neighbors (
   PRIMARY KEY (territory_id, neighbor_id)
 );
 
+CREATE TABLE IF NOT EXISTS topology_version (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 0,
+  map_key VARCHAR(64) NOT NULL DEFAULT 'three-frontiers',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS territory_defenders (
   territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
   player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
