@@ -16,12 +16,12 @@ const DEFAULT_STATE = {
     role: 'member',
     resources: { food: 0, wood: 0, iron: 0, manpower: 0 },
     soldiers: 0,
-    buildings: { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
+    buildings: { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1, storage: 1 },
     production: { food: 0, wood: 0, iron: 0, manpower: 0 },
   },
   territories: {},
-  attackTarget: '',
-  attackContributions: {},
+  rallies: {},
+  factionMap: { faction: null, cities: [] },
   chatMessages: [],
   season: null,
 };
@@ -38,13 +38,19 @@ let realtimeRefreshTimer = null;
 let realtimeRefreshInFlight = false;
 let realtimeRefreshQueued = false;
 let activeActivityTab = 'feed';
-let seasonGateCountdownHandle = null;
+let seasonGateClockOffset = 0;
+let seasonGateRefreshPending = false;
+let seasonJoinInFlight = false;
+let activeMapView = 'world';
 
 // Canonical topology module (world-topology.js): required directly under Node (tests),
 // exposed as window.WORLD_TOPOLOGY when loaded via <script> in the browser.
 const WORLD_TOPOLOGY = (typeof module !== 'undefined' && typeof require === 'function')
   ? require('./world-topology')
   : (typeof window !== 'undefined' ? window.WORLD_TOPOLOGY : undefined);
+const MAP_REGISTRY = (typeof module !== 'undefined' && typeof require === 'function')
+  ? require('./map-registry')
+  : (typeof window !== 'undefined' ? window.MAP_REGISTRY : undefined);
 
 function showToast(msg) {
   const old = document.querySelector('.toast');
@@ -77,9 +83,37 @@ function mapTerritories(rawTerritories) {
       adj: Array.isArray(territory.neighbors) ? territory.neighbors : [],
       fortress: !!(territory.fortress ?? territory.is_fortress),
       capital: !!(territory.capital ?? territory.is_capital),
+      contested: !!territory.contested,
+      protectedUntil: territory.protectedUntil || territory.protected_until || null,
+      scoreValue: Number(territory.scoreValue ?? territory.score_value ?? 1),
+      mapX: Number(territory.mapX ?? territory.map_x ?? 0),
+      mapY: Number(territory.mapY ?? territory.map_y ?? 0),
     };
   });
   return entryMap;
+}
+
+function mapRallies(rawRallies) {
+  const rallies = {};
+  (rawRallies || []).forEach((rally) => {
+    rallies[rally.territoryId] = {
+      territoryId: rally.territoryId,
+      attackerFaction: rally.attackerFaction,
+      defenderFaction: rally.defenderFaction,
+      startedBy: rally.startedBy,
+      phase: rally.phase || 'rally',
+      resolvesAt: rally.resolvesAt,
+      nextTickAt: rally.nextTickAt || null,
+      roundNumber: Number(rally.roundNumber || 0),
+      totalAttackers: Number(rally.totalAttackers || 0),
+      myContribution: Number(rally.myContribution || 0),
+      attackersLost: Number(rally.attackersLost || 0),
+      defendersLost: Number(rally.defendersLost || 0),
+      attackBonus: Number(rally.attackBonus || 0),
+      defenseBonus: Number(rally.defenseBonus || 0),
+    };
+  });
+  return rallies;
 }
 
 function isAdminUser(user) {
@@ -134,7 +168,7 @@ function renderScoreboard() {
     return;
   }
 
-  seasonEl.textContent = `Season ${season.seasonNumber}`;
+  seasonEl.textContent = `Season ${season.seasonNumber} · ${season.mapName || 'Three Frontiers'}`;
   countdownEl.textContent = formatCountdown(new Date(season.endsAt).getTime() - Date.now());
 
   const scores = season.scores || { blue: 0, red: 0, green: 0 };
@@ -174,6 +208,7 @@ async function renderSeasonHistory() {
       return `
         <div class="season-history-row">
           <strong>Season ${s.seasonNumber}</strong>
+          <span class="info-text">🗺️ ${s.mapName || 'Three Frontiers'}</span>
           <span class="info-text">${new Date(s.startsAt).toISOString().slice(0, 10)} → ${new Date(s.endsAt).toISOString().slice(0, 10)} UTC</span>
           <span>🔵${s.blueScore ?? 0} 🔴${s.redScore ?? 0} 🟢${s.greenScore ?? 0}</span>
           <span class="season-history-result">${resultLabel}</span>
@@ -200,14 +235,14 @@ function setGameStateFromSnapshot(snapshot) {
     player: {
       ...(snapshot.player || {}),
       resources: snapshot.player?.resources || { food: 0, wood: 0, iron: 0, manpower: 0 },
-      buildings: snapshot.player?.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 },
+      buildings: snapshot.player?.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1, storage: 1 },
       production: snapshot.player?.production || { food: 0, wood: 0, iron: 0, manpower: 0 },
       factionBonuses: snapshot.player?.factionBonuses || { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 },
       stationedTroops: snapshot.player?.stationedTroops || {},
     },
     territories: mapTerritories(snapshot.world?.territories || snapshot.territories || []),
-    attackTarget: '',
-    attackContributions: {},
+    rallies: mapRallies(snapshot.world?.rallies || []),
+    factionMap: snapshot.world?.factionMap || { faction: snapshot.player?.faction || null, cities: [] },
     // A season/faction change invalidates any cached chat: never show the previous
     // faction's messages, even briefly, while the new season's chat loads.
     chatMessages: previousFaction && previousFaction === G.player?.faction ? (G.chatMessages || []) : [],
@@ -219,7 +254,8 @@ function setGameStateFromSnapshot(snapshot) {
   updateFactionTheme();
   renderFactionBonuses();
   renderScoreboard();
-  if (previousFaction && previousFaction !== snapshot.player?.faction) {
+  renderFactionMap();
+  if (previousFaction && snapshot.player?.faction && previousFaction !== snapshot.player.faction) {
     G.chatMessages = [];
     document.getElementById('chat-messages')?.replaceChildren();
     renderFactionChat({ scrollToNewest: true });
@@ -379,54 +415,6 @@ function setGameShellVisible(isVisible) {
 function setSeasonGateVisible(isVisible) {
   const gate = document.getElementById('season-gate');
   if (gate) gate.style.display = isVisible ? 'grid' : 'none';
-  if (!isVisible && seasonGateCountdownHandle) {
-    clearInterval(seasonGateCountdownHandle);
-    seasonGateCountdownHandle = null;
-  }
-}
-
-function showSeasonGate(payload) {
-  const season = payload.season || {};
-  const joined = Boolean(payload.player?.joinedSeason);
-  const title = document.getElementById('season-gate-title');
-  const count = document.getElementById('season-gate-joined-count');
-  const joinButton = document.getElementById('season-join-btn');
-  const confirmation = document.getElementById('season-joined-confirmation');
-  const countdown = document.getElementById('season-gate-countdown');
-  const countdownLabel = document.getElementById('season-gate-countdown-label');
-  const hasStarted = Boolean(season.hasStarted);
-
-  if (title) title.textContent = `SEASON ${season.seasonNumber ?? '—'} · ${(season.mapName || 'MAP').toUpperCase()} · ${hasStarted ? 'JOIN OPEN' : 'REGISTRATION OPEN'}`;
-  if (count) count.textContent = `${Number(season.joinedCount || 0)} ${Number(season.joinedCount || 0) === 1 ? 'player' : 'players'} joined`;
-  if (joinButton) joinButton.hidden = joined;
-  if (confirmation) confirmation.hidden = !joined;
-
-  const updateCountdown = () => {
-    const remaining = new Date(season.startsAt).getTime() - Date.now();
-    if (countdown) countdown.textContent = hasStarted ? 'OPEN' : formatCountdown(remaining);
-    if (countdownLabel) countdownLabel.textContent = hasStarted ? 'join to enter the season' : 'until the season begins';
-    if (!hasStarted && remaining <= 0) loadGame();
-  };
-  if (seasonGateCountdownHandle) clearInterval(seasonGateCountdownHandle);
-  updateCountdown();
-  seasonGateCountdownHandle = setInterval(updateCountdown, 1000);
-
-  document.getElementById('auth-screen').style.display = 'none';
-  setGameShellVisible(false);
-  setSeasonGateVisible(true);
-  hideBootLoading();
-}
-
-async function joinSeason() {
-  const button = document.getElementById('season-join-btn');
-  if (button) button.disabled = true;
-  try {
-    await apiFetch('/season/join', { method: 'POST', body: JSON.stringify({}) });
-    await loadGame();
-  } catch (error) {
-    showToast(`Could not join season: ${error.message}`);
-    if (button) button.disabled = false;
-  }
 }
 
 function hideBootLoading() {
@@ -447,11 +435,20 @@ function hideAuthScreen() {
   hideBootLoading();
 }
 
+function showSeasonGate() {
+  const authScreen = document.getElementById('auth-screen');
+  if (authScreen) authScreen.style.display = 'none';
+  stopFactionChatPolling();
+  setGameShellVisible(false);
+  setSeasonGateVisible(true);
+  hideBootLoading();
+}
+
 function showAuthScreen() {
   const authScreen = document.getElementById('auth-screen');
   if (authScreen) authScreen.style.display = 'flex';
-  setSeasonGateVisible(false);
   stopFactionChatPolling();
+  setSeasonGateVisible(false);
   setGameShellVisible(false);
   document.querySelectorAll('.screen').forEach((screen) => screen.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach((button) => button.classList.remove('active'));
@@ -516,6 +513,110 @@ function logoutPlayer() {
   showToast('🚪 Logged out.');
 }
 
+function shouldShowSeasonGate(snapshot) {
+  return !snapshot?.season?.hasStarted || !snapshot?.player?.joinedSeason;
+}
+
+function renderSeasonGate(snapshot) {
+  const season = snapshot?.season || {};
+  const player = snapshot?.player || {};
+  const joined = Boolean(player.joinedSeason);
+  const started = Boolean(season.hasStarted);
+  seasonGateClockOffset = Number(snapshot?.serverTime || Date.now()) - Date.now();
+
+  const label = document.getElementById('season-gate-label');
+  const title = document.getElementById('season-gate-title');
+  const countdown = document.getElementById('season-gate-countdown');
+  const message = document.getElementById('season-gate-message');
+  const joinedCount = document.getElementById('season-gate-joined-count');
+  const joinButton = document.getElementById('season-join-btn');
+  const confirmation = document.getElementById('season-joined-confirmation');
+  const adminStartButton = document.getElementById('season-admin-start-btn');
+
+  if (label) label.textContent = started
+    ? `SEASON ${season.seasonNumber} · ${season.mapName || 'Three Frontiers'} · LIVE`
+    : `SEASON ${season.seasonNumber} · ${season.mapName || 'Three Frontiers'} · REGISTRATION OPEN`;
+  if (title) {
+    title.textContent = started
+      ? `Season ${season.seasonNumber} is underway`
+      : (joined ? `You're ready for Season ${season.seasonNumber}` : 'Season starts in');
+  }
+  if (message) {
+    message.textContent = started
+      ? 'You can still join and will be placed in the faction with the fewest players.'
+      : (joined
+        ? 'Congratulations—you joined. Wait for the countdown and the game will open automatically.'
+        : 'Join now to be assigned to a balanced faction and start from the first minute.');
+  }
+  if (joinedCount) {
+    const count = Number(season.joinedCount || 0);
+    joinedCount.textContent = `${count} ${count === 1 ? 'player' : 'players'} joined`;
+  }
+  if (joinButton) {
+    joinButton.hidden = joined;
+    joinButton.disabled = seasonJoinInFlight;
+    joinButton.textContent = seasonJoinInFlight ? 'Joining…' : '⚔️ Join Season';
+  }
+  if (confirmation) confirmation.hidden = !joined;
+  if (adminStartButton) adminStartButton.hidden = started || !isAdminUser(player);
+  if (countdown) {
+    countdown.textContent = started
+      ? 'LIVE'
+      : formatCountdown(new Date(season.startsAt).getTime() - (Date.now() + seasonGateClockOffset));
+  }
+}
+
+function tickSeasonGateCountdown() {
+  const gate = document.getElementById('season-gate');
+  const countdown = document.getElementById('season-gate-countdown');
+  if (!gate || gate.style.display === 'none' || !countdown || !G.season) return;
+  if (G.season.hasStarted) {
+    countdown.textContent = 'LIVE';
+    return;
+  }
+
+  const remaining = new Date(G.season.startsAt).getTime() - (Date.now() + seasonGateClockOffset);
+  countdown.textContent = formatCountdown(remaining);
+  if (remaining <= 0 && !seasonGateRefreshPending) {
+    seasonGateRefreshPending = true;
+    loadGame().finally(() => { seasonGateRefreshPending = false; });
+  }
+}
+
+async function joinCurrentSeason() {
+  if (seasonJoinInFlight) return;
+  seasonJoinInFlight = true;
+  renderSeasonGate({ player: G.player, season: G.season, serverTime: Date.now() + seasonGateClockOffset });
+  try {
+    await apiFetch('/season/join', { method: 'POST', body: '{}' });
+    showToast('✅ You joined the season.');
+    await loadGame();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  } finally {
+    seasonJoinInFlight = false;
+    const button = document.getElementById('season-join-btn');
+    if (button) {
+      button.disabled = false;
+      button.textContent = '⚔️ Join Season';
+    }
+  }
+}
+
+async function adminStartSeasonNow() {
+  if (!confirm('Start this season now?\n\nThis ends the remaining registration countdown and begins the full seven-day season.')) return;
+  try {
+    const result = await apiFetch('/admin/season/start-now', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
+    });
+    showToast(`✅ ${result.message}`);
+    await loadGame();
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
 async function loadGame() {
   setGameShellVisible(false);
   setSeasonGateVisible(false);
@@ -544,19 +645,17 @@ async function loadGame() {
 
   try {
     const payload = await apiFetch('/game/state');
-    if (payload.season && (!payload.season.hasStarted || payload.player?.needsSeasonJoin)) {
-      showSeasonGate(payload);
+    setGameStateFromSnapshot(payload);
+    if (shouldShowSeasonGate(payload)) {
+      renderSeasonGate(payload);
+      showSeasonGate();
+      connectRealtime();
       return;
     }
     if (!payload.player?.faction) {
-      // Faction is assigned automatically on the server (see season.js); this only ever
-      // shows up as a brief gap right after registration or during a season rollover. Retry
-      // shortly instead of sending the player to a manual "choose your faction" screen.
       setTimeout(loadGame, 750);
       return;
     }
-
-    setGameStateFromSnapshot(payload);
 
     renderCity();
     renderMap();
@@ -595,6 +694,73 @@ function closeInfoModalFromBackdrop(event) {
   if (event.target === event.currentTarget) closeInfoModal();
 }
 
+async function loadChangelog() {
+  const response = await fetch(`changelog.json?${Date.now()}`, { cache: 'no-store' });
+  if (!response.ok) throw new Error('Could not load changelog.');
+  const entries = await response.json();
+  if (!Array.isArray(entries)) throw new Error('Invalid changelog.');
+  return entries;
+}
+
+function renderChangelogEntries(entries) {
+  const container = document.getElementById('changelog-entries');
+  if (!container) return;
+  container.replaceChildren();
+
+  entries.forEach((entry) => {
+    if (!entry || typeof entry.title !== 'string' || !Array.isArray(entry.changes)) return;
+    const article = document.createElement('article');
+    article.className = 'changelog-entry';
+    const heading = document.createElement('h3');
+    heading.textContent = entry.title;
+    const list = document.createElement('ul');
+    entry.changes.forEach((change) => {
+      if (typeof change !== 'string') return;
+      const item = document.createElement('li');
+      item.textContent = change;
+      list.appendChild(item);
+    });
+    article.append(heading, list);
+    container.appendChild(article);
+  });
+
+  if (!container.childElementCount) {
+    const message = document.createElement('p');
+    message.textContent = 'No changelog entries are available yet.';
+    container.appendChild(message);
+  }
+}
+
+async function openChangelogModal() {
+  const modal = document.getElementById('changelog-modal');
+  const container = document.getElementById('changelog-entries');
+  if (!modal || !container) return;
+  modal.hidden = false;
+  modal.querySelector('.info-modal-close')?.focus();
+
+  const loading = document.createElement('p');
+  loading.textContent = 'Loading changelog...';
+  container.replaceChildren(loading);
+  try {
+    renderChangelogEntries(await loadChangelog());
+  } catch (error) {
+    const message = document.createElement('p');
+    message.textContent = 'The changelog is unavailable right now. Please try again later.';
+    container.replaceChildren(message);
+  }
+}
+
+function closeChangelogModal() {
+  const modal = document.getElementById('changelog-modal');
+  if (!modal) return;
+  modal.hidden = true;
+  document.getElementById('changelog-btn')?.focus();
+}
+
+function closeChangelogModalFromBackdrop(event) {
+  if (event.target === event.currentTarget) closeChangelogModal();
+}
+
 // Periodic 60s poll while logged in. This is what picks up a season rollover/faction
 // reassignment that happened while the player stayed on the page (setGameStateFromSnapshot
 // already refreshes the map legend, scoreboard, and chat when the faction changes). Only a
@@ -603,14 +769,22 @@ function closeInfoModalFromBackdrop(event) {
 async function refreshGameStateInBackground() {
   try {
     const payload = await apiFetch('/game/state');
-    if (payload.season && (!payload.season.hasStarted || payload.player?.needsSeasonJoin)) {
-      showSeasonGate(payload);
+    setGameStateFromSnapshot(payload);
+    if (shouldShowSeasonGate(payload)) {
+      renderSeasonGate(payload);
+      showSeasonGate();
       return;
     }
-    setGameStateFromSnapshot(payload);
+
     renderCity();
     renderMap();
     updateResourceBar();
+    const gate = document.getElementById('season-gate');
+    if (gate?.style.display !== 'none') {
+      restoreSavedScreen(G.player);
+      hideAuthScreen();
+      startFactionChatPolling();
+    }
     const territoryPanel = document.getElementById('territory-panel');
     if (selectedTerritoryId && territoryPanel?.style.display !== 'none') {
       selectTerritory(selectedTerritoryId, { preserveTroopInputs: true });
@@ -672,7 +846,7 @@ function showScreen(name, { persist = true } = {}) {
   const storageKey = getScreenStorageKey(G.player);
   if (persist && storageKey) localStorage.setItem(storageKey, name);
   if (name === 'city') renderCity();
-  if (name === 'map') { renderMap(); renderScoreboard(); }
+  if (name === 'map') { renderMap(); renderFactionMap(); renderScoreboard(); showMapView(activeMapView); }
   if (name === 'activity') renderActivity();
   if (name === 'chat') { renderFactionChat({ scrollToNewest: true }); renderFactionMembers(); }
   if (name === 'admin') renderAdminPanel();
@@ -711,7 +885,8 @@ function renderFactionBonuses() {
     ['food', '🌾 Food Production', '+', '%'], ['wood', '🪵 Wood Production', '+', '%'],
     ['iron', '⚙️ Iron Production', '+', '%'], ['manpower', '👥 Manpower Production', '+', '%'],
     ['training', '⚔️ Training Cost', '-', '%'], ['storage', '📦 Storage', '+', '%'],
-    ['fortressTroops', '🏰 Fortress Generation', '+', '/min'], ['allResources', '✨ All Resources', '+', '%'],
+    ['attack', '🗡️ Attack Strength', '+', '%'], ['defense', '🛡️ Defense Strength', '+', '%'],
+    ['fortressTroops', '🏰 Fortress Generation', '+', '/min'],
   ].map(([key, label, prefix, suffix]) => {
     const value = Number(bonuses[key] || 0);
     if (value <= 0) return null;
@@ -725,9 +900,9 @@ function calculateTrainingCost(count, trainingBonus = 0) {
   const multiplier = Math.max(0.4, 1 - (Number(trainingBonus) || 0));
   const minimum = amount > 0 ? 1 : 0;
   return {
-    food: Math.max(minimum, Math.round(50 * amount * multiplier)),
-    iron: Math.max(minimum, Math.round(20 * amount * multiplier)),
-    manpower: Math.max(minimum, Math.round(amount * multiplier)),
+    food: Math.max(minimum, Math.ceil(50 * amount * multiplier)),
+    iron: Math.max(minimum, Math.ceil(25 * amount * multiplier)),
+    manpower: Math.max(minimum, Math.ceil(20 * amount * multiplier)),
   };
 }
 
@@ -743,38 +918,43 @@ function updateTrainingCostDisplay() {
 }
 
 function renderCity() {
-  const buildings = G.player.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1 };
+  const buildings = G.player.buildings || { farm: 1, lumbermill: 1, ironmine: 1, barracks: 1, storage: 1 };
   const serverProduction = G.player.production || { food: 0, wood: 0, iron: 0, manpower: 0 };
   const factionBonuses = G.player.factionBonuses || { food: 0, wood: 0, iron: 0, manpower: 0, training: 0 };
   const container = document.getElementById('building-list');
   container.innerHTML = '';
 
   const defs = {
-    farm: { name: 'Farm', icon: '🌾', resource: 'food', baseRate: 5, cost: { food: 50, wood: 80, iron: 0 } },
-    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', baseRate: 4, cost: { food: 40, wood: 0, iron: 60 } },
-    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', baseRate: 3, cost: { food: 30, wood: 100, iron: 0 } },
-    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', baseRate: 2, cost: { food: 80, wood: 60, iron: 80 } },
+    farm: { name: 'Farm', icon: '🌾', resource: 'food', baseRate: 5 },
+    lumbermill: { name: 'Lumber Mill', icon: '🪵', resource: 'wood', baseRate: 4 },
+    ironmine: { name: 'Iron Mine', icon: '⚙️', resource: 'iron', baseRate: 3 },
+    barracks: { name: 'Barracks', icon: '🏟', resource: 'manpower', baseRate: 2 },
+    storage: { name: 'Storage', icon: '📦' },
   };
 
   Object.entries(defs).forEach(([key, def]) => {
     const level = Number(buildings[key] || 1);
-    const baseProd = def.baseRate * level;
-    const totalProd = Number(serverProduction[def.resource] || baseProd);
+    const isStorage = key === 'storage';
+    const baseProd = isStorage ? 0 : def.baseRate * level;
+    const totalProd = isStorage ? 0 : Number(serverProduction[def.resource] || baseProd);
     const bonusPct = Math.round((factionBonuses[def.resource] || 0) * 100);
     const nextLevel = level + 1;
-    const cost = {
-      food: def.cost.food * nextLevel,
-      wood: def.cost.wood * nextLevel,
-      iron: def.cost.iron * nextLevel,
-    };
+    const isMaxLevel = level >= 10;
+    const cost = G.player.buildingUpgradeCosts?.[key];
     const costParts = [];
-    if (cost.food > 0) costParts.push(`${fmt(cost.food)}🌾`);
-    if (cost.wood > 0) costParts.push(`${fmt(cost.wood)}🪵`);
-    if (cost.iron > 0) costParts.push(`${fmt(cost.iron)}⚙️`);
+    if (cost?.food > 0) costParts.push(`${fmt(cost.food)}🌾`);
+    if (cost?.wood > 0) costParts.push(`${fmt(cost.wood)}🪵`);
+    if (cost?.iron > 0) costParts.push(`${fmt(cost.iron)}⚙️`);
 
-    const bonusLine = bonusPct > 0
+    const bonusLine = !isStorage && bonusPct > 0
       ? `<div class="building-bonus">Territory bonus: +${bonusPct}%</div>`
       : '';
+        const currentCapacity = Number(G.player.storageCaps?.food) || 0;
+    const buildingDetail = isStorage
+      ? `<div class="building-capacity">Capacity: ${fmt(currentCapacity)} each</div>
+          <div class="building-next-capacity">Next capacity: ${isMaxLevel ? 'MAX' : `${fmt(G.player.nextStorageCaps?.food || 0)} each`}</div>`
+      : `<div class="building-prod">+${totalProd} ${def.resource}/min</div>`;
+    const costLine = isMaxLevel ? '' : `<div class="building-cost">Next: ${costParts.join(' + ')}</div>`;
 
     const card = document.createElement('div');
     card.className = 'building-card';
@@ -782,11 +962,11 @@ function renderCity() {
       <div class="building-info">
         <div class="building-name">${def.icon} ${def.name}</div>
         <div class="building-level">Level ${level}</div>
-        <div class="building-prod">+${totalProd} ${def.resource}/min</div>
+        ${buildingDetail}
         ${bonusLine}
-        <div class="building-cost">Next: ${costParts.join(' + ')}</div>
+        ${costLine}
       </div>
-      <button class="btn-upgrade" onclick="upgradeBuilding('${key}')">⬆ Lvl ${nextLevel}</button>
+      <button class="btn-upgrade" onclick="upgradeBuilding('${key}')" ${isMaxLevel ? 'disabled' : ''}>${isMaxLevel ? 'MAX' : `⬆ Lvl ${nextLevel}`}</button>
     `;
     container.appendChild(card);
   });
@@ -858,11 +1038,12 @@ function getAffordableTrainingAmount() {
       : total
   ), 0);
   const multiplier = Math.max(0.4, 1 - trainingBonus);
-  const maximum = Math.min(5000, Math.floor(Number(resources.food || 0) / (50 * multiplier)), Math.floor(Number(resources.iron || 0) / (20 * multiplier)), Math.floor(Number(resources.manpower || 0) / multiplier));
+  const maximum = Math.min(5000, Math.floor(Number(resources.food || 0) / (50 * multiplier)), Math.floor(Number(resources.iron || 0) / (25 * multiplier)), Math.floor(Number(resources.manpower || 0) / (20 * multiplier)));
   for (let amount = Math.max(0, maximum); amount > 0; amount -= 1) {
-    if (Math.round(50 * amount * multiplier) <= Number(resources.food || 0)
-      && Math.round(20 * amount * multiplier) <= Number(resources.iron || 0)
-      && Math.round(amount * multiplier) <= Number(resources.manpower || 0)) return amount;
+    const cost = calculateTrainingCost(amount, trainingBonus);
+    if (cost.food <= Number(resources.food || 0)
+      && cost.iron <= Number(resources.iron || 0)
+      && cost.manpower <= Number(resources.manpower || 0)) return amount;
   }
   return 0;
 }
@@ -890,10 +1071,17 @@ function sortTerritoryIds(ids) {
 }
 
 function buildTerritoryLayout(territoriesById) {
-  // Delegates to the canonical topology module (world-topology.js) so the rendered map
-  // always matches the graph actually stored in PostgreSQL — never a hand-tuned layout
-  // that can drift from world-seed.sql/the migration.
-  const layout = { ...WORLD_TOPOLOGY.buildLayout() };
+  const selectedMap = MAP_REGISTRY?.getMap?.(G.season?.mapKey);
+  const topology = selectedMap?.topology || WORLD_TOPOLOGY;
+  // The selected season map supplies the canonical layout. Server-provided coordinates
+  // take priority so rendering still follows the authoritative active-world rows.
+  const layout = { ...topology.buildLayout() };
+  Object.values(territoriesById).forEach((territory) => {
+    if (Number.isFinite(territory.mapX) && Number.isFinite(territory.mapY)
+      && (territory.mapX !== 0 || territory.mapY !== 0)) {
+      layout[territory.id] = { cx: territory.mapX, cy: territory.mapY };
+    }
+  });
   Object.keys(layout).forEach((id) => {
     if (!(id in territoriesById)) delete layout[id];
   });
@@ -909,7 +1097,7 @@ function buildTerritoryLayout(territoriesById) {
     layout[id] = { cx: 60 + (col * 100), cy: 700 + (row * 92) };
   });
 
-  const { width, height } = WORLD_TOPOLOGY.LAYOUT_VIEWBOX;
+  const { width, height } = topology.LAYOUT_VIEWBOX;
   return { layout, viewBox: `0 0 ${width} ${height}` };
 }
 
@@ -927,7 +1115,111 @@ function createHexPoints(cx, cy, radius = 28) {
 function canAttack(id, gameState = G) {
   const territory = gameState.territories[id];
   if (!territory || territory.capital || territory.owner === gameState.player.faction) return false;
+  if (territory.protectedUntil && new Date(territory.protectedUntil).getTime() > Date.now()) return false;
+  const rally = gameState.rallies?.[id];
+  if (rally && rally.attackerFaction !== gameState.player.faction) return false;
   return territory.adj.some((neighborId) => gameState.territories[neighborId] && gameState.territories[neighborId].owner === gameState.player.faction);
+}
+
+function showMapView(view) {
+  activeMapView = view === 'faction' ? 'faction' : 'world';
+  document.getElementById('world-map-view')?.classList.toggle('active', activeMapView === 'world');
+  document.getElementById('faction-map-view')?.classList.toggle('active', activeMapView === 'faction');
+  const worldTab = document.getElementById('map-view-world-tab');
+  const factionTab = document.getElementById('map-view-faction-tab');
+  worldTab?.classList.toggle('active', activeMapView === 'world');
+  factionTab?.classList.toggle('active', activeMapView === 'faction');
+  worldTab?.setAttribute('aria-selected', String(activeMapView === 'world'));
+  factionTab?.setAttribute('aria-selected', String(activeMapView === 'faction'));
+  if (activeMapView === 'faction') renderFactionMap();
+  else renderMap();
+}
+
+function buildFactionCityCoordinates(count) {
+  const coordinates = [];
+  const directions = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
+  for (let radius = 1; coordinates.length < count; radius += 1) {
+    let q = 0;
+    let r = -radius;
+    for (const [dq, dr] of directions) {
+      for (let step = 0; step < radius && coordinates.length < count; step += 1) {
+        coordinates.push({ q, r });
+        q += dq;
+        r += dr;
+      }
+    }
+  }
+  return coordinates;
+}
+
+function renderFactionMap() {
+  const svg = document.getElementById('faction-map-svg');
+  if (!svg) return;
+  svg.replaceChildren();
+
+  const faction = String(G.factionMap?.faction || G.player?.faction || 'unassigned').toLowerCase();
+  const cities = [...(G.factionMap?.cities || [])].sort((a, b) => Number(a.slotIndex) - Number(b.slotIndex));
+  const title = document.getElementById('faction-map-title');
+  const count = document.getElementById('faction-map-count');
+  if (title) title.textContent = `${faction.charAt(0).toUpperCase()}${faction.slice(1)} Homeland`;
+  if (count) count.textContent = `${cities.length} ${cities.length === 1 ? 'city' : 'cities'}`;
+
+  const center = { x: 400, y: 310 };
+  const hexSize = 30;
+  const axialToPoint = ({ q, r }) => ({
+    x: center.x + (Math.sqrt(3) * 35 * (q + (r / 2))),
+    y: center.y + (1.5 * 35 * r),
+  });
+  const cityCoordinates = buildFactionCityCoordinates(cities.length);
+  const nodes = [{ key: 'capital', q: 0, r: 0, point: center }].concat(cities.map((city, index) => ({
+    key: `city-${city.playerId}`,
+    city,
+    ...cityCoordinates[index],
+    point: axialToPoint(cityCoordinates[index]),
+  })));
+  const nodeByCoordinate = new Map(nodes.map((node) => [`${node.q},${node.r}`, node]));
+  const neighborSteps = [[1, 0], [0, 1], [-1, 1]];
+
+  nodes.forEach((node) => {
+    neighborSteps.forEach(([dq, dr]) => {
+      const neighbor = nodeByCoordinate.get(`${node.q + dq},${node.r + dr}`);
+      if (!neighbor) return;
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', node.point.x);
+      line.setAttribute('y1', node.point.y);
+      line.setAttribute('x2', neighbor.point.x);
+      line.setAttribute('y2', neighbor.point.y);
+      line.setAttribute('class', 'faction-city-link');
+      svg.appendChild(line);
+    });
+  });
+
+  nodes.forEach((node) => {
+    const isCapital = node.key === 'capital';
+    const isOwnCity = Number(node.city?.playerId) === Number(G.player?.id);
+    const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    polygon.setAttribute('points', createHexPoints(node.point.x, node.point.y, isCapital ? 36 : hexSize));
+    polygon.setAttribute('class', `faction-city-tile faction-city-${faction}${isCapital ? ' faction-city-capital' : ''}${isOwnCity ? ' own-city' : ''}`);
+    svg.appendChild(polygon);
+
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', node.point.x);
+    label.setAttribute('y', node.point.y + (isCapital ? 5 : 3));
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('class', 'faction-city-label');
+    label.textContent = isCapital ? '👑 Capital' : String(node.city.username || 'City').slice(0, 14);
+    svg.appendChild(label);
+
+    if (isOwnCity) {
+      const marker = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      marker.setAttribute('x', node.point.x);
+      marker.setAttribute('y', node.point.y + 18);
+      marker.setAttribute('text-anchor', 'middle');
+      marker.setAttribute('class', 'faction-city-own-label');
+      marker.textContent = 'YOU';
+      svg.appendChild(marker);
+    }
+  });
 }
 
 function renderMap() {
@@ -976,7 +1268,7 @@ function renderMap() {
     poly.setAttribute('fill', fill);
     poly.setAttribute('stroke', selectedTerritoryId === id ? '#fff' : stroke);
     poly.setAttribute('stroke-width', selectedTerritoryId === id ? '3' : '1.5');
-    poly.setAttribute('class', `territory${selectedTerritoryId === id ? ' selected' : ''}${canAttack(id) ? ' attackable' : ''}`);
+    poly.setAttribute('class', `territory${selectedTerritoryId === id ? ' selected' : ''}${canAttack(id) ? ' attackable' : ''}${G.rallies[id] ? ' rally-active' : ''}`);
     poly.setAttribute('data-id', id);
     poly.addEventListener('click', (event) => {
       if (event.button !== undefined && event.button !== 0) return;
@@ -1010,6 +1302,16 @@ function renderMap() {
       capitalMarker.setAttribute('class', 'territory-capital-marker');
       capitalMarker.textContent = '👑';
       svg.appendChild(capitalMarker);
+    }
+
+    if (G.rallies[id]) {
+      const rallyMarker = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      rallyMarker.setAttribute('x', x - 18);
+      rallyMarker.setAttribute('y', y - 14);
+      rallyMarker.setAttribute('text-anchor', 'middle');
+      rallyMarker.setAttribute('class', 'territory-rally-marker');
+      rallyMarker.textContent = '⏳';
+      svg.appendChild(rallyMarker);
     }
 
     const troops = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -1189,6 +1491,55 @@ function initializeMobileMap(svg) {
 
 let recallSendCount = 1;
 
+function formatRallyCountdown(resolvesAt, now = Date.now()) {
+  const totalSeconds = Math.max(0, Math.ceil((new Date(resolvesAt).getTime() - now) / 1000));
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
+}
+
+function renderSelectedRallyStatus() {
+  const status = document.getElementById('rally-status');
+  if (!status) return;
+  const rally = selectedTerritoryId ? G.rallies[selectedTerritoryId] : null;
+  const territory = selectedTerritoryId ? G.territories[selectedTerritoryId] : null;
+  if (!rally || !territory) {
+    status.style.display = 'none';
+    return;
+  }
+
+  status.style.display = 'flex';
+  const isPreparing = rally.phase === 'rally';
+  document.getElementById('rally-status-title').textContent = isPreparing
+    ? `🤫 Hidden ${ownerLabel(rally.attackerFaction)} rally`
+    : `⚔️ ${ownerLabel(rally.attackerFaction)} live battle`;
+  const remaining = new Date(rally.resolvesAt).getTime() - Date.now();
+  const phaseCountdown = remaining > 0 ? formatRallyCountdown(rally.resolvesAt) : 'Advancing…';
+  const nextRound = !isPreparing && rally.nextTickAt
+    ? ` · Next losses ${formatRallyCountdown(rally.nextTickAt)}`
+    : '';
+  document.getElementById('rally-status-countdown').textContent = isPreparing
+    ? `Auto-launches in ${phaseCountdown}`
+    : `Ends in ${phaseCountdown}${nextRound}`;
+  const attackBuff = rally.attackBonus > 0 ? ` (+${Math.round(rally.attackBonus * 100)}% attack damage)` : '';
+  const defenseBuff = rally.defenseBonus > 0 ? ` (+${Math.round(rally.defenseBonus * 100)}% counterattack damage)` : '';
+  document.getElementById('rally-status-troops').textContent = `Attackers: ${rally.totalAttackers}${attackBuff} · Defenders: ${territory.troops}${defenseBuff}`;
+  const personal = document.getElementById('rally-status-personal');
+  personal.textContent = rally.attackerFaction === G.player.faction
+    ? isPreparing
+      ? `Your rally troops: ${rally.myContribution} · Enemy cannot see this rally.`
+      : `Your troops still fighting: ${rally.myContribution}`
+    : 'Reinforce this territory before the next casualty round.';
+  const launchButton = document.getElementById('launch-rally-button');
+  if (launchButton) {
+    launchButton.style.display = isPreparing && Number(rally.startedBy) === Number(G.player.id) ? 'block' : 'none';
+  }
+}
+
+function tickRallyCountdowns() {
+  if (selectedTerritoryId) renderSelectedRallyStatus();
+}
+
 function selectTerritory(id, { preserveTroopInputs = false } = {}) {
   selectedTerritoryId = id;
   const territory = G.territories[id];
@@ -1202,17 +1553,42 @@ function selectTerritory(id, { preserveTroopInputs = false } = {}) {
   document.getElementById('tp-city-soldiers').textContent = Number(G.player.soldiers || 0);
   const stationed = Number((G.player.stationedTroops || {})[id] || 0);
   document.getElementById('tp-stationed').textContent = stationed;
+  const rally = G.rallies[id] || null;
+  const protectedMinutes = territory.protectedUntil
+    ? Math.max(0, Math.ceil((new Date(territory.protectedUntil).getTime() - Date.now()) / 60000))
+    : 0;
   document.getElementById('tp-battle-rule').textContent = territory.capital
     ? 'Protected capital — cannot be attacked or occupied.'
-    : 'Send more troops than defenders to capture';
-  document.getElementById('tp-bonus').textContent = formatBonusLabel(territory.bonus, territory.bonusValue);
+    : rally
+      ? rally.phase === 'rally'
+        ? 'Hidden rally preparation — starter can launch early'
+        : 'Live battle — both sides lose troops every minute'
+      : protectedMinutes > 0
+        ? `Protected from attacks for ${protectedMinutes} more minutes`
+      : territory.owner === 'neutral'
+        ? 'Neutral attacks resolve immediately'
+        : 'Choose a solo attack or a hidden rally';
+  document.getElementById('tp-bonus').textContent = territory.contested
+    ? `${formatBonusLabel(territory.bonus, territory.bonusValue)} — inactive during battle`
+    : formatBonusLabel(territory.bonus, territory.bonusValue);
   document.getElementById('tp-neighbors').textContent = (territory.adj || []).map((neighborId) => G.territories[neighborId]?.name || neighborId).join(', ');
 
   const attackSection = document.getElementById('attack-section');
   const defendSection = document.getElementById('defend-section');
   const recallSection = document.getElementById('recall-section');
+  const attackLabel = document.getElementById('attack-action-label');
+  const attackButton = document.getElementById('attack-action-button');
+  const rallyButton = document.getElementById('start-rally-button');
+  renderSelectedRallyStatus();
   if (canAttack(id)) {
     attackSection.style.display = 'block';
+    if (attackLabel) attackLabel.textContent = rally
+      ? rally.phase === 'rally' ? '🤫 Hidden Rally' : '⚔️ Reinforce Attack'
+      : '⚔️ Attack';
+    if (attackButton) attackButton.textContent = rally
+      ? rally.phase === 'rally' ? '🤫 Add Troops to Rally' : '⚔️ Reinforce Attack'
+      : territory.owner === 'neutral' ? '⚔️ Attack Territory' : '⚔️ Start Solo Attack';
+    if (rallyButton) rallyButton.style.display = !rally && territory.owner !== 'neutral' ? 'block' : 'none';
     defendSection.style.display = 'none';
     if (recallSection) recallSection.style.display = 'none';
     if (!preserveTroopInputs) {
@@ -1221,13 +1597,14 @@ function selectTerritory(id, { preserveTroopInputs = false } = {}) {
     }
   } else if (territory.owner === G.player.faction) {
     attackSection.style.display = 'none';
+    if (rallyButton) rallyButton.style.display = 'none';
     defendSection.style.display = 'block';
     if (!preserveTroopInputs) {
       defendSendCount = Math.max(1, Math.min(10, Number(G.player.soldiers) || 1));
       setTroopInput('defend-count', defendSendCount);
     }
     if (recallSection) {
-      if (stationed > 0) {
+      if (stationed > 0 && rally?.phase !== 'active') {
         recallSection.style.display = 'block';
         if (!preserveTroopInputs) {
           recallSendCount = Math.max(1, Math.min(1, stationed));
@@ -1239,6 +1616,7 @@ function selectTerritory(id, { preserveTroopInputs = false } = {}) {
     }
   } else {
     attackSection.style.display = 'none';
+    if (rallyButton) rallyButton.style.display = 'none';
     defendSection.style.display = 'none';
     if (recallSection) recallSection.style.display = 'none';
   }
@@ -1264,6 +1642,8 @@ function formatBonusLabel(bonusType, bonusValue) {
     iron: `⚙️ +${pct}% Iron Production`,
     manpower: `👥 +${pct}% Manpower Production`,
     training: `⚔️ -${pct}% Training Cost`,
+    attack: `🗡️ +${pct}% Attack Strength`,
+    defense: `🛡️ +${pct}% Defense Strength`,
     fortress: '🏰 Fortress — +1 Troop/min up to 250 city reserve',
     storage: `📦 +${pct}% Storage`,
     resource: `✨ +${pct}% All Resources`,
@@ -1274,7 +1654,7 @@ function formatBonusLabel(bonusType, bonusValue) {
 
 function getBonusIcon(bonusType) {
   return {
-    food: '🌾', wood: '🪵', iron: '⚙️', manpower: '👥', training: '⚔️', storage: '📦', fortress: '🏰', resource: '✨',
+    food: '🌾', wood: '🪵', iron: '⚙️', manpower: '👥', training: '⚔️', storage: '📦', fortress: '🏰', resource: '✨', attack: '🗡️', defense: '🛡️',
   }[String(bonusType || '').toLowerCase()] || '';
 }
 
@@ -1290,7 +1670,7 @@ function changeAttack(delta) {
   setTroopInput('attack-count', attackSendCount);
 }
 
-async function launchAttack() {
+async function launchAttack(mode = 'solo') {
   if (!selectedTerritoryId) {
     showToast('❌ Select a territory first.');
     return;
@@ -1310,7 +1690,7 @@ async function launchAttack() {
   try {
     const response = await apiFetch('/game/attack', {
       method: 'POST',
-      body: JSON.stringify({ territoryId: selectedTerritoryId, soldiers }),
+      body: JSON.stringify({ territoryId: selectedTerritoryId, soldiers, mode }),
     });
     setGameStateFromSnapshot(response.state);
     const result = response.outcome;
@@ -1320,11 +1700,35 @@ async function launchAttack() {
         : `<span class="result-defeat">💀 HELD!</span><br>Attack failed.<br>Defenders left: ${result.defendersRemaining}`;
       document.getElementById('battle-popup').style.display = 'block';
     }
-    showToast(result?.victory ? '✅ Territory captured.' : '⚠️ Attack resolved by troop count.');
+    if (response.rally) {
+      showToast(response.rallyCreated
+        ? response.rally.phase === 'rally'
+          ? '🤫 Hidden rally started. Allies have 10 minutes to join.'
+          : '⚔️ Live battle started. Casualties begin in one minute.'
+        : `⚔️ ${response.sent} troops added.`);
+    } else {
+      showToast(result?.victory ? '✅ Territory captured.' : '⚠️ Neutral attack resolved by troop count.');
+    }
     renderCity();
     renderMap();
     updateResourceBar();
     if (selectedTerritoryId) selectTerritory(selectedTerritoryId);
+  } catch (error) {
+    showToast(`❌ ${error.message}`);
+  }
+}
+
+async function launchPreparedRally() {
+  if (!selectedTerritoryId) return;
+  try {
+    const response = await apiFetch('/game/launch-rally', {
+      method: 'POST',
+      body: JSON.stringify({ territoryId: selectedTerritoryId }),
+    });
+    setGameStateFromSnapshot(response.state);
+    showToast('⚔️ Rally launched. The live battle has begun.');
+    renderMap();
+    selectTerritory(selectedTerritoryId);
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }
@@ -1412,32 +1816,6 @@ async function recallDefenders() {
   }
 }
 
-async function resolveSelectedTargetBattle() {
-  if (!selectedTerritoryId) {
-    showToast('❌ Select a target first.');
-    return;
-  }
-  try {
-    const response = await apiFetch('/game/resolve-battle', {
-      method: 'POST',
-      body: JSON.stringify({ territoryId: selectedTerritoryId }),
-    });
-    setGameStateFromSnapshot(response.state);
-
-    const result = response.outcome;
-    document.getElementById('battle-result-text').innerHTML = result.victory
-      ? `<span class="result-victory">⚔️ VICTORY!</span><br>Attack succeeded.<br>Attackers left: ${result.attackersRemaining}`
-      : `<span class="result-defeat">💀 DEFEAT!</span><br>Attack failed.<br>Defenders lost: ${result.defendersLost}`;
-    document.getElementById('battle-popup').style.display = 'block';
-    renderMap();
-    renderCity();
-    updateResourceBar();
-    showToast(result.victory ? '✅ Victory resolved by the server.' : '⚠️ Battle resolved by the server.');
-  } catch (error) {
-    showToast(`❌ ${error.message}`);
-  }
-}
-
 function closeBattlePopup() {
   document.getElementById('battle-popup').style.display = 'none';
 }
@@ -1518,6 +1896,20 @@ function renderMyStats(container, stats) {
   container.appendChild(grid);
 }
 
+function getBattleBonusSummary(appliedBonuses) {
+  let bonuses = appliedBonuses;
+  if (typeof bonuses === 'string') {
+    try {
+      bonuses = JSON.parse(bonuses);
+    } catch {
+      bonuses = {};
+    }
+  }
+  const attack = Math.round(Math.max(0, Number(bonuses?.attackBonus) || 0) * 100);
+  const defense = Math.round(Math.max(0, Number(bonuses?.defenseBonus) || 0) * 100);
+  return `Damage bonuses: Attack +${attack}% · Counterattack +${defense}%`;
+}
+
 async function renderActivity() {
   const container = document.getElementById('activity-feed');
   if (!container) return;
@@ -1569,11 +1961,15 @@ async function renderActivity() {
       losses.className = 'activity-losses';
       losses.textContent = `Attackers lost: ${b.attackers_lost} · Defenders lost: ${b.defenders_lost}`;
 
+      const bonuses = document.createElement('div');
+      bonuses.className = 'activity-losses';
+      bonuses.textContent = getBattleBonusSummary(b.applied_bonuses);
+
       const time = document.createElement('div');
       time.className = 'activity-time';
       time.textContent = ts;
 
-      entry.append(headline, result, losses, time);
+      entry.append(headline, result, losses, bonuses, time);
       container.appendChild(entry);
     });
   } catch (error) {
@@ -1731,6 +2127,7 @@ async function renderAdminSeasonInfo() {
     container.innerHTML = `
       <div class="admin-territory-row">
         <strong>Season ${s.seasonNumber}</strong>
+        <span class="admin-badge">🗺️ ${s.mapName || 'Three Frontiers'}</span>
         <span class="admin-badge">ends ${new Date(s.endsAt).toISOString()}</span>
       </div>
       <div class="admin-territory-row">
@@ -1745,7 +2142,7 @@ async function renderAdminSeasonInfo() {
 }
 
 async function adminForceFinishSeason() {
-  if (!confirm('Force-finish the current season right now?\n\nThis finalizes scores, awards prestige to the winning faction, and immediately starts the next season using the same reset as automatic season rollover.')) return;
+  if (!confirm('Force-finish the current season right now?\n\nThis finalizes scores, awards prestige to the winner, resets seasonal progress, and opens the next season’s 24-hour registration window.')) return;
   try {
     const res = await apiFetch('/admin/season/force-finish', {
       method: 'POST',
@@ -2098,7 +2495,10 @@ if (typeof document !== 'undefined') {
     enablePullToRefreshFallback();
 
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') closeInfoModal();
+      if (event.key === 'Escape') {
+        closeInfoModal();
+        closeChangelogModal();
+      }
     });
 
     const authForm = document.getElementById('auth-form');
@@ -2144,6 +2544,8 @@ if (typeof document !== 'undefined') {
         // Smooth HH:MM:SS countdown to the current season end; the season data
         // itself only refreshes with the 60s background poll above.
         setInterval(tickScoreboardCountdown, 1000);
+        setInterval(tickSeasonGateCountdown, 1000);
+        setInterval(tickRallyCountdowns, 1000);
       } else {
         showAuthScreen();
         setAuthMode('login');
@@ -2160,9 +2562,15 @@ if (typeof module !== 'undefined') {
   module.exports = {
     buildAuthPayload,
     getFactionLegendEntries,
+    getBattleBonusSummary,
     renderMapLegend,
     mapTerritories,
+    mapRallies,
     calculateTrainingCost,
+    getAffordableTrainingAmount,
+    loadChangelog,
+    renderChangelogEntries,
+    openChangelogModal,
     updateTrainingCostDisplay,
     trainSoldiers,
     selectTerritory,
@@ -2185,9 +2593,18 @@ if (typeof module !== 'undefined') {
     changeAttack,
     changeDefend,
     changeRecall,
+    launchAttack,
+    launchPreparedRally,
     formatCountdown,
+    formatRallyCountdown,
+    tickRallyCountdowns,
     formatScoreboardFaction,
     renderScoreboard,
+    shouldShowSeasonGate,
+    renderSeasonGate,
+    tickSeasonGateCountdown,
+    joinCurrentSeason,
+    adminStartSeasonNow,
     apiFetch,
     ensureSession,
     fetchCurrentUser,

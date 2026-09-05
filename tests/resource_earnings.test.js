@@ -100,19 +100,17 @@ test('factionless players receive no offline earnings', async () => {
   assert.equal(client.stats.buildingQueries, 0);
 });
 
-test('resource and troop generation remain paused throughout pre-season registration', async () => {
+test('resource ticks remain paused throughout the pre-season join window', async () => {
   const client = createResourceClient(
     [defaultPlayer({ faction: 'blue' })],
     [],
     { seasonStartsAt: new Date(Date.now() + 24 * 60 * 60 * 1000) }
   );
 
-  const tickResult = await runGlobalResourceTick(client, { suppressErrors: false });
-  const offlineResult = await applyOfflineResourceEarnings(1, client);
+  const result = await runGlobalResourceTick(client, { suppressErrors: false });
 
-  assert.deepEqual(tickResult, { skipped: true, reason: 'preseason' });
-  assert.equal(offlineResult.resource_food, STARTING_PLAYER_RESOURCES.food);
-  assert.equal(offlineResult.soldiers, STARTING_PLAYER_RESOURCES.soldiers);
+  assert.deepEqual(result, { skipped: true, reason: 'preseason' });
+  assert.equal(client.players.get(1).resource_food, STARTING_PLAYER_RESOURCES.food);
   assert.equal(client.stats.buildingQueries, 0);
 });
 

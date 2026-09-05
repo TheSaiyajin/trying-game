@@ -23,9 +23,15 @@ const BUILDING_DEFS = {
     baseProduction: 2,
     cost: { food: 80, wood: 60, iron: 80 },
   },
+  storage: {
+    name: 'Storage',
+    cost: { food: 100, wood: 160, iron: 120 },
+  },
 };
 
 const BASE_STORAGE_CAP = 10000;
+const STORAGE_PER_LEVEL = 5000;
+const MAX_BUILDING_LEVEL = 10;
 const PASSIVE_FORTRESS_TROOP_CAP = 250;
 const RESOURCE_KEYS = ['food', 'wood', 'iron', 'manpower'];
 
@@ -36,8 +42,8 @@ function clampInt(value, minimum = 0) {
 
 function normalizeBuildingLevels(buildings = {}) {
   const normalized = {};
-  for (const [key, def] of Object.entries(BUILDING_DEFS)) {
-    normalized[key] = clampInt(buildings[key] ?? 1, 1);
+  for (const key of Object.keys(BUILDING_DEFS)) {
+    normalized[key] = Math.min(MAX_BUILDING_LEVEL, clampInt(buildings[key] ?? 1, 1));
   }
   return normalized;
 }
@@ -48,19 +54,33 @@ function getUpgradeCost(buildingKey, level) {
     throw new Error(`Unknown building: ${buildingKey}`);
   }
   const nextLevel = Math.max(1, clampInt(level, 1));
+  const multiplier = nextLevel * (1.4 ** Math.max(0, nextLevel - 2));
   return {
-    food: def.cost.food * nextLevel,
-    wood: def.cost.wood * nextLevel,
-    iron: def.cost.iron * nextLevel,
+    food: Math.ceil(def.cost.food * multiplier),
+    wood: Math.ceil(def.cost.wood * multiplier),
+    iron: Math.ceil(def.cost.iron * multiplier),
   };
 }
 
 function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
-  const bonuses = { food: 0, wood: 0, iron: 0, manpower: 0, training: 0, storage: 0, fortressTroops: 0, allResources: 0 };
+  const bonuses = {
+    food: 0,
+    wood: 0,
+    iron: 0,
+    manpower: 0,
+    training: 0,
+    storage: 0,
+    attack: 0,
+    defense: 0,
+    fortressTroops: 0,
+    allResources: 0,
+  };
 
   for (const territory of territories) {
     const ownerFaction = territory.owner_faction || territory.owner;
-    if (ownerFaction !== faction) continue;
+    // A territory under attack is contested and grants no faction bonus until
+    // the live battle ends. This applies to economic and combat bonus types.
+    if (ownerFaction !== faction || territory.contested) continue;
     const bonusType = String(territory.bonus_type || territory.bonus || '').toLowerCase();
     const bonusValue = Number(territory.bonus_value ?? territory.bonusValue ?? 0);
     const storageBonus = territory.storage_bonus ?? territory.storageBonus;
@@ -70,8 +90,13 @@ function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
     if (bonusType === 'iron') bonuses.iron += bonusValue;
     if (bonusType === 'manpower') bonuses.manpower += bonusValue;
     if (bonusType === 'training') bonuses.training += bonusValue;
-    if (storageBonus !== undefined && storageBonus !== null) bonuses.storage += Number(storageBonus) || 0;
-    else if (bonusType === 'storage') bonuses.storage += bonusValue;
+    if (bonusType === 'attack') bonuses.attack += bonusValue;
+    if (bonusType === 'defense') bonuses.defense += bonusValue;
+    if (bonusType === 'storage') {
+      bonuses.storage += storageBonus !== undefined && storageBonus !== null
+        ? Number(storageBonus) || 0
+        : bonusValue;
+    }
     if (bonusType === 'resource') {
       bonuses.food += bonusValue;
       bonuses.wood += bonusValue;
@@ -82,12 +107,22 @@ function getFactionTerritoryBonuses(territories = [], faction = 'blue') {
     if (territory.is_fortress || territory.fortress || bonusType === 'fortress') bonuses.fortressTroops += 1;
   }
 
+  bonuses.attack = Math.min(0.25, bonuses.attack);
+  bonuses.defense = Math.min(0.25, bonuses.defense);
+
   return bonuses;
 }
 
-function getFactionStorageCaps(territories = [], faction = 'blue') {
+function getStorageCapacity(storageLevel = 1, territoryStorageBonus = 0) {
+  const level = Math.min(MAX_BUILDING_LEVEL, clampInt(storageLevel, 1));
+  const baseCapacity = BASE_STORAGE_CAP + ((level - 1) * STORAGE_PER_LEVEL);
+  return Math.floor(baseCapacity * Math.max(0, 1 + (Number(territoryStorageBonus) || 0)));
+}
+
+function getFactionStorageCaps(territories = [], faction = 'blue', buildings = {}) {
   const multiplier = Math.max(0, 1 + getFactionTerritoryBonuses(territories, faction).storage);
-  return Object.fromEntries(RESOURCE_KEYS.map((resource) => [resource, Math.floor(BASE_STORAGE_CAP * multiplier)]));
+  const capacity = getStorageCapacity(buildings.storage, multiplier - 1);
+  return Object.fromEntries(RESOURCE_KEYS.map((resource) => [resource, capacity]));
 }
 
 function limitResourceGain(resources = {}, gain = {}, caps = {}) {
@@ -120,9 +155,9 @@ function getTrainingCost(count = 0, multiplier = 1) {
   const factor = Number(multiplier) || 1;
   const minimum = amount > 0 ? 1 : 0;
   return {
-    food: Math.max(minimum, Math.round(50 * amount * factor)),
-    iron: Math.max(minimum, Math.round(20 * amount * factor)),
-    manpower: Math.max(minimum, Math.round(1 * amount * factor)),
+    food: Math.max(minimum, Math.ceil(50 * amount * factor)),
+    iron: Math.max(minimum, Math.ceil(25 * amount * factor)),
+    manpower: Math.max(minimum, Math.ceil(20 * amount * factor)),
   };
 }
 
@@ -161,10 +196,13 @@ function calculateBattleOutcome(attackStats, defenseStats) {
 module.exports = {
   BUILDING_DEFS,
   BASE_STORAGE_CAP,
+  STORAGE_PER_LEVEL,
+  MAX_BUILDING_LEVEL,
   PASSIVE_FORTRESS_TROOP_CAP,
   getUpgradeCost,
   getProductionFromBuildings,
   getFactionTerritoryBonuses,
+  getStorageCapacity,
   getFactionStorageCaps,
   limitResourceGain,
   limitPassiveFortressTroopGain,

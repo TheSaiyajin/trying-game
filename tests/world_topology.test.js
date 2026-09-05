@@ -247,7 +247,7 @@ test('layout keeps enough spacing between territory centers for hexes, crowns, a
 
 test('world-seed.sql exactly matches the canonical topology generator (no drift)', () => {
   const seedPath = path.join(__dirname, '../backend/world-seed.sql');
-  const seedContent = fs.readFileSync(seedPath, 'utf8');
+  const seedContent = fs.readFileSync(seedPath, 'utf8').replace(/\r\n/g, '\n');
 
   assert.ok(seedContent.includes(topologySql.buildTerritoryValuesSQL()), 'territories block does not match the generator');
   assert.ok(seedContent.includes(topologySql.buildNeighborValuesSQL()), 'neighbors block does not match the generator');

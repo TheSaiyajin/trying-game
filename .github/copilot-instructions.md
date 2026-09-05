@@ -13,6 +13,7 @@ Do not refactor, rename, reorganize or add dependencies unless required.
 Do not implement features that were not requested.
 If the request is clear, implement it directly instead of producing a long plan.
 Keep explanations short after completing the work.
+Every player-visible feature, balance change, or fix must add a simple entry to changelog.json. Internal tests, deployments, and refactoring do not require entries.
 Safety and correctness
 Never trust client-provided user ID, faction, role, resources, troops, ownership or combat results.
 Resolve player identity/permissions server-side from authentication and database state.

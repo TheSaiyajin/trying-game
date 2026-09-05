@@ -51,6 +51,35 @@ async function getClient() {
   return pool.connect();
 }
 
+async function applyActiveMapTerritoryBonusMetadata(currentClient, topology) {
+  let updatedTerritories = 0;
+  for (const territory of topology.buildTerritories()) {
+    const result = await currentClient.query(
+      `UPDATE territories
+       SET name = $1, bonus_type = $2, bonus_value = $3,
+           resource_bonus = $4, storage_bonus = $5, is_fortress = $6
+       WHERE id = $7
+         AND (name IS DISTINCT FROM $1
+           OR bonus_type IS DISTINCT FROM $2
+           OR bonus_value IS DISTINCT FROM $3
+           OR resource_bonus IS DISTINCT FROM $4
+           OR storage_bonus IS DISTINCT FROM $5
+           OR is_fortress IS DISTINCT FROM $6)`,
+      [
+        territory.name,
+        territory.bonusType,
+        Number(territory.bonusValue || 0),
+        Number(territory.resourceBonus || 0),
+        Number(territory.storageBonus || 0),
+        Boolean(territory.isFortress),
+        territory.id,
+      ]
+    );
+    updatedTerritories += Number(result.rowCount || 0);
+  }
+  return updatedTerritories;
+}
+
 async function applySchemaMigrations(currentClient) {
   const migrationStatements = [
     `ALTER TABLE players ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NULL`,
@@ -70,6 +99,7 @@ async function applySchemaMigrations(currentClient) {
     `ALTER TABLE buildings ADD COLUMN IF NOT EXISTS lumbermill INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE buildings ADD COLUMN IF NOT EXISTS ironmine INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE buildings ADD COLUMN IF NOT EXISTS barracks INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE buildings ADD COLUMN IF NOT EXISTS storage INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE buildings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS owner_faction VARCHAR(16) NOT NULL DEFAULT 'neutral'`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS defense_troops INTEGER NOT NULL DEFAULT 0`,
@@ -84,6 +114,7 @@ async function applySchemaMigrations(currentClient) {
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS map_y INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS last_battle_at TIMESTAMPTZ`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS protected_until TIMESTAMPTZ`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
@@ -93,7 +124,40 @@ async function applySchemaMigrations(currentClient) {
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
+    `ALTER TABLE attack_contributions ADD COLUMN IF NOT EXISTS initial_contribution INTEGER NOT NULL DEFAULT 0`,
+    `UPDATE attack_contributions SET initial_contribution = contribution WHERE initial_contribution = 0 AND contribution > 0`,
     `CREATE UNIQUE INDEX IF NOT EXISTS attack_contributions_territory_player_idx ON attack_contributions (territory_id, player_id)`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS started_by INTEGER REFERENCES players(id) ON DELETE CASCADE`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS defender_faction VARCHAR(16)`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS season_id INTEGER`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS resolves_at TIMESTAMPTZ`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS phase VARCHAR(16) NOT NULL DEFAULT 'rally'`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS battle_started_at TIMESTAMPTZ`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS next_tick_at TIMESTAMPTZ`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS round_number INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS attackers_lost INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS defenders_lost INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS attack_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0`,
+    `ALTER TABLE attack_targets ADD COLUMN IF NOT EXISTS defense_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0`,
+    `UPDATE attack_targets SET phase = 'rally' WHERE phase NOT IN ('rally', 'active')`,
+    `DELETE FROM attack_targets
+     WHERE started_by IS NULL OR defender_faction IS NULL OR season_id IS NULL OR resolves_at IS NULL`,
+    `DELETE FROM attack_contributions ac
+     WHERE NOT EXISTS (SELECT 1 FROM attack_targets at WHERE at.territory_id = ac.territory_id)`,
+    `ALTER TABLE attack_targets ALTER COLUMN started_by SET NOT NULL`,
+    `ALTER TABLE attack_targets ALTER COLUMN defender_faction SET NOT NULL`,
+    `ALTER TABLE attack_targets ALTER COLUMN season_id SET NOT NULL`,
+    `ALTER TABLE attack_targets ALTER COLUMN resolves_at SET NOT NULL`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS attack_targets_territory_idx ON attack_targets (territory_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_attack_targets_due ON attack_targets (resolves_at, id)`,
+    `CREATE INDEX IF NOT EXISTS idx_attack_targets_tick_due ON attack_targets (next_tick_at, id)`,
+    `CREATE TABLE IF NOT EXISTS battle_defender_contributions (
+      territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
+      player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      faction VARCHAR(16) NOT NULL,
+      contribution INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (territory_id, player_id)
+    )`,
     `ALTER TABLE faction_leaders ALTER COLUMN player_id DROP NOT NULL`,
     `ALTER TABLE admin_actions ADD COLUMN IF NOT EXISTS action_detail TEXT`,
     `CREATE TABLE IF NOT EXISTS faction_chat_messages (
@@ -136,6 +200,16 @@ async function applySchemaMigrations(currentClient) {
       PRIMARY KEY (season_id, player_id)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_season_memberships_season_faction ON season_memberships (season_id, faction)`,
+    `CREATE TABLE IF NOT EXISTS faction_city_tiles (
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      faction VARCHAR(16) NOT NULL,
+      slot_index INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (season_id, player_id),
+      UNIQUE (season_id, faction, slot_index)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_faction_city_tiles_season_faction ON faction_city_tiles (season_id, faction, slot_index)`,
     `ALTER TABLE faction_chat_messages ADD COLUMN IF NOT EXISTS season_id INTEGER REFERENCES seasons(id)`,
     `CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_season_faction ON faction_chat_messages (season_id, faction, created_at DESC, id DESC)`,
     `CREATE TABLE IF NOT EXISTS player_season_stats (
@@ -181,6 +255,7 @@ async function applySchemaMigrations(currentClient) {
   const activeMapKey = mapRegistry.getMap(activeMapResult.rows[0]?.map_key).key;
   const activeTopology = mapRegistry.getMap(activeMapKey).topology;
   const activeLayout = activeTopology.buildLayout();
+  await applyActiveMapTerritoryBonusMetadata(currentClient, activeTopology);
   for (const territory of activeTopology.buildTerritories()) {
     await currentClient.query(
       `UPDATE territories SET score_value = $1, map_x = $2, map_y = $3 WHERE id = $4`,
@@ -192,6 +267,24 @@ async function applySchemaMigrations(currentClient) {
       ]
     );
   }
+  await currentClient.query(`
+    WITH missing AS (
+      SELECT sm.season_id, sm.player_id, sm.faction,
+             COALESCE(existing.max_slot, -1)
+               + ROW_NUMBER() OVER (PARTITION BY sm.season_id, sm.faction ORDER BY sm.player_id) AS slot_index
+      FROM season_memberships sm
+      LEFT JOIN faction_city_tiles tile
+        ON tile.season_id = sm.season_id AND tile.player_id = sm.player_id
+      LEFT JOIN (
+        SELECT season_id, faction, MAX(slot_index) AS max_slot
+        FROM faction_city_tiles GROUP BY season_id, faction
+      ) existing ON existing.season_id = sm.season_id AND existing.faction = sm.faction
+      WHERE tile.player_id IS NULL
+    )
+    INSERT INTO faction_city_tiles (season_id, player_id, faction, slot_index)
+    SELECT season_id, player_id, faction, slot_index FROM missing
+    ON CONFLICT DO NOTHING
+  `);
   await currentClient.query(`
     INSERT INTO season_territory_faction_ownership (season_id, territory_id, faction)
     SELECT s.id, t.id, t.owner_faction
@@ -301,11 +394,9 @@ async function ensureCurrentSeasonOnStartup() {
   }
 }
 
-// Idempotent, transactional migration that brings an EXISTING database's territory graph
-// up to the canonical topology (world-topology.js) without touching anything else. Safe to
-// run on every startup: once topology_version.version reaches TOPOLOGY_VERSION, this is a
-// no-op (a single indexed SELECT), so restarting the server repeatedly never re-runs it or
-// duplicates edges.
+// Idempotently verifies that the active season's stored graph matches its versioned map.
+// Rotation writes the version immediately; this mainly protects upgrades and interrupted
+// deployments without ever switching maps during a running season.
 async function applyTopologyMigrationIfNeeded(externalClient = null) {
   const client = externalClient || await pool.connect();
   const shouldRelease = !externalClient;
@@ -342,7 +433,7 @@ async function applyTopologyMigrationIfNeeded(externalClient = null) {
       [topology.TOPOLOGY_VERSION, mapKey]
     );
     await client.query('COMMIT');
-    console.log(`Topology migrated: v${currentVersion} -> v${topology.TOPOLOGY_VERSION} (territory_neighbors replaced only).`);
+    console.log(`Topology migrated: ${currentMapKey || 'unknown'} v${currentVersion} -> ${mapKey} v${topology.TOPOLOGY_VERSION}.`);
     return { migrated: true, previousVersion: currentVersion, currentVersion: topology.TOPOLOGY_VERSION, mapKey };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -372,13 +463,14 @@ async function seedWorldIfEmpty() {
      ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, map_key = EXCLUDED.map_key, updated_at = NOW()`,
     [topology.TOPOLOGY_VERSION, mapKey]
   );
-  console.log('World seeded from the canonical topology.');
+  console.log(`World seeded from ${mapRegistry.getMap(mapKey).name}.`);
 }
 
 module.exports = {
   pool,
   connect,
   getClient,
+  applyActiveMapTerritoryBonusMetadata,
   applySchemaMigrations,
   applyTopologyMigrationIfNeeded,
   initializeDatabase,

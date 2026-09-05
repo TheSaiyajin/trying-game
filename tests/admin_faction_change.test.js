@@ -92,6 +92,11 @@ function createFakeClient({ players, territories, defenders, factionLeaders, sea
         return { rows: [] };
       }
 
+      if (text.startsWith('DELETE FROM faction_city_tiles')
+        || text.startsWith('INSERT INTO faction_city_tiles')) {
+        return { rows: [] };
+      }
+
       if (text === 'UPDATE faction_leaders SET player_id = NULL WHERE player_id = $1') {
         for (const [faction, assignedPlayerId] of factionLeaders.entries()) {
           if (Number(assignedPlayerId) === Number(params[0])) {

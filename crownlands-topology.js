@@ -25,14 +25,14 @@
     'food', 'wood', 'iron', 'manpower',
     'attack', 'defense', 'food', 'wood', 'iron', 'manpower',
     'storage', 'training', 'fortress', 'resource', 'attack', 'defense', 'fortress',
-    'none', 'none', 'none',
+    'attack', 'defense', 'resource',
   ];
 
   const SLOT_NAMES = [
     'Granary', 'Timber Camp', 'Ironworks', 'Muster Hall',
     'Vanguard Post', 'Shieldwall', 'Farmland', 'Lumber Yard', 'Ore Basin', 'Recruitment Camp',
     'Great Vault', 'Drill Grounds', 'North Fortress', 'Trade Hub', 'Assault Camp',
-    'Defender Keep', 'South Fortress', 'Watchtower', 'Crossroads', 'Outpost',
+    'Defender Keep', 'South Fortress', 'Scout Post', 'Guard Post', 'Supply Hub',
   ];
 
   function capitalize(word) {
@@ -77,6 +77,11 @@
 
       REGION_IDS[faction].forEach((id, slot) => {
         const bonusType = SLOT_BONUSES[slot];
+        const bonus = bonusFields(bonusType);
+        if (slot >= 17) {
+          bonus.bonusValue = 0.02;
+          if (bonusType === 'resource') bonus.resourceBonus = 0.02;
+        }
         territories.push({
           id,
           name: `${capitalize(faction)} ${SLOT_NAMES[slot]}`,
@@ -85,7 +90,7 @@
           bonusType,
           isCapital: false,
           scoreValue: 1,
-          ...bonusFields(bonusType),
+          ...bonus,
         });
       });
     });
@@ -138,13 +143,15 @@
       add(middle[5], frontier[3]); add(middle[5], frontier[4]);
     });
 
+    // Five links at every faction border create direct and outer flanking routes.
     [['blue', 'red'], ['red', 'green'], ['green', 'blue']].forEach(([left, right]) => {
-      const leftFrontier = REGION_IDS[left].slice(10);
-      const rightFrontier = REGION_IDS[right].slice(10);
-      add(leftFrontier[4], rightFrontier[0]);
-      add(leftFrontier[9], rightFrontier[5]);
+      const a = REGION_IDS[left].slice(10);
+      const b = REGION_IDS[right].slice(10);
+      add(a[4], b[0]);
+      add(a[9], b[5]);
     });
 
+    // Every faction has two independent routes into the central Crown.
     FACTIONS.forEach((faction) => {
       const frontier = REGION_IDS[faction].slice(10);
       add(frontier[6], 'c1');

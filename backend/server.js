@@ -8,15 +8,16 @@ const { connect, getClient, initializeDatabase } = require('./db');
 const { issueToken, verifyToken, hashPassword, verifyPassword } = require('./auth');
 const {
   getUpgradeCost,
-  getTrainingCost,
   getProductionFromBuildings,
   getFactionTerritoryBonuses,
   getFactionStorageCaps,
   limitResourceGain,
   limitPassiveFortressTroopGain,
+  MAX_BUILDING_LEVEL,
   PASSIVE_FORTRESS_TROOP_CAP,
 } = require('./game-logic');
 const { AttackError, performAttack } = require('./attack-logic');
+const { TrainingError, performSoldierTraining } = require('./soldier-training');
 const {
   isSafeUsername,
   isAuthorizedAdminPlayer,
@@ -47,13 +48,21 @@ const {
 } = require('./defender-garrisons');
 const { resolveBattle } = require('./resolve-battle');
 const {
+  getActiveRallies,
+  getExpiredRallyTerritoryIds,
+  launchRally,
+  startOrJoinRally,
+} = require('./rally-battles');
+const {
   ensureCurrentSeason,
   ensurePlayerFactionAssignment,
   forceFinishCurrentSeason,
+  startCurrentSeasonNow,
   getFactionMemberCounts,
   getSeasonMembership,
   hasSeasonStarted,
   computeScores,
+  getFactionCityTiles,
 } = require('./season');
 const { getCurrentUtcDayBounds } = require('./season-time');
 const { resolveTrustProxySetting } = require('./trust-proxy');
@@ -73,7 +82,7 @@ const server = http.createServer(app);
 const { notifyStateChanged } = attachRealtime(server, { verifyToken });
 const PORT = Number(process.env.PORT || 3000);
 const validFactions = ['blue', 'red', 'green'];
-const buildingNames = ['farm', 'lumbermill', 'ironmine', 'barracks'];
+const buildingNames = ['farm', 'lumbermill', 'ironmine', 'barracks', 'storage'];
 let observedSeasonId = null;
 
 // Must be set before any express-rate-limit middleware: SaiWars sits behind
@@ -93,7 +102,8 @@ app.use(rateLimit({
 
 app.use('/api', (req, res, next) => {
   const isStateMutation = req.method !== 'GET' && (
-    /^\/game\/(upgrade-building|train-soldiers|defend|recall-defenders|attack|resolve-battle)$/.test(req.path)
+    /^\/game\/(upgrade-building|train-soldiers|defend|recall-defenders|attack|launch-rally)$/.test(req.path)
+    || req.path === '/season/join'
     || req.path.startsWith('/admin/')
   );
   if (isStateMutation) {
@@ -147,10 +157,16 @@ async function requireAuth(req, res, next) {
 async function getRequestSeasonMembership(req) {
   if (req.currentSeasonMembership !== undefined) return req.currentSeasonMembership;
   const db = await connect();
-  req.currentSeasonMembership = await getSeasonMembership(db, req.currentSeason.id, req.user.userId);
+  req.currentSeasonMembership = await getSeasonMembership(
+    db,
+    req.currentSeason.id,
+    req.user.userId
+  );
   return req.currentSeasonMembership;
 }
 
+// All gameplay reads and writes use this gate. Client-side hiding is only presentation;
+// direct API calls cannot play before the start time or without joining the current season.
 async function requirePlayableSeason(req, res, next) {
   try {
     if (!hasSeasonStarted(req.currentSeason)) {
@@ -160,7 +176,8 @@ async function requirePlayableSeason(req, res, next) {
         startsAt: req.currentSeason.starts_at,
       });
     }
-    if (!await getRequestSeasonMembership(req)) {
+    const membership = await getRequestSeasonMembership(req);
+    if (!membership) {
       return res.status(403).json({
         error: 'Join the current season before playing.',
         code: 'SEASON_JOIN_REQUIRED',
@@ -247,6 +264,7 @@ async function getPlayerBuildingLevels(playerId, db = null) {
     lumbermill: Number(row.lumbermill || 1),
     ironmine: Number(row.ironmine || 1),
     barracks: Number(row.barracks || 1),
+    storage: Number(row.storage || 1),
   };
 }
 
@@ -254,6 +272,10 @@ async function getTerritoriesSnapshot(db = null) {
   const queryable = db || await connect();
   const result = await queryable.query(`
     SELECT t.*,
+      EXISTS (
+        SELECT 1 FROM attack_targets at
+        WHERE at.territory_id = t.id AND at.phase = 'active'
+      ) AS contested,
       COALESCE(ARRAY_AGG(n.neighbor_id ORDER BY n.neighbor_id) FILTER (WHERE n.neighbor_id IS NOT NULL), ARRAY[]::varchar[]) AS neighbors
     FROM territories t
     LEFT JOIN territory_neighbors n ON n.territory_id = t.id
@@ -275,7 +297,11 @@ async function getTerritoriesSnapshot(db = null) {
     storageBonus: Number(row.storage_bonus),
     fortress: !!row.is_fortress,
     capital: !!row.is_capital,
+    contested: !!row.contested,
+    protectedUntil: row.protected_until || null,
     scoreValue: Number(row.score_value),
+    mapX: Number(row.map_x),
+    mapY: Number(row.map_y),
     score_value: Number(row.score_value),
     neighbors: row.neighbors || [],
   }));
@@ -289,6 +315,11 @@ async function getPlayerState(playerId) {
   const buildings = await getPlayerBuildingLevels(playerId);
   const territories = await getTerritoriesSnapshot();
   const production = getProductionFromBuildings(buildings, territories, player.faction, true);
+  const storageCaps = getFactionStorageCaps(territories, player.faction, buildings);
+  const buildingUpgradeCosts = Object.fromEntries(buildingNames.map((key) => [
+    key,
+    buildings[key] >= MAX_BUILDING_LEVEL ? null : getUpgradeCost(key, buildings[key] + 1),
+  ]));
 
   return {
     id: player.id,
@@ -304,6 +335,11 @@ async function getPlayerState(playerId) {
     soldiers: Number(player.soldiers),
     buildings,
     production,
+    buildingUpgradeCosts,
+    storageCaps,
+    nextStorageCaps: buildings.storage >= MAX_BUILDING_LEVEL
+      ? null
+      : getFactionStorageCaps(territories, player.faction, { ...buildings, storage: buildings.storage + 1 }),
     territories,
   };
 }
@@ -365,7 +401,7 @@ async function applyOfflineResourceEarnings(playerId, db = null) {
     wood: Math.max(0, Math.floor(production.wood * wholeMinutes)),
     iron: Math.max(0, Math.floor(production.iron * wholeMinutes)),
     manpower: Math.max(0, Math.floor(production.manpower * wholeMinutes)),
-  }, getFactionStorageCaps(territories, faction));
+  }, getFactionStorageCaps(territories, faction, buildings));
   const generatedFortressTroops = getFactionTerritoryBonuses(territories, faction).fortressTroops * wholeMinutes;
   const fortressTroops = limitPassiveFortressTroopGain(player.soldiers, generatedFortressTroops);
 
@@ -440,7 +476,7 @@ async function runGlobalResourceTick(db = null, options = {}) {
         wood: row.resource_wood,
         iron: row.resource_iron,
         manpower: row.resource_manpower,
-      }, production, getFactionStorageCaps(territories, faction));
+      }, production, getFactionStorageCaps(territories, faction, buildings));
       const generatedFortressTroops = getFactionTerritoryBonuses(territories, faction).fortressTroops;
       const fortressTroops = limitPassiveFortressTroopGain(row.soldiers, generatedFortressTroops);
       await queryable.query(
@@ -469,6 +505,42 @@ function startResourceTickLoop() {
   resourceTickHandle = setInterval(runGlobalResourceTick, 60 * 1000);
 }
 
+let rallyResolutionHandle = null;
+let rallyResolutionRunning = false;
+
+async function runExpiredRallyResolution({ now = new Date(), suppressErrors = true } = {}) {
+  if (rallyResolutionRunning) return { resolved: 0, skipped: true };
+  rallyResolutionRunning = true;
+  let resolved = 0;
+  try {
+    const db = await connect();
+    const territoryIds = await getExpiredRallyTerritoryIds(db, { now });
+    for (const territoryId of territoryIds) {
+      const client = await getClient();
+      try {
+        const result = await resolveBattle(client, { territoryId, now });
+        if (result.ok || result.cancelled) resolved += 1;
+      } finally {
+        client.release();
+      }
+    }
+    if (resolved > 0) notifyStateChanged();
+    return { resolved, skipped: false };
+  } catch (error) {
+    if (!suppressErrors) throw error;
+    console.error('Rally resolution failed:', error);
+    return { resolved, skipped: false, error };
+  } finally {
+    rallyResolutionRunning = false;
+  }
+}
+
+function startRallyResolutionLoop() {
+  if (rallyResolutionHandle) return;
+  runExpiredRallyResolution();
+  rallyResolutionHandle = setInterval(runExpiredRallyResolution, 5 * 1000);
+}
+
 async function getPlayerWorldState(playerId, season = null) {
   const player = await applyOfflineResourceEarnings(playerId) || await getPlayerById(playerId);
   if (!player) return null;
@@ -482,7 +554,11 @@ async function getPlayerWorldState(playerId, season = null) {
   const buildings = await getPlayerBuildingLevels(playerId);
   const production = getProductionFromBuildings(buildings, territories, player.faction || 'blue', true);
   const factionBonuses = getFactionTerritoryBonuses(territories, player.faction || 'blue');
-  const storageCaps = getFactionStorageCaps(territories, player.faction || 'blue');
+  const storageCaps = getFactionStorageCaps(territories, player.faction || 'blue', buildings);
+  const buildingUpgradeCosts = Object.fromEntries(buildingNames.map((key) => [
+    key,
+    buildings[key] >= MAX_BUILDING_LEVEL ? null : getUpgradeCost(key, buildings[key] + 1),
+  ]));
 
   const stationedResult = await db.query(
     `SELECT territory_id, troops FROM territory_defenders WHERE player_id = $1`,
@@ -492,6 +568,12 @@ async function getPlayerWorldState(playerId, season = null) {
   for (const row of stationedResult.rows) {
     stationedTroops[row.territory_id] = Number(row.troops);
   }
+  const rallies = season
+    ? await getActiveRallies(db, { seasonId: season.id, playerId, playerFaction: player.faction })
+    : [];
+  const factionCities = season
+    ? await getFactionCityTiles(db, { seasonId: season.id, faction: player.faction })
+    : [];
 
   return {
     player: {
@@ -500,6 +582,7 @@ async function getPlayerWorldState(playerId, season = null) {
       faction: player.faction,
       role: player.role,
       needsFactionSelection: !player.faction,
+      joinedSeason: true,
       resources: {
         food: Number(player.resource_food),
         wood: Number(player.resource_wood),
@@ -509,13 +592,22 @@ async function getPlayerWorldState(playerId, season = null) {
       soldiers: Number(player.soldiers),
       buildings,
       production,
+      buildingUpgradeCosts,
       factionBonuses,
       storageCaps,
+      nextStorageCaps: buildings.storage >= MAX_BUILDING_LEVEL
+        ? null
+        : getFactionStorageCaps(territories, player.faction || 'blue', { ...buildings, storage: buildings.storage + 1 }),
       stationedTroops,
       fortressTroopCap: PASSIVE_FORTRESS_TROOP_CAP,
     },
     world: {
       territories,
+      rallies,
+      factionMap: {
+        faction: player.faction,
+        cities: factionCities,
+      },
       players: players.rows.map((row) => ({
         id: row.id,
         username: row.username,
@@ -600,8 +692,8 @@ app.post('/api/register', asyncHandler(async (req, res) => {
 
   const player = insertPlayer.rows[0];
   await db.query(
-    `INSERT INTO buildings (player_id, farm, lumbermill, ironmine, barracks)
-     VALUES ($1, 1, 1, 1, 1)`,
+    `INSERT INTO buildings (player_id, farm, lumbermill, ironmine, barracks, storage)
+     VALUES ($1, 1, 1, 1, 1, 1)`,
     [player.id]
   );
 
@@ -696,7 +788,9 @@ app.get('/api/game/state', requireAuth, asyncHandler(async (req, res) => {
   if (!player) return res.status(404).json({ error: 'Player not found.' });
   const membership = await getRequestSeasonMembership(req);
   const now = new Date();
-  if (!membership || !hasSeasonStarted(req.currentSeason, now)) {
+  const started = hasSeasonStarted(req.currentSeason, now);
+
+  if (!membership || !started) {
     return res.json({
       player: {
         id: player.id,
@@ -706,19 +800,44 @@ app.get('/api/game/state', requireAuth, asyncHandler(async (req, res) => {
         joinedSeason: Boolean(membership),
         needsSeasonJoin: !membership,
       },
-      world: { territories: [], players: [] },
+      world: { territories: [], rallies: [], players: [] },
       season: await buildSeasonSummary(db, req.currentSeason, [], now),
       serverTime: now.getTime(),
     });
   }
   const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
-  if (!snapshot) return res.status(404).json({ error: 'Player not found.' });
   res.json({
     player: snapshot.player,
     world: snapshot.world,
     season: snapshot.season,
     serverTime: Date.now(),
   });
+}));
+
+function buildBattleActivityText(battle) {
+  const factionName = (value) => `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+  const territory = battle.territory_name || battle.territory_id;
+  if (battle.owner_before !== battle.owner_after) {
+    return `${factionName(battle.owner_after)} captured ${territory} from ${factionName(battle.owner_before)}`;
+  }
+  return `${factionName(battle.winner)} defended ${territory} from ${factionName(battle.attacker_faction)}`;
+}
+
+app.get('/api/public/activity', asyncHandler(async (req, res) => {
+  const db = await connect();
+  const result = await db.query(`
+    SELECT bh.id, bh.attacker_faction, bh.winner, bh.owner_before, bh.owner_after,
+           bh.territory_id, t.name AS territory_name
+    FROM battle_history bh
+    LEFT JOIN territories t ON t.id = bh.territory_id
+    ORDER BY bh.id DESC
+    LIMIT 50
+  `);
+  const activities = result.rows.reverse().map((battle) => ({
+    id: Number(battle.id),
+    text: buildBattleActivityText(battle),
+  }));
+  res.json({ activities });
 }));
 
 app.get('/api/game/battles', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
@@ -737,6 +856,7 @@ app.get('/api/game/battles', requireAuth, requirePlayableSeason, asyncHandler(as
       bh.defenders_lost,
       bh.attackers_surviving,
       bh.defenders_surviving,
+      bh.applied_bonuses,
       bh.winner,
       bh.owner_before,
       bh.owner_after,
@@ -763,32 +883,47 @@ app.post('/api/game/upgrade-building', requireAuth, requirePlayableSeason, async
   const buildingKey = sanitizeBuildingName(req.body.building);
   if (!buildingKey) return res.status(400).json({ error: 'Invalid building.' });
 
-  const player = await getPlayerById(req.user.userId);
-  const buildings = await getPlayerBuildingLevels(player.id);
-  const nextLevel = (buildings[buildingKey] || 1) + 1;
-  const cost = getUpgradeCost(buildingKey, nextLevel);
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const playerResult = await client.query('SELECT * FROM players WHERE id = $1 FOR UPDATE', [req.user.userId]);
+    const buildingResult = await client.query('SELECT * FROM buildings WHERE player_id = $1 FOR UPDATE', [req.user.userId]);
+    const player = playerResult.rows[0];
+    const buildings = buildingResult.rows[0];
+    if (!player || !buildings) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Player not found.' });
+    }
 
-  const resources = {
-    food: Number(player.resource_food),
-    wood: Number(player.resource_wood),
-    iron: Number(player.resource_iron),
-  };
+    const currentLevel = Number(buildings[buildingKey] || 1);
+    if (currentLevel >= MAX_BUILDING_LEVEL) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `${buildingKey} is already at the maximum level of ${MAX_BUILDING_LEVEL}.` });
+    }
 
-  if (resources.food < cost.food || resources.wood < cost.wood || resources.iron < cost.iron) {
-    return res.status(400).json({ error: 'Not enough resources for the building upgrade.' });
+    const cost = getUpgradeCost(buildingKey, currentLevel + 1);
+    if (Number(player.resource_food) < cost.food || Number(player.resource_wood) < cost.wood || Number(player.resource_iron) < cost.iron) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Not enough resources for the building upgrade.' });
+    }
+
+    await client.query(
+      `UPDATE players SET resource_food = resource_food - $1, resource_wood = resource_wood - $2, resource_iron = resource_iron - $3 WHERE id = $4`,
+      [cost.food, cost.wood, cost.iron, player.id]
+    );
+    await client.query(
+      `UPDATE buildings SET ${buildingKey} = ${buildingKey} + 1, updated_at = NOW() WHERE player_id = $1`,
+      [player.id]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
 
-  const db = await connect();
-  await db.query(
-    `UPDATE players SET resource_food = resource_food - $1, resource_wood = resource_wood - $2, resource_iron = resource_iron - $3 WHERE id = $4`,
-    [cost.food, cost.wood, cost.iron, player.id]
-  );
-  await db.query(
-    `UPDATE buildings SET ${buildingKey} = ${buildingKey} + 1, updated_at = NOW() WHERE player_id = $1`,
-    [player.id]
-  );
-
-  const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
   res.json({ ok: true, state: snapshot });
 }));
 
@@ -796,26 +931,19 @@ app.post('/api/game/train-soldiers', requireAuth, requirePlayableSeason, asyncHa
   const count = parsePositiveInt(req.body.amount || 0, 0, 5000);
   if (count <= 0) return res.status(400).json({ error: 'Training amount must be positive.' });
 
-  const player = await getPlayerById(req.user.userId);
-  if (!player.faction) return res.status(400).json({ error: 'Choose a faction before training troops.' });
-
-  const territories = await getTerritoriesSnapshot();
-  const territoryBonuses = getFactionTerritoryBonuses(territories, player.faction);
-  const trainingMultiplier = Math.max(0.4, 1 - (territoryBonuses.training || 0));
-  const cost = getTrainingCost(count, trainingMultiplier);
-
-  if (Number(player.resource_food) < cost.food || Number(player.resource_iron) < cost.iron || Number(player.resource_manpower) < cost.manpower) {
-    return res.status(400).json({ error: 'Not enough resources to train soldiers.' });
+  const client = await getClient();
+  let result;
+  try {
+    result = await performSoldierTraining(client, { playerId: req.user.userId, count });
+  } catch (error) {
+    if (error instanceof TrainingError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  } finally {
+    client.release();
   }
 
-  const db = await connect();
-  await db.query(
-    `UPDATE players SET resource_food = resource_food - $1, resource_iron = resource_iron - $2, resource_manpower = resource_manpower - $3, soldiers = soldiers + $4, last_action_at = NOW() WHERE id = $5`,
-    [cost.food, cost.iron, cost.manpower, count, player.id]
-  );
-
-  const snapshot = await getPlayerWorldState(player.id, req.currentSeason);
-  res.json({ ok: true, state: snapshot, trainingCost: cost, trained: count });
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
+  res.json({ ok: true, state: snapshot, trainingCost: result.cost, trained: result.trained });
 }));
 
 app.post('/api/game/defend', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
@@ -831,6 +959,10 @@ app.post('/api/game/defend', requireAuth, requirePlayableSeason, asyncHandler(as
   const client = await getClient();
   try {
     await client.query('BEGIN');
+    const activeBattle = await client.query(
+      'SELECT phase FROM attack_targets WHERE territory_id = $1 FOR UPDATE',
+      [territoryId]
+    );
     const territory = await client.query('SELECT * FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
     if (!territory.rows[0]) {
       await client.query('ROLLBACK');
@@ -865,6 +997,16 @@ app.post('/api/game/defend', requireAuth, requirePlayableSeason, asyncHandler(as
       `UPDATE territories SET defense_troops = $1 WHERE id = $2`,
       [defenseState.totalDefenseTroops + troops, territoryId]
     );
+    if (activeBattle.rows[0]?.phase === 'active') {
+      await client.query(
+        `INSERT INTO battle_defender_contributions (territory_id, player_id, faction, contribution)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (territory_id, player_id)
+         DO UPDATE SET contribution = battle_defender_contributions.contribution + EXCLUDED.contribution,
+                       faction = EXCLUDED.faction`,
+        [territoryId, player.id, player.faction, troops]
+      );
+    }
     await addPlayerSeasonStats(client, req.currentSeason.id, player.id, {
       reinforcement_troops_sent: troops,
     });
@@ -892,6 +1034,14 @@ app.post('/api/game/recall-defenders', requireAuth, requirePlayableSeason, async
   const client = await getClient();
   try {
     await client.query('BEGIN');
+    const activeBattle = await client.query(
+      'SELECT phase FROM attack_targets WHERE territory_id = $1 FOR UPDATE',
+      [territoryId]
+    );
+    if (activeBattle.rows[0]?.phase === 'active') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Defenders cannot be recalled during an active battle.' });
+    }
     const territory = await client.query('SELECT defense_troops FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
     if (!territory.rows[0]) {
       await client.query('ROLLBACK');
@@ -949,16 +1099,29 @@ app.post('/api/game/recall-defenders', requireAuth, requirePlayableSeason, async
 app.post('/api/game/attack', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const territoryId = String(req.body.territoryId || '').trim();
   const soldiers = req.body.soldiers;
+  const mode = String(req.body.mode || 'rally').trim().toLowerCase();
 
   const client = await getClient();
   let result;
   try {
-    result = await performAttack(client, {
-      playerId: req.user.userId,
-      territoryId,
-      soldiers,
-      seasonId: req.currentSeason.id,
-    });
+    const db = await connect();
+    const targetResult = await db.query('SELECT owner_faction FROM territories WHERE id = $1', [territoryId]);
+    const targetOwner = targetResult.rows[0]?.owner_faction;
+    result = targetOwner === 'neutral'
+      ? await performAttack(client, {
+        playerId: req.user.userId,
+        territoryId,
+        soldiers,
+        seasonId: req.currentSeason.id,
+        neutralOnly: true,
+      })
+      : await startOrJoinRally(client, {
+        playerId: req.user.userId,
+        territoryId,
+        soldiers,
+        seasonId: req.currentSeason.id,
+        mode,
+      });
   } catch (error) {
     if (error instanceof AttackError) {
       return res.status(error.status).json({ error: error.message });
@@ -969,7 +1132,33 @@ app.post('/api/game/attack', requireAuth, requirePlayableSeason, asyncHandler(as
   }
 
   const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
-  res.json({ ok: true, state: snapshot, sent: result.sent, territoryId: result.territoryId, outcome: result.outcome });
+  res.json({
+    ok: true,
+    state: snapshot,
+    sent: result.sent,
+    territoryId: result.territoryId || territoryId,
+    outcome: result.outcome || null,
+    rally: result.rally || null,
+    rallyCreated: Boolean(result.rally && result.created),
+  });
+}));
+
+app.post('/api/game/launch-rally', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
+  const territoryId = String(req.body.territoryId || '').trim();
+  if (!territoryId) return res.status(400).json({ error: 'Territory required.' });
+
+  const client = await getClient();
+  try {
+    await launchRally(client, { territoryId, playerId: req.user.userId });
+  } catch (error) {
+    if (error instanceof AttackError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  const snapshot = await getPlayerWorldState(req.user.userId, req.currentSeason);
+  res.json({ ok: true, launched: true, state: snapshot, territoryId });
 }));
 
 app.get('/api/game/faction-chat', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
@@ -1247,7 +1436,7 @@ app.get('/api/game/season-history', requireAuth, asyncHandler(async (req, res) =
   const db = await connect();
   const limit = Math.min(20, Math.max(1, Number(req.query.limit || 10)));
   const result = await db.query(
-    `SELECT season_number, starts_at, ends_at, status, blue_score, red_score, green_score, result, completed_at
+    `SELECT season_number, starts_at, ends_at, status, map_key, blue_score, red_score, green_score, result, completed_at
      FROM seasons
      WHERE season_number > 0 AND status = 'completed'
      ORDER BY season_number DESC
@@ -1264,6 +1453,8 @@ app.get('/api/game/season-history', requireAuth, asyncHandler(async (req, res) =
       greenScore: row.green_score,
       result: row.result,
       completedAt: row.completed_at,
+      mapKey: mapRegistry.getMap(row.map_key).key,
+      mapName: mapRegistry.getMap(row.map_key).name,
     })),
   });
 }));
@@ -1279,9 +1470,12 @@ app.get('/api/admin/season', requireAuth, requireAdmin, asyncHandler(async (req,
       seasonNumber: season.season_number,
       startsAt: season.starts_at,
       endsAt: season.ends_at,
-      status: season.status,
+      status: hasSeasonStarted(season) ? 'active' : 'preparing',
+      hasStarted: hasSeasonStarted(season),
       memberCounts,
       liveScores: computeScores(territories),
+      mapKey: mapRegistry.getMap(season.map_key).key,
+      mapName: mapRegistry.getMap(season.map_key).name,
     },
   });
 }));
@@ -1301,11 +1495,37 @@ app.post('/api/admin/season/force-finish', requireAuth, requireAdmin, asyncHandl
 
   res.json({
     message: result.finishedSeason
-      ? `Season #${result.finishedSeason.season_number} force-finished (${result.finishedSeason.result}). Season #${result.season.season_number} has started.`
-      : `No active season to finish. Season #${result.season.season_number} has started.`,
+      ? `Season #${result.finishedSeason.season_number} force-finished (${result.finishedSeason.result}). Registration for Season #${result.season.season_number} is open.`
+      : `Registration for Season #${result.season.season_number} is open.`,
     finishedSeason: result.finishedSeason,
     newSeason: {
       id: result.season.id,
+      seasonNumber: result.season.season_number,
+      startsAt: result.season.starts_at,
+      endsAt: result.season.ends_at,
+    },
+  });
+}));
+
+app.post('/api/admin/season/start-now', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  if (req.body.confirm !== true) {
+    return res.status(400).json({ error: 'Set confirm: true to start the season now.' });
+  }
+
+  const client = await getClient();
+  let result;
+  try {
+    result = await startCurrentSeasonNow(client, { actorId: req.user.userId });
+  } finally {
+    client.release();
+  }
+
+  res.json({
+    message: result.started
+      ? `Season #${result.season.season_number} started. The seven-day timer is now running.`
+      : `Season #${result.season.season_number} is already active.`,
+    started: result.started,
+    season: {
       seasonNumber: result.season.season_number,
       startsAt: result.season.starts_at,
       endsAt: result.season.ends_at,
@@ -1330,6 +1550,7 @@ if (require.main === module) {
     try {
       await initializeDatabase();
       startResourceTickLoop();
+      startRallyResolutionLoop();
       console.log(`Server ready on http://localhost:${PORT}`);
     } catch (error) {
       console.error('Database initialization failed:', error.message);
@@ -1338,4 +1559,9 @@ if (require.main === module) {
   });
 }
 
-module.exports = { applyOfflineResourceEarnings, runGlobalResourceTick };
+module.exports = {
+  applyOfflineResourceEarnings,
+  buildBattleActivityText,
+  runExpiredRallyResolution,
+  runGlobalResourceTick,
+};

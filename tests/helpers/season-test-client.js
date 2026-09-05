@@ -28,10 +28,11 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
   const state = {
     seasons: [],
     seasonMemberships: [],
+    factionCityTiles: [],
     seasonTerritoryOwnership: new Set(),
     players,
     territories,
-    buildings: new Map([...players.keys()].map((id) => [id, { farm: 5, lumbermill: 5, ironmine: 5, barracks: 5 }])),
+    buildings: new Map([...players.keys()].map((id) => [id, { farm: 5, lumbermill: 5, ironmine: 5, barracks: 5, storage: 5 }])),
     factionLeaders: new Map([['blue', 1], ['red', 2], ['green', 3]]),
     adminActions: [],
     queryLog: [],
@@ -150,6 +151,32 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
         return { rows: [] };
       }
 
+      if (text.startsWith('INSERT INTO faction_city_tiles')) {
+        const [seasonId, playerId, faction] = params;
+        if (!state.factionCityTiles.some((tile) => tile.season_id === seasonId && tile.player_id === playerId)) {
+          const slots = state.factionCityTiles
+            .filter((tile) => tile.season_id === seasonId && tile.faction === faction)
+            .map((tile) => tile.slot_index);
+          state.factionCityTiles.push({
+            season_id: seasonId,
+            player_id: playerId,
+            faction,
+            slot_index: slots.length ? Math.max(...slots) + 1 : 0,
+            created_at: new Date(),
+          });
+        }
+        return { rows: [] };
+      }
+
+      if (text.startsWith('SELECT fct.player_id, fct.faction, fct.slot_index')) {
+        const [seasonId, faction] = params;
+        const rows = state.factionCityTiles
+          .filter((tile) => tile.season_id === seasonId && tile.faction === faction)
+          .sort((a, b) => a.slot_index - b.slot_index)
+          .map((tile) => ({ ...tile, username: state.players.get(tile.player_id)?.username }));
+        return { rows };
+      }
+
       if (text === 'DELETE FROM attack_contributions'
         || text === 'DELETE FROM attack_targets'
         || text === 'DELETE FROM territory_defenders'
@@ -169,7 +196,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
 
       if (text.startsWith('INSERT INTO territories')) {
         const mapRegistry = require('../../map-registry');
-        const mapKey = text.includes("'Crown of Sai'") ? 'crownlands-64' : 'three-frontiers';
+        const mapKey = text.includes('Crown of Sai') ? 'crownlands-64' : 'three-frontiers';
         const topology = mapRegistry.getMap(mapKey).topology;
         topology.buildTerritories().forEach((t) => {
           state.territories.set(t.id, {
@@ -211,6 +238,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
           building.lumbermill = params[1];
           building.ironmine = params[2];
           building.barracks = params[3];
+          building.storage = params[4];
         }
         return { rows: [] };
       }
@@ -250,7 +278,7 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
       }
 
       if (text.startsWith('UPDATE players SET faction = $1, faction_locked = TRUE, army_name = $2, resource_food = $3')) {
-        const [faction, armyName, food, wood, iron, manpower, soldiers, resourceLastUpdated, playerId] = params;
+        const [faction, armyName, food, wood, iron, manpower, soldiers, resourceStartAt, playerId] = params;
         const player = state.players.get(playerId);
         if (player) {
           player.faction = faction;
@@ -261,7 +289,30 @@ function createSeasonTestClient({ players = new Map(), territories = new Map() }
           player.resource_iron = iron;
           player.resource_manpower = manpower;
           player.soldiers = soldiers;
-          player.resource_last_updated = new Date(resourceLastUpdated);
+          player.resource_last_updated = new Date(resourceStartAt);
+        }
+        return { rows: [] };
+      }
+
+      if (text.startsWith('UPDATE seasons SET starts_at = $1, ends_at = $2 WHERE id = $3 RETURNING *')) {
+        const [startsAt, endsAt, seasonId] = params;
+        const season = state.seasons.find((row) => row.id === seasonId);
+        if (season) {
+          season.starts_at = startsAt;
+          season.ends_at = endsAt;
+        }
+        return { rows: season ? [{ ...season }] : [], rowCount: season ? 1 : 0 };
+      }
+
+      if (text.startsWith('UPDATE players p SET resource_last_updated = $1 FROM season_memberships sm')) {
+        const [resourceStartAt, seasonId] = params;
+        const joinedIds = new Set(
+          state.seasonMemberships
+            .filter((membership) => membership.season_id === seasonId)
+            .map((membership) => membership.player_id)
+        );
+        for (const [playerId, player] of state.players.entries()) {
+          if (joinedIds.has(playerId)) player.resource_last_updated = new Date(resourceStartAt);
         }
         return { rows: [] };
       }

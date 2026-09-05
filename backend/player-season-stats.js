@@ -114,6 +114,67 @@ async function recordBattleStats(client, { seasonId, territoryId, attackerPlayer
   return { retake, deltas };
 }
 
+async function recordRallyBattleStats(client, {
+  seasonId,
+  territoryId,
+  attackerPlayerId,
+  attackerFaction,
+  defenderFaction,
+  attackContributors,
+  lockedDefenders,
+  allocation,
+  outcome,
+}) {
+  let retake = false;
+  if (outcome.victory) {
+    const priorOwnership = await client.query(
+      `SELECT 1 FROM season_territory_faction_ownership
+       WHERE season_id = $1 AND territory_id = $2 AND faction = $3`,
+      [seasonId, territoryId, attackerFaction]
+    );
+    retake = priorOwnership.rowCount > 0;
+    await client.query(
+      `INSERT INTO season_territory_faction_ownership (season_id, territory_id, faction)
+       VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+      [seasonId, territoryId, attackerFaction]
+    );
+  }
+
+  const attackers = attackContributors.map((contributor) => ({
+    player_id: Number(contributor.player_id),
+    troops: Number(contributor.contribution),
+  }));
+  const attackerKills = distributeProportionally(outcome.defendersLost, attackers);
+  const attackerLosses = distributeProportionally(outcome.attackersLost, attackers);
+  const deltas = new Map();
+  for (const attacker of attackers) {
+    const playerId = Number(attacker.player_id);
+    deltas.set(playerId, {
+      kills: attackerKills.get(playerId) || 0,
+      losses: attackerLosses.get(playerId) || 0,
+      battles_joined: 1,
+      battles_won: outcome.victory ? 1 : 0,
+      territories_captured: outcome.victory && playerId === Number(attackerPlayerId) ? 1 : 0,
+      retakes: outcome.victory && retake && playerId === Number(attackerPlayerId) ? 1 : 0,
+    });
+  }
+
+  const defenderDeltas = buildBattleStatDeltas({
+    attackerPlayerId,
+    defenderFaction,
+    lockedDefenders,
+    allocation,
+    outcome,
+  });
+  defenderDeltas.delete(Number(attackerPlayerId));
+  for (const [playerId, delta] of defenderDeltas) deltas.set(playerId, delta);
+
+  for (const [playerId, delta] of deltas) {
+    await addPlayerSeasonStats(client, seasonId, playerId, delta);
+  }
+  return { retake, deltas };
+}
+
 function emptyStats() {
   return Object.fromEntries(STAT_COLUMNS.map((column) => [column, 0]));
 }
@@ -162,4 +223,5 @@ module.exports = {
   getSeasonStats,
   publicStatsRow,
   recordBattleStats,
+  recordRallyBattleStats,
 };

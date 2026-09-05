@@ -29,7 +29,7 @@ function toSoldierCount(value) {
  * `client` must be a dedicated (non-pooled) connection so BEGIN/COMMIT/ROLLBACK
  * and the advisory lock apply to this request only.
  */
-async function performAttack(client, { playerId, territoryId, soldiers, seasonId }) {
+async function performAttack(client, { playerId, territoryId, soldiers, seasonId, neutralOnly = false }) {
   const cleanTerritoryId = typeof territoryId === 'string' ? territoryId.trim() : '';
   if (!cleanTerritoryId) {
     throw new AttackError(400, 'Target territory required.');
@@ -96,6 +96,9 @@ async function performAttack(client, { playerId, territoryId, soldiers, seasonId
     }
     if ((lockedTarget.owner_faction || 'neutral') === player.faction) {
       throw new AttackError(403, 'You cannot attack your own territory.');
+    }
+    if (neutralOnly && (lockedTarget.owner_faction || 'neutral') !== 'neutral') {
+      throw new AttackError(409, 'This territory is now faction-owned. Start a rally instead.');
     }
 
     await client.query(

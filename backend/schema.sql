@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS buildings (
   lumbermill INTEGER NOT NULL DEFAULT 1,
   ironmine INTEGER NOT NULL DEFAULT 1,
   barracks INTEGER NOT NULL DEFAULT 1,
+  storage INTEGER NOT NULL DEFAULT 1,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -42,7 +43,8 @@ CREATE TABLE IF NOT EXISTS territories (
   map_x INTEGER NOT NULL DEFAULT 0,
   map_y INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_battle_at TIMESTAMPTZ
+  last_battle_at TIMESTAMPTZ,
+  protected_until TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS territory_neighbors (
@@ -73,6 +75,7 @@ CREATE TABLE IF NOT EXISTS attack_contributions (
   territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
   player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   contribution INTEGER NOT NULL DEFAULT 0,
+  initial_contribution INTEGER NOT NULL DEFAULT 0,
   faction VARCHAR(16) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -102,7 +105,27 @@ CREATE TABLE IF NOT EXISTS attack_targets (
   id SERIAL PRIMARY KEY,
   faction VARCHAR(16) NOT NULL,
   territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  started_by INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  defender_faction VARCHAR(16) NOT NULL,
+  season_id INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolves_at TIMESTAMPTZ NOT NULL,
+  phase VARCHAR(16) NOT NULL DEFAULT 'rally',
+  battle_started_at TIMESTAMPTZ,
+  next_tick_at TIMESTAMPTZ,
+  round_number INTEGER NOT NULL DEFAULT 0,
+  attackers_lost INTEGER NOT NULL DEFAULT 0,
+  defenders_lost INTEGER NOT NULL DEFAULT 0,
+  attack_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0,
+  defense_bonus NUMERIC(6, 3) NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS battle_defender_contributions (
+  territory_id VARCHAR(8) NOT NULL REFERENCES territories(id) ON DELETE CASCADE,
+  player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  faction VARCHAR(16) NOT NULL,
+  contribution INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (territory_id, player_id)
 );
 
 CREATE TABLE IF NOT EXISTS faction_leaders (
@@ -141,6 +164,16 @@ CREATE TABLE IF NOT EXISTS seasons (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS faction_city_tiles (
+  season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  faction VARCHAR(16) NOT NULL,
+  slot_index INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (season_id, player_id),
+  UNIQUE (season_id, faction, slot_index)
+);
+
 CREATE TABLE IF NOT EXISTS player_season_stats (
   season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
@@ -169,3 +202,4 @@ CREATE INDEX IF NOT EXISTS idx_attack_contrib_territory ON attack_contributions(
 CREATE INDEX IF NOT EXISTS idx_defenders_territory ON territory_defenders(territory_id);
 CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time ON faction_chat_messages(faction, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_player_season_stats_rankings ON player_season_stats(season_id);
+CREATE INDEX IF NOT EXISTS idx_faction_city_tiles_season_faction ON faction_city_tiles(season_id, faction, slot_index);
