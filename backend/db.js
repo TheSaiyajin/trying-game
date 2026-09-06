@@ -377,6 +377,7 @@ async function initializeDatabase() {
     setupClient.release();
   }
   console.log('Database initialized');
+  await seedWorldIfEmpty();
   await applyTopologyMigrationIfNeeded();
   await ensureCurrentSeasonOnStartup();
 }

@@ -1,6 +1,13 @@
 node_modules/
 .env
 .env.*
+!.env.example
 *.log
 .DS_Store
 npm-debug.log*
+Realms-At-War-FE/
+# Split BE stays local except Prisma (CI applies migrations from git).
+Realms-At-War-BE/*
+!Realms-At-War-BE/prisma/
+!Realms-At-War-BE/prisma/**
+!Realms-At-War-BE/.env.example

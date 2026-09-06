@@ -1,0 +1,114 @@
+{
+  "factions": ["blue", "red", "green"],
+  "auth": {
+    "adminUsername": "Sai",
+    "usernamePattern": "^[A-Za-z0-9_-]{3,32}$",
+    "passwordMinLength": 6,
+    "bcryptRounds": 12,
+    "sessionTtlSeconds": 86400
+  },
+  "season": {
+    "durationMs": 604800000,
+    "preseasonMs": 86400000
+  },
+  "economy": {
+    "resources": ["food", "wood", "iron", "manpower"],
+    "tickIntervalMs": 60000,
+    "offlineCapSeconds": 43200,
+    "baseStorageCap": 10000,
+    "starting": {
+      "food": 500,
+      "wood": 400,
+      "iron": 300,
+      "manpower": 250,
+      "soldiers": 100
+    },
+    "startingBuildings": {
+      "farm": 1,
+      "lumbermill": 1,
+      "ironmine": 1,
+      "barracks": 1,
+      "storage": 1
+    },
+    "buildings": {
+      "farm": {
+        "name": "Farm",
+        "resource": "food",
+        "baseProduction": 5,
+        "cost": { "food": 50, "wood": 80, "iron": 0 }
+      },
+      "lumbermill": {
+        "name": "Lumber Mill",
+        "resource": "wood",
+        "baseProduction": 4,
+        "cost": { "food": 40, "wood": 0, "iron": 60 }
+      },
+      "ironmine": {
+        "name": "Iron Mine",
+        "resource": "iron",
+        "baseProduction": 3,
+        "cost": { "food": 30, "wood": 100, "iron": 0 }
+      },
+      "barracks": {
+        "name": "Barracks",
+        "resource": "manpower",
+        "baseProduction": 2,
+        "cost": { "food": 80, "wood": 60, "iron": 80 }
+      },
+      "storage": {
+        "name": "Storage",
+        "cost": { "food": 100, "wood": 160, "iron": 120 }
+      }
+    },
+    "training": {
+      "costPerUnit": { "food": 50, "iron": 25, "manpower": 20 },
+      "discountFloor": 0.4,
+      "maxPerRequest": 5000,
+      "rounding": "ceil"
+    },
+    "maxBuildingLevel": 10,
+    "storagePerLevel": 5000,
+    "fortress": {
+      "passiveTroopCap": 250,
+      "troopsPerOwnedFortressPerMinute": 1
+    }
+  },
+  "combat": {
+    "lootOnCapture": { "food": 25, "wood": 25, "iron": 25 },
+    "troopActionMax": 5000,
+    "rallyPreparationMs": 600000,
+    "battleRoundMs": 60000,
+    "battleDurationMs": 1200000,
+    "battleProtectionMs": 1800000,
+    "baseCasualtyRate": 0.10,
+    "combatBonusCap": 0.25
+  },
+  "scoring": {
+    "capital": 0,
+    "normal": 1,
+    "core": 2,
+    "crown": 3
+  },
+  "chat": {
+    "maxLength": 500,
+    "listLimit": 100,
+    "sendPerMinute": 10,
+    "sendWindowMs": 60000
+  },
+  "activity": {
+    "battleFeedLimit": 50,
+    "seasonHistoryDefault": 10,
+    "seasonHistoryMax": 20,
+    "rankingsTop": 5
+  },
+  "limits": {
+    "globalRate": { "windowMs": 60000, "max": 120 }
+  },
+  "realtime": {
+    "refreshDebounceMs": 150,
+    "snapshotPollMs": 60000,
+    "chatPollMs": 4000,
+    "activityPollMs": 30000,
+    "bootRetryMs": 1500
+  }
+}
