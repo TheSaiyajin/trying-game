@@ -140,7 +140,16 @@ test('desktop mouse selection remains on the polygon click path', () => {
   try {
     harness.renderMap();
     const polygon = harness.polygon();
-    harness.svg.dispatch('mousedown', { button: 0, buttons: 1, target: polygon, clientX: 20, clientY: 20 });
+    let prevented = false;
+    harness.svg.dispatch('mousedown', {
+      button: 0,
+      buttons: 1,
+      target: polygon,
+      clientX: 20,
+      clientY: 20,
+      preventDefault() { prevented = true; },
+    });
+    assert.equal(prevented, true);
     harness.dispatchWindow('mouseup', { button: 0, buttons: 0 });
     assert.notEqual(harness.elements.get('territory-panel').style.display, 'block');
     polygon.dispatch('click', { button: 0 });
@@ -324,6 +333,7 @@ test('Season History exists once under the fourth Activity tab and reuses its re
 test('desktop map consumes the available screen height without overflow', () => {
   const css = fs.readFileSync(path.join(__dirname, '../style.css'), 'utf8');
 
+  assert.match(css, /\.map-container \{[^}]*-webkit-user-select: none;[^}]*user-select: none;/);
   assert.match(css, /@media \(min-width: 760px\)[\s\S]*?#screen-map\.active \{ display: flex; flex-direction: column; overflow: hidden; \}/);
   assert.match(css, /\.map-workspace \{[^}]*flex: 1;[^}]*min-height: 0;[^}]*overflow: hidden;/);
   assert.match(css, /\.map-container \{[^}]*height: 100%;[^}]*overflow: hidden;/);

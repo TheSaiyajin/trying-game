@@ -1381,6 +1381,7 @@ function initializeMobileMap(svg) {
   }
   svg.addEventListener('mousedown', (event) => {
     if (!window.matchMedia('(max-width: 520px)').matches && event.button === 0) {
+      event.preventDefault();
       mapView.desktopPan = {
         svg,
         x: event.clientX,

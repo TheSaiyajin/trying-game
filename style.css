@@ -790,6 +790,8 @@ html, body {
   border-radius: var(--radius);
   overflow-x: auto;
   overflow-y: hidden;
+  -webkit-user-select: none;
+  user-select: none;
   margin-bottom: 10px;
   box-shadow: var(--shadow);
   -webkit-overflow-scrolling: touch;
