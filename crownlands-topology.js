@@ -78,7 +78,12 @@
       REGION_IDS[faction].forEach((id, slot) => {
         const bonusType = SLOT_BONUSES[slot];
         const bonus = bonusFields(bonusType);
-        if (slot >= 17) {
+        if (slot < 10) {
+          bonus.bonusValue = slot < 4 ? 0.20 : 0.10;
+          if (['food', 'wood', 'iron', 'manpower'].includes(bonusType)) {
+            bonus.resourceBonus = bonus.bonusValue;
+          }
+        } else if (slot >= 17) {
           bonus.bonusValue = 0.02;
           if (bonusType === 'resource') bonus.resourceBonus = 0.02;
         }

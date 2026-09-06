@@ -88,8 +88,10 @@ test('Crownlands has three mirrored 21-tile regions and one central Crown', () =
     assert.equal(region.filter((territory) => territory.bonusType === 'wood').length, 2);
     assert.equal(region.filter((territory) => territory.bonusType === 'iron').length, 2);
     assert.equal(region.filter((territory) => territory.bonusType === 'manpower').length, 2);
-    assert.equal(region.filter((territory) => territory.bonusType === 'attack' && territory.bonusValue === 0.05).length, 2);
-    assert.equal(region.filter((territory) => territory.bonusType === 'defense' && territory.bonusValue === 0.05).length, 2);
+    assert.deepEqual(region.slice(0, 4).map(({ bonusValue, resourceBonus }) => [bonusValue, resourceBonus]), Array(4).fill([0.20, 0.20]));
+    assert.deepEqual(region.slice(4, 10).map(({ bonusValue, resourceBonus }) => [bonusValue, resourceBonus]), [
+      [0.10, 0], [0.10, 0], [0.10, 0.10], [0.10, 0.10], [0.10, 0.10], [0.10, 0.10],
+    ]);
     assert.equal(region.filter((territory) => territory.isFortress).length, 2);
     assert.deepEqual(
       region.slice(17).map((territory) => [territory.name, territory.bonusType, territory.bonusValue]),
@@ -109,14 +111,14 @@ test('Crownlands has three mirrored 21-tile regions and one central Crown', () =
     assert.deepEqual(
       Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, Math.round(value * 100)])),
       {
-        food: 15,
-        wood: 15,
-        iron: 15,
-        manpower: 15,
+        food: 35,
+        wood: 35,
+        iron: 35,
+        manpower: 35,
         training: 3,
         storage: 10,
-        attack: 12,
-        defense: 12,
+        attack: 17,
+        defense: 17,
         fortressTroops: 200,
         allResources: 5,
       }
@@ -161,7 +163,7 @@ test('Crownlands is connected, rotationally equal, spaced, and has no crossed ro
   }
 });
 
-test('a full Crownlands region grants 15% production but only 10% storage', () => {
+test('a full Crownlands region grants 35% production but only 10% storage', () => {
   const territoryById = new Map(crownlands.buildTerritories().map((territory) => [territory.id, territory]));
   const ownedRegion = crownlands.REGION_IDS.blue.map((id) => ({
     ...territoryById.get(id),
@@ -176,7 +178,7 @@ test('a full Crownlands region grants 15% production but only 10% storage', () =
       'blue',
       true
     ),
-    { food: 57, wood: 46, iron: 34, manpower: 23 }
+    { food: 67, wood: 54, iron: 40, manpower: 27 }
   );
   assert.deepEqual(getFactionStorageCaps(ownedRegion, 'blue', { storage: 2 }), {
     food: 16500,
