@@ -213,6 +213,5 @@ CREATE INDEX IF NOT EXISTS idx_attack_contrib_territory ON attack_contributions(
 CREATE INDEX IF NOT EXISTS idx_defenders_territory ON territory_defenders(territory_id);
 CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time ON faction_chat_messages(faction, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_world_chat_messages_season_time ON world_chat_messages(season_id, created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_territories_supply_cut ON territories(supply_cut_since) WHERE supply_cut_since IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_player_season_stats_rankings ON player_season_stats(season_id);
 CREATE INDEX IF NOT EXISTS idx_faction_city_tiles_season_faction ON faction_city_tiles(season_id, faction, slot_index);
