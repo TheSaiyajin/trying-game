@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS territories (
   map_y INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_battle_at TIMESTAMPTZ,
-  protected_until TIMESTAMPTZ
+  protected_until TIMESTAMPTZ,
+  supply_cut_since TIMESTAMPTZ,
+  last_supply_attrition_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS territory_neighbors (
@@ -164,6 +166,15 @@ CREATE TABLE IF NOT EXISTS seasons (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS world_chat_messages (
+  id SERIAL PRIMARY KEY,
+  season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  faction VARCHAR(16) NOT NULL,
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS faction_city_tiles (
   season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
@@ -201,5 +212,7 @@ CREATE INDEX IF NOT EXISTS idx_buildings_player ON buildings(player_id);
 CREATE INDEX IF NOT EXISTS idx_attack_contrib_territory ON attack_contributions(territory_id);
 CREATE INDEX IF NOT EXISTS idx_defenders_territory ON territory_defenders(territory_id);
 CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_faction_time ON faction_chat_messages(faction, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_world_chat_messages_season_time ON world_chat_messages(season_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_territories_supply_cut ON territories(supply_cut_since) WHERE supply_cut_since IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_player_season_stats_rankings ON player_season_stats(season_id);
 CREATE INDEX IF NOT EXISTS idx_faction_city_tiles_season_faction ON faction_city_tiles(season_id, faction, slot_index);

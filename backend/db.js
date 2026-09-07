@@ -115,6 +115,8 @@ async function applySchemaMigrations(currentClient) {
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS last_battle_at TIMESTAMPTZ`,
     `ALTER TABLE territories ADD COLUMN IF NOT EXISTS protected_until TIMESTAMPTZ`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS supply_cut_since TIMESTAMPTZ`,
+    `ALTER TABLE territories ADD COLUMN IF NOT EXISTS last_supply_attrition_at TIMESTAMPTZ`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE territory_defenders ADD COLUMN IF NOT EXISTS faction VARCHAR(16) NOT NULL DEFAULT 'blue'`,
@@ -212,6 +214,16 @@ async function applySchemaMigrations(currentClient) {
     `CREATE INDEX IF NOT EXISTS idx_faction_city_tiles_season_faction ON faction_city_tiles (season_id, faction, slot_index)`,
     `ALTER TABLE faction_chat_messages ADD COLUMN IF NOT EXISTS season_id INTEGER REFERENCES seasons(id)`,
     `CREATE INDEX IF NOT EXISTS idx_faction_chat_messages_season_faction ON faction_chat_messages (season_id, faction, created_at DESC, id DESC)`,
+    `CREATE TABLE IF NOT EXISTS world_chat_messages (
+      id SERIAL PRIMARY KEY,
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      faction VARCHAR(16) NOT NULL,
+      message TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_world_chat_messages_season_time ON world_chat_messages (season_id, created_at DESC, id DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_territories_supply_cut ON territories (supply_cut_since) WHERE supply_cut_since IS NOT NULL`,
     `CREATE TABLE IF NOT EXISTS player_season_stats (
       season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
       player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,

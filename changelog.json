@@ -1,5 +1,12 @@
 [
   {
+    "title": "World chat and supply lines",
+    "changes": [
+      "Added a season-wide World chat alongside private faction chat.",
+      "Territories now show whether they remain connected to their faction capital."
+    ]
+  },
+  {
     "title": "Crownlands territory bonuses",
     "changes": [
       "Scout Posts improve faction attack damage.",

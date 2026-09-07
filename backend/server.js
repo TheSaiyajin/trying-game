@@ -68,12 +68,17 @@ const { getCurrentUtcDayBounds } = require('./season-time');
 const { resolveTrustProxySetting } = require('./trust-proxy');
 const { attachRealtime } = require('./realtime');
 const { addPlayerSeasonStats, getSeasonStats } = require('./player-season-stats');
+const { computeSuppliedTerritoryIds, runSupplyLineCheck } = require('./supply-lines');
 const {
  CHAT_RESPONSE_LIMIT,
  createFactionChatMessage,
  getFactionChatMessagesForPlayer,
  listFactionMembersForPlayer,
 } = require('./faction-chat');
+const {
+  createWorldChatMessage,
+  getWorldChatMessagesForPlayer,
+} = require('./world-chat');
 
 dotenv.config();
 
@@ -121,6 +126,15 @@ const factionChatSendRateLimit = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => String(req.user?.userId || req.ip),
   message: { error: 'Too many faction chat messages. Please wait a moment.' },
+});
+
+const worldChatSendRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => String(req.user?.userId || req.ip),
+  message: { error: 'Too many world chat messages. Please wait a moment.' },
 });
 
 function asyncHandler(fn) {
@@ -283,6 +297,10 @@ async function getTerritoriesSnapshot(db = null) {
     ORDER BY t.id
   `);
 
+  const suppliedIds = computeSuppliedTerritoryIds(result.rows.map((row) => ({
+    ...row,
+    neighbors: row.neighbors || [],
+  })));
   return result.rows.map((row) => ({
     id: row.id,
     name: row.name,
@@ -297,6 +315,7 @@ async function getTerritoriesSnapshot(db = null) {
     storageBonus: Number(row.storage_bonus),
     fortress: !!row.is_fortress,
     capital: !!row.is_capital,
+    supplied: validFactions.includes(row.owner_faction) ? suppliedIds.has(row.id) : null,
     contested: !!row.contested,
     protectedUntil: row.protected_until || null,
     scoreValue: Number(row.score_value),
@@ -505,6 +524,36 @@ function startResourceTickLoop() {
   resourceTickHandle = setInterval(runGlobalResourceTick, 60 * 1000);
 }
 
+let supplyCheckHandle = null;
+let supplyCheckRunning = false;
+
+async function runSupplyAttrition({ now = new Date(), suppressErrors = true } = {}) {
+  if (supplyCheckRunning) return { changed: false, troopsLost: 0, skipped: true };
+  supplyCheckRunning = true;
+  let client = null;
+  try {
+    client = await getClient();
+    const season = await ensureCurrentSeason(client);
+    if (!hasSeasonStarted(season, now)) return { changed: false, troopsLost: 0, skipped: true };
+    const result = await runSupplyLineCheck(client, { now });
+    if (result.changed) notifyStateChanged();
+    return { ...result, skipped: false };
+  } catch (error) {
+    if (!suppressErrors) throw error;
+    console.error('Supply line check failed:', error);
+    return { changed: false, troopsLost: 0, skipped: false, error };
+  } finally {
+    if (client) client.release();
+    supplyCheckRunning = false;
+  }
+}
+
+function startSupplyCheckLoop() {
+  if (supplyCheckHandle) return;
+  runSupplyAttrition();
+  supplyCheckHandle = setInterval(runSupplyAttrition, 60 * 1000);
+}
+
 let rallyResolutionHandle = null;
 let rallyResolutionRunning = false;
 
@@ -626,6 +675,7 @@ async function buildSeasonSummary(db, season, territories = [], now = new Date()
   const started = hasSeasonStarted(season, now);
   const selectedMap = mapRegistry.getMap(season.map_key);
   return {
+    id: season.id,
     seasonNumber: season.season_number,
     startsAt: season.starts_at,
     endsAt: season.ends_at,
@@ -1186,6 +1236,22 @@ app.post('/api/game/faction-chat', requireAuth, requirePlayableSeason, factionCh
   res.status(201).json({ faction: player.faction, message: result.message });
 }));
 
+app.get('/api/game/world-chat', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
+  const player = await getCurrentAuthedPlayer(req);
+  const db = await connect();
+  const result = await getWorldChatMessagesForPlayer(db, player, req.currentSeason.id);
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  res.json({ seasonId: result.seasonId, messages: result.messages });
+}));
+
+app.post('/api/game/world-chat', requireAuth, requirePlayableSeason, worldChatSendRateLimit, asyncHandler(async (req, res) => {
+  const player = await getCurrentAuthedPlayer(req);
+  const db = await connect();
+  const result = await createWorldChatMessage(db, { player, seasonId: req.currentSeason.id, message: req.body.message });
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  res.status(201).json({ message: result.message });
+}));
+
 app.post('/api/game/resolve-battle', requireAuth, requirePlayableSeason, asyncHandler(async (req, res) => {
   const territoryId = String(req.body.territoryId || '').trim();
   if (!territoryId) return res.status(400).json({ error: 'No territory selected.' });
@@ -1551,6 +1617,7 @@ if (require.main === module) {
       await initializeDatabase();
       startResourceTickLoop();
       startRallyResolutionLoop();
+      startSupplyCheckLoop();
       console.log(`Server ready on http://localhost:${PORT}`);
     } catch (error) {
       console.error('Database initialization failed:', error.message);
@@ -1564,4 +1631,5 @@ module.exports = {
   buildBattleActivityText,
   runExpiredRallyResolution,
   runGlobalResourceTick,
+  runSupplyAttrition,
 };

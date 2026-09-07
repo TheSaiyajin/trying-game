@@ -23,6 +23,7 @@ const DEFAULT_STATE = {
   rallies: {},
   factionMap: { faction: null, cities: [] },
   chatMessages: [],
+  worldChatMessages: [],
   season: null,
 };
 
@@ -32,6 +33,7 @@ let attackSendCount = 10;
 let defendSendCount = 10;
 let trainAmount = 1;
 let factionChatPollHandle = null;
+let activeChatMode = 'faction';
 const mapView = { scale: 1, x: 0, y: 0, pointers: new Map(), dragStart: null, pinchStart: null, dragged: false, hadMultiplePointers: false, desktopPan: null, suppressClickUntil: 0, boundSvg: null, resizeBound: false, desktopPanBound: false };
 let realtimeSocket = null;
 let realtimeRefreshTimer = null;
@@ -83,6 +85,7 @@ function mapTerritories(rawTerritories) {
       adj: Array.isArray(territory.neighbors) ? territory.neighbors : [],
       fortress: !!(territory.fortress ?? territory.is_fortress),
       capital: !!(territory.capital ?? territory.is_capital),
+      supplied: territory.supplied === null || territory.supplied === undefined ? null : !!territory.supplied,
       contested: !!territory.contested,
       protectedUntil: territory.protectedUntil || territory.protected_until || null,
       scoreValue: Number(territory.scoreValue ?? territory.score_value ?? 1),
@@ -231,6 +234,10 @@ function updateAdminVisibility(player) {
 
 function setGameStateFromSnapshot(snapshot) {
   const previousFaction = G.player?.faction || null;
+  const previousSeasonId = G.season?.id || null;
+  const nextFaction = snapshot.player?.faction || null;
+  const nextSeasonId = snapshot.season?.id || null;
+  const keepChat = previousFaction === nextFaction && previousSeasonId === nextSeasonId;
   G = {
     player: {
       ...(snapshot.player || {}),
@@ -245,7 +252,8 @@ function setGameStateFromSnapshot(snapshot) {
     factionMap: snapshot.world?.factionMap || { faction: snapshot.player?.faction || null, cities: [] },
     // A season/faction change invalidates any cached chat: never show the previous
     // faction's messages, even briefly, while the new season's chat loads.
-    chatMessages: previousFaction && previousFaction === G.player?.faction ? (G.chatMessages || []) : [],
+    chatMessages: keepChat ? (G.chatMessages || []) : [],
+    worldChatMessages: keepChat ? (G.worldChatMessages || []) : [],
     season: snapshot.season || null,
   };
   renderMapLegend(G.player.faction);
@@ -255,10 +263,11 @@ function setGameStateFromSnapshot(snapshot) {
   renderFactionBonuses();
   renderScoreboard();
   renderFactionMap();
-  if (previousFaction && snapshot.player?.faction && previousFaction !== snapshot.player.faction) {
-    G.chatMessages = [];
+  if (!keepChat && (previousFaction || previousSeasonId)) {
     document.getElementById('chat-messages')?.replaceChildren();
-    renderFactionChat({ scrollToNewest: true });
+    if (document.getElementById('screen-chat')?.classList.contains('active')) {
+      renderChat({ scrollToNewest: true });
+    }
   }
 }
 
@@ -500,6 +509,10 @@ async function submitAuth(event) {
 
 function logoutPlayer() {
   disconnectRealtime();
+  G.chatMessages = [];
+  G.worldChatMessages = [];
+  activeChatMode = 'faction';
+  document.getElementById('chat-messages')?.replaceChildren();
   localStorage.removeItem(AUTH_STORAGE_KEY);
   const form = document.getElementById('auth-form');
   if (form) form.reset();
@@ -848,7 +861,7 @@ function showScreen(name, { persist = true } = {}) {
   if (name === 'city') renderCity();
   if (name === 'map') { renderMap(); renderFactionMap(); renderScoreboard(); showMapView(activeMapView); }
   if (name === 'activity') renderActivity();
-  if (name === 'chat') { renderFactionChat({ scrollToNewest: true }); renderFactionMembers(); }
+  if (name === 'chat') { renderChat({ scrollToNewest: true }); if (activeChatMode === 'faction') renderFactionMembers(); }
   if (name === 'admin') renderAdminPanel();
 }
 
@@ -1554,6 +1567,13 @@ function selectTerritory(id, { preserveTroopInputs = false } = {}) {
   document.getElementById('tp-city-soldiers').textContent = Number(G.player.soldiers || 0);
   const stationed = Number((G.player.stationedTroops || {})[id] || 0);
   document.getElementById('tp-stationed').textContent = stationed;
+  const supplyRow = document.getElementById('tp-supply-row');
+  const supplyValue = document.getElementById('tp-supply');
+  if (supplyRow && supplyValue) {
+    supplyRow.hidden = territory.supplied === null;
+    supplyValue.textContent = territory.supplied ? 'Connected' : 'CUT OFF';
+    supplyValue.classList.toggle('supply-cut-off', territory.supplied === false);
+  }
   const rally = G.rallies[id] || null;
   const protectedMinutes = territory.protectedUntil
     ? Math.max(0, Math.ceil((new Date(territory.protectedUntil).getTime() - Date.now()) / 60000))
@@ -1981,7 +2001,31 @@ async function renderActivity() {
   }
 }
 
-// ===================== FACTION CHAT =====================
+// ===================== CHAT =====================
+
+function setChatMode(mode) {
+  if (mode !== 'faction' && mode !== 'world') return;
+  activeChatMode = mode;
+  document.querySelectorAll('.chat-tab').forEach((tab) => {
+    const isActive = tab.id === `chat-tab-${mode}`;
+    tab.classList.toggle('active', isActive);
+    tab.setAttribute('aria-selected', String(isActive));
+  });
+  const membersCard = document.getElementById('faction-members-card');
+  if (membersCard) membersCard.hidden = mode !== 'faction';
+  const scope = document.getElementById('chat-scope-text');
+  if (scope) scope.textContent = mode === 'faction'
+    ? 'Only your current faction can read these messages.'
+    : 'All factions in the current season can read these messages.';
+  const input = document.getElementById('chat-input');
+  if (input) input.placeholder = mode === 'faction'
+    ? 'Send a message to your faction...'
+    : 'Send a message to the world...';
+  const sendButton = document.getElementById('chat-send-button');
+  if (sendButton) sendButton.textContent = mode === 'faction' ? 'Send to Faction' : 'Send to World';
+  renderChat({ scrollToNewest: true });
+  if (mode === 'faction') renderFactionMembers();
+}
 
 function insertChatEmoji(emoji) {
   const input = document.getElementById('chat-input');
@@ -2007,20 +2051,23 @@ function isFactionChatNearBottom() {
   return remaining <= 24;
 }
 
-async function renderFactionChat({ scrollToNewest = false } = {}) {
+async function renderChat({ scrollToNewest = false } = {}) {
   const container = document.getElementById('chat-messages');
   if (!container) return;
+  const requestedMode = activeChatMode;
   try {
-    const data = await apiFetch('/game/faction-chat');
-    G.chatMessages = data.messages || [];
+    const data = await apiFetch(`/game/${requestedMode}-chat`);
+    if (requestedMode !== activeChatMode) return;
+    const cacheKey = requestedMode === 'faction' ? 'chatMessages' : 'worldChatMessages';
+    G[cacheKey] = data.messages || [];
     container.replaceChildren();
-    if (!G.chatMessages.length) {
+    if (!G[cacheKey].length) {
       const empty = document.createElement('p');
       empty.className = 'info-text';
-      empty.textContent = 'No faction messages yet.';
+      empty.textContent = `No ${requestedMode} messages yet.`;
       container.appendChild(empty);
     } else {
-      G.chatMessages.forEach((entry) => {
+      G[cacheKey].forEach((entry) => {
         const row = document.createElement('div');
         row.className = 'chat-entry';
 
@@ -2028,7 +2075,12 @@ async function renderFactionChat({ scrollToNewest = false } = {}) {
         meta.className = 'chat-meta';
         const createdAt = entry.createdAt || entry.created_at;
         const timestamp = createdAt ? new Date(createdAt).toLocaleString() : '';
-        meta.textContent = `${entry.username} · ${timestamp}`;
+        if (requestedMode === 'world') {
+          meta.classList.add(`chat-faction-${entry.faction}`);
+          meta.textContent = `${entry.username} · ${String(entry.faction || '').toUpperCase()} · ${timestamp}`;
+        } else {
+          meta.textContent = `${entry.username} · ${timestamp}`;
+        }
 
         const message = document.createElement('div');
         message.className = 'chat-message';
@@ -2042,7 +2094,8 @@ async function renderFactionChat({ scrollToNewest = false } = {}) {
   } catch (error) {
     const msg = document.createElement('p');
     msg.className = 'info-text';
-    msg.textContent = `Could not load faction chat: ${error.message}`;
+    if (requestedMode !== activeChatMode) return;
+    msg.textContent = `Could not load ${requestedMode} chat: ${error.message}`;
     container.replaceChildren(msg);
   }
 }
@@ -2077,16 +2130,17 @@ async function renderFactionMembers() {
   }
 }
 
-async function sendFactionChatMessage() {
+async function sendChatMessage() {
   const input = document.getElementById('chat-input');
   if (!input) return;
   try {
-    await apiFetch('/game/faction-chat', {
+    const requestedMode = activeChatMode;
+    await apiFetch(`/game/${requestedMode}-chat`, {
       method: 'POST',
       body: JSON.stringify({ message: input.value }),
     });
     input.value = '';
-    await renderFactionChat({ scrollToNewest: true });
+    await renderChat({ scrollToNewest: true });
   } catch (error) {
     showToast(`❌ ${error.message}`);
   }
@@ -2097,7 +2151,7 @@ function startFactionChatPolling() {
   factionChatPollHandle = setInterval(() => {
     const chatScreen = document.getElementById('screen-chat');
     if (chatScreen && chatScreen.classList.contains('active')) {
-      renderFactionChat({ scrollToNewest: isFactionChatNearBottom() });
+      renderChat({ scrollToNewest: isFactionChatNearBottom() });
     }
   }, 4000);
 }
@@ -2583,7 +2637,9 @@ if (typeof module !== 'undefined') {
     insertChatEmoji,
     isFactionChatNearBottom,
     setGameStateFromSnapshot,
-    sendFactionChatMessage,
+    setChatMode,
+    sendChatMessage,
+    renderChat,
     renderFactionMembers,
     startFactionChatPolling,
     buildTerritoryLayout,

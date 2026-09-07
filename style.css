@@ -1097,6 +1097,26 @@ html, body {
 }
 
 /* ---------- Chat ---------- */
+.chat-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.chat-tab {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card2);
+  color: var(--text-dim);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.chat-tab.active {
+  border-color: var(--accent-blue2);
+  color: var(--text-main);
+  background: var(--bg-card);
+}
 .chat-card {
   display: flex;
   flex-direction: column;
@@ -1138,11 +1158,15 @@ html, body {
   color: var(--text-dim);
   margin-bottom: 4px;
 }
+.chat-faction-blue { color: #7ab8ff; }
+.chat-faction-red { color: #ff7070; }
+.chat-faction-green { color: #66cc77; }
 .chat-message {
   font-size: 14px;
   white-space: pre-wrap;
   word-break: break-word;
 }
+.supply-cut-off { color: var(--accent-red); font-weight: 700; }
 
 /* ---------- Admin Panel ---------- */
 .admin-player-row, .admin-territory-row {
