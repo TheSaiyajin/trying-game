@@ -203,6 +203,7 @@
             <div class="tp-item"><span class="tp-label">Defenders</span><span id="tp-troops">—</span></div>
             <div class="tp-item"><span class="tp-label">In city</span><span id="tp-city-soldiers">0</span></div>
             <div class="tp-item"><span class="tp-label">Stationed</span><span id="tp-stationed">0</span></div>
+            <div id="tp-supply-row" class="tp-item tp-wide" hidden><span class="tp-label">Supply</span><span id="tp-supply">Connected</span></div>
             <div class="tp-item tp-wide"><span class="tp-label">Battle rule</span><span id="tp-battle-rule">More troops wins</span></div>
             <div class="tp-item tp-wide"><span class="tp-label">Bonus</span><span id="tp-bonus">—</span></div>
             <div class="tp-item tp-wide"><span class="tp-label">Neighbors</span><span id="tp-neighbors">—</span></div>
@@ -346,15 +347,19 @@
 
     <!-- --- SCREEN 5: CHAT --- -->
     <div class="screen" id="screen-chat">
-      <h2 class="screen-title">💬 Faction Chat</h2>
-      <div class="section-card">
+      <h2 class="screen-title">💬 Chat</h2>
+      <div class="chat-tabs" role="tablist" aria-label="Chat channel">
+        <button id="chat-tab-faction" class="chat-tab active" type="button" role="tab" aria-selected="true" onclick="setChatMode('faction')">Faction</button>
+        <button id="chat-tab-world" class="chat-tab" type="button" role="tab" aria-selected="false" onclick="setChatMode('world')">World</button>
+      </div>
+      <div id="faction-members-card" class="section-card">
         <h3>Faction Members (<span id="faction-member-count">0</span>)</h3>
         <div id="faction-member-list">
           <p class="info-text">Loading faction members...</p>
         </div>
       </div>
       <div class="section-card chat-card">
-        <p class="info-text">Only your current faction can read these messages.</p>
+        <p id="chat-scope-text" class="info-text">Only your current faction can read these messages.</p>
         <div id="chat-messages" class="chat-messages">
           <p class="info-text">Loading faction chat...</p>
         </div>
@@ -368,7 +373,7 @@
           <button class="btn-small" type="button" onclick="insertChatEmoji('🔥')">🔥</button>
         </div>
         <textarea id="chat-input" class="chat-input" maxlength="500" rows="3" placeholder="Send a message to your faction..."></textarea>
-        <button class="btn-primary wide" type="button" onclick="sendFactionChatMessage()">Send to Faction</button>
+        <button id="chat-send-button" class="btn-primary wide" type="button" onclick="sendChatMessage()">Send to Faction</button>
         </div>
       </div>
     </div>
